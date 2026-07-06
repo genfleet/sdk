@@ -138,10 +138,14 @@ def create_app(
             body = await request.json()
         except Exception:
             return _jsonrpc_error(None, -32700, "Parse error")
+        if not isinstance(body, dict):
+            return _jsonrpc_error(None, -32600, "Invalid Request")
 
         req_id = body.get("id")
         method = body.get("method", "")
         params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
         message_text = ""
         msg = params.get("message", {})
         if isinstance(msg, dict):
@@ -150,7 +154,7 @@ def create_app(
         elif isinstance(msg, str):
             message_text = msg
 
-        agent_input = _build_agent_input(message_text, params if isinstance(params, dict) else {})
+        agent_input = _build_agent_input(message_text, params)
         task_id = params.get("id", str(uuid.uuid4()))
 
         if method == "tasks/send":

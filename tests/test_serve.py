@@ -99,6 +99,24 @@ def test_invalid_history_ignored(agent: RecordingAgent, client: TestClient) -> N
     assert agent.inputs[0].history == []
 
 
+def test_non_dict_params_handled(agent: RecordingAgent, client: TestClient) -> None:
+    resp = client.post("/", json={
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tasks/send",
+        "params": [1, 2, 3],
+    })
+    assert resp.status_code == 200
+    assert resp.json()["result"]["status"]["state"] == "completed"
+    assert agent.inputs[0].message == ""
+
+
+def test_non_dict_body_rejected(client: TestClient) -> None:
+    resp = client.post("/", json=[1, 2, 3])
+    assert resp.status_code == 200
+    assert resp.json()["error"]["code"] == -32600
+
+
 def test_send_subscribe_forwards_session(agent: RecordingAgent, client: TestClient) -> None:
     resp = client.post("/", json={
         "jsonrpc": "2.0",
