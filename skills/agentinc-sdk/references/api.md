@@ -239,7 +239,7 @@ Created by `@tool`. Satisfies `ToolProtocol`. Both `call()` and `__call__()` han
 
 ## RawAdapter (deprecated)
 
-> **Deprecated in v0.2.** Emits `DeprecationWarning` on instantiation. Will be removed in v0.3.  
+> **Deprecated in v0.2.** Emits `DeprecationWarning` on instantiation. Will be removed in v0.4.  
 > Migrate to `Agent()`. See `references/raw-adapter.md` for the old signature patterns.
 
 ```python

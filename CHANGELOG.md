@@ -5,7 +5,7 @@ All notable changes to `agentinc-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-06-19
+## [0.3.0] - 2026-07-06
 
 ### Breaking Changes
 
@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A2A session forwarding** — the serve endpoint now forwards `sessionId`, `metadata`, and `history` from A2A params into `AgentInput` (both `tasks/send` and `tasks/sendSubscribe`), enabling session memory over A2A; `sessionId` populates `metadata["session_id"]` unless the caller set it explicitly, and invalid `history` is ignored rather than failing the request
+- **Memory persistence produces valid replayed histories** — assistant tool-call turns are persisted with their `tool_calls` (JSON-encoded arguments, not Python repr), tool results carry `tool_call_id`, and the assistant's final reply (including text streamed alongside tool calls) is saved; previously the second turn of a session with tools failed with a provider 400 on the orphan `tool` message
 - **OpenAI streaming token usage** — usage chunk arrives after the `finish_reason` chunk; the stream is now fully consumed before yielding the final output
 - **Anthropic tool dispatch** — messages are now properly converted from OpenAI format to Anthropic's `tool_use`/`tool_result` content block format, fixing `Unexpected role "tool"` errors
 
