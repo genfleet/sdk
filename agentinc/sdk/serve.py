@@ -6,7 +6,7 @@ import uuid
 from typing import Any, AsyncIterator
 
 from .protocol import AgentProtocol
-from .schemas import AgentInput, AgentOutput
+from .schemas import AgentInput, AgentOutput, Message
 
 log = logging.getLogger("agentinc.sdk.serve")
 
@@ -19,6 +19,34 @@ except ImportError as exc:
         "The serve helper requires the serve extra. "
         "Install it with: pip install 'agentinc-sdk[serve]'"
     ) from exc
+
+
+def _build_agent_input(message_text: str, params: dict[str, Any]) -> AgentInput:
+    """Build an AgentInput from A2A params, forwarding session and state.
+
+    - ``params.metadata`` (dict) is passed through as ``AgentInput.metadata``.
+    - ``params.sessionId`` (A2A-spec field) populates ``metadata["session_id"]``
+      unless the caller already set that key explicitly.
+    - ``params.history`` is forwarded when it validates as Message models;
+      invalid history is ignored rather than failing the request.
+    """
+    metadata = params.get("metadata")
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
+
+    session_id = params.get("sessionId")
+    if session_id and "session_id" not in metadata:
+        metadata["session_id"] = session_id
+
+    history: list[Message] = []
+    raw_history = params.get("history")
+    if isinstance(raw_history, list):
+        try:
+            history = [Message(**m) for m in raw_history]
+        except Exception:
+            log.warning("Ignoring invalid history in A2A request")
+            history = []
+
+    return AgentInput(message=message_text, history=history, metadata=metadata)
 
 
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> JSONResponse:
@@ -110,10 +138,14 @@ def create_app(
             body = await request.json()
         except Exception:
             return _jsonrpc_error(None, -32700, "Parse error")
+        if not isinstance(body, dict):
+            return _jsonrpc_error(None, -32600, "Invalid Request")
 
         req_id = body.get("id")
         method = body.get("method", "")
         params = body.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
         message_text = ""
         msg = params.get("message", {})
         if isinstance(msg, dict):
@@ -122,7 +154,7 @@ def create_app(
         elif isinstance(msg, str):
             message_text = msg
 
-        agent_input = AgentInput(message=message_text)
+        agent_input = _build_agent_input(message_text, params)
         task_id = params.get("id", str(uuid.uuid4()))
 
         if method == "tasks/send":

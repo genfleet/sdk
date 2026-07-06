@@ -1,6 +1,6 @@
 # RawAdapter — Migration Reference
 
-> ⚠️ **Deprecated in v0.2.** `RawAdapter` emits a `DeprecationWarning` on instantiation and will be removed in v0.3.
+> ⚠️ **Deprecated in v0.2.** `RawAdapter` emits a `DeprecationWarning` on instantiation and will be removed in v0.4.
 >
 > **Migrate to `Agent()`:**
 > ```python

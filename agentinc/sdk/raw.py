@@ -77,7 +77,7 @@ class RawAdapter:
     """
     .. deprecated::
         RawAdapter is deprecated. Use :class:`agentinc.sdk.Agent` instead.
-        RawAdapter will be removed in v0.3.
+        RawAdapter will be removed in v0.4.
     """
     """
     Wraps any callable as an AgentProtocol.
@@ -93,7 +93,7 @@ class RawAdapter:
 
     def __init__(self, fn: Any) -> None:
         warnings.warn(
-            "RawAdapter is deprecated and will be removed in v0.3. "
+            "RawAdapter is deprecated and will be removed in v0.4. "
             "Use Agent() instead: from agentinc.sdk import Agent",
             DeprecationWarning,
             stacklevel=2,

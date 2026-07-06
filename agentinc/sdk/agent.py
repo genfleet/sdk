@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -190,17 +191,22 @@ class Agent:
                     )
 
                 if not tool_calls_batch:
+                    final_text = "".join(response_content_parts)
+                    if final_text:
+                        new_messages.append({"role": "assistant", "content": final_text})
                     yield AgentOutput(content="", done=True)
                     break
 
-                # Append assistant tool-call turn
+                # Append assistant tool-call turn (keep any text streamed
+                # alongside the tool calls — the user already saw it)
                 new_messages.append({
                     "role": "assistant",
+                    "content": "".join(response_content_parts),
                     "tool_calls": [
                         {
                             "id": tc.id,
                             "type": "function",
-                            "function": {"name": tc.name, "arguments": str(tc.arguments)},
+                            "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
                         }
                         for tc in tool_calls_batch
                     ],
@@ -241,16 +247,31 @@ class Agent:
                         "content": result,
                     })
 
-            # Persist updated history
+            # Persist updated history — keep the full assistant/tool structure so
+            # replayed histories remain valid provider payloads (tool messages must
+            # follow an assistant turn carrying the matching tool_calls ids).
             if self._memory:
-                updated = list(history) + [
-                    Message(role="user", content=input.message),
-                    *[
-                        Message(role=m["role"], content=m.get("content", ""))
-                        for m in new_messages
-                        if m["role"] in ("assistant", "tool") and m.get("content")
-                    ],
-                ]
+                updated = list(history) + [Message(role="user", content=input.message)]
+                for m in new_messages:
+                    if m["role"] == "assistant":
+                        updated.append(Message(
+                            role="assistant",
+                            content=m.get("content", "") or "",
+                            tool_calls=[
+                                ToolCall(
+                                    id=t["id"],
+                                    name=t["function"]["name"],
+                                    arguments=json.loads(t["function"]["arguments"] or "{}"),
+                                )
+                                for t in m.get("tool_calls", [])
+                            ],
+                        ))
+                    elif m["role"] == "tool":
+                        updated.append(Message(
+                            role="tool",
+                            content=m.get("content", "") or "",
+                            tool_call_id=m.get("tool_call_id"),
+                        ))
                 await self._memory.save(session_id, updated)
 
             if auditor:
@@ -312,7 +333,7 @@ class Agent:
                 {
                     "id": tc.id,
                     "type": "function",
-                    "function": {"name": tc.name, "arguments": str(tc.arguments)},
+                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
                 }
                 for tc in msg.tool_calls
             ]
