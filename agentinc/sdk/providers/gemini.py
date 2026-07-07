@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import AsyncIterator
 
@@ -9,21 +10,40 @@ log = logging.getLogger("agentinc.sdk.providers.gemini")
 
 
 def _to_gemini_messages(messages: list[dict]) -> tuple[str, list[dict]]:
-    """Convert OpenAI-style messages to Gemini contents + system instruction."""
+    """Convert OpenAI-style messages to Gemini contents + system instruction.
+
+    Gemini requires every function_response part to follow a model turn with
+    the matching function_call part, so assistant tool_calls are converted to
+    function_call parts and tool names are resolved via tool_call_id.
+    """
     system = ""
     contents = []
+    tool_names: dict[str, str] = {}  # tool_call_id -> function name
     for m in messages:
         role = m["role"]
         content = m.get("content", "")
         if role == "system":
             system = content
         elif role == "assistant":
-            contents.append({"role": "model", "parts": [{"text": content}]})
+            parts: list[dict] = []
+            if content:
+                parts.append({"text": content})
+            for tc in m.get("tool_calls") or []:
+                fn = tc["function"]
+                tool_names[tc["id"]] = fn["name"]
+                try:
+                    args = json.loads(fn["arguments"]) if fn.get("arguments") else {}
+                except (TypeError, ValueError):
+                    args = {}
+                parts.append({"function_call": {"name": fn["name"], "args": args}})
+            if parts:
+                contents.append({"role": "model", "parts": parts})
         elif role == "tool":
+            name = tool_names.get(m.get("tool_call_id") or "") or m.get("name", "")
             contents.append({
                 "role": "user",
                 "parts": [{"function_response": {
-                    "name": m.get("name", ""),
+                    "name": name,
                     "response": {"result": content},
                 }}],
             })

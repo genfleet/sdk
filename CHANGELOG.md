@@ -5,6 +5,12 @@ All notable changes to `agentinc-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-07-07
+
+### Fixed
+
+- **Gemini tool-use conversation history** — assistant `tool_calls` are now converted to Gemini `function_call` parts and tool results resolve their function name via `tool_call_id`; previously the follow-up request after any tool call sent an orphan `function_response` with an empty name, which Gemini rejected with a 400 `ClientError`
+
 ## [0.3.0] - 2026-07-06
 
 ### Breaking Changes

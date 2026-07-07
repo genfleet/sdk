@@ -1,6 +1,6 @@
 [project]
 name = "agentinc-sdk"
-version = "0.3.0"
+version = "0.3.1"
 description = "Developer SDK for the Agentinc agent marketplace platform"
 license = "Apache-2.0"
 readme = "README.md"
