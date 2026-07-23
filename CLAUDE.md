@@ -24,3 +24,15 @@ re-derive it.
 
 ---
 
+## Security concerns → `70-security/`
+
+If you notice anything security-adjacent while working here — **secret material handled unsafely, missing authz check, injection surface (SQL / shell / prompt), cross-tenant leak, unsafe default, LLM-generated code executed without a sandbox, dependency CVE, rate-limit bypass** — you MUST record it in `planning/vault/70-security/`:
+
+1. Copy `planning/vault/70-security/_template.md` to `YYYY-MM-DD-slug.md`, fill it in.
+2. If actionable, also `gh issue create --label security,severity:<lvl>` in this repo and reference the flag.
+3. Do NOT silently fix and move on — the board exists so patterns become visible across sessions.
+
+Severity ladder + full process in `planning/vault/70-security/README.md`.
+
+---
+
