@@ -8,6 +8,32 @@ from ..schemas import AgentOutput, ModelConfig, TokenUsage, ToolCall, ToolSchema
 
 log = logging.getLogger("agentinc.sdk.providers.openai")
 
+# Keys carried in message history for other providers' benefit, which the
+# OpenAI chat-completions API rejects as unknown fields. Messages are passed
+# through verbatim, so they must be stripped here: a session started on Gemini
+# and resumed on an OpenAI model replays Gemini-shaped history.
+_FOREIGN_TOOL_CALL_KEYS = ("thought_signature",)
+
+
+def _sanitize_messages(messages: list[dict]) -> list[dict]:
+    """Drop non-OpenAI keys from assistant tool_calls, copying only when needed."""
+    cleaned: list[dict] = []
+    for m in messages:
+        tool_calls = m.get("tool_calls")
+        if not tool_calls or not any(
+            k in tc for tc in tool_calls for k in _FOREIGN_TOOL_CALL_KEYS
+        ):
+            cleaned.append(m)
+            continue
+        cleaned.append({
+            **m,
+            "tool_calls": [
+                {k: v for k, v in tc.items() if k not in _FOREIGN_TOOL_CALL_KEYS}
+                for tc in tool_calls
+            ],
+        })
+    return cleaned
+
 
 class OpenAIProvider:
     """Covers OpenAI and any OpenAI-compatible endpoint (DeepSeek, Groq, Ollama, …)."""
@@ -47,6 +73,8 @@ class OpenAIProvider:
             if tools
             else None
         )
+
+        messages = _sanitize_messages(messages)
 
         if stream:
             async for chunk in self._stream(messages, openai_tools):
