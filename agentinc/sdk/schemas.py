@@ -16,6 +16,11 @@ class ToolCall(BaseModel):
     id: str
     name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
+    # Gemini 3.x returns an opaque signature alongside each function call and
+    # rejects replayed histories that omit it. Stored base64-encoded (the wire
+    # value is bytes) so history stays JSON-serializable for memory backends.
+    # Always None for every other provider.
+    thought_signature: str | None = None
 
 
 class ToolSchema(BaseModel):

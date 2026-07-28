@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from typing import AsyncIterator
@@ -9,12 +10,61 @@ from ..schemas import AgentOutput, ModelConfig, TokenUsage, ToolCall, ToolSchema
 log = logging.getLogger("agentinc.sdk.providers.gemini")
 
 
+def _decode_signature(value: object) -> bytes | None:
+    """Decode a base64 thought_signature back to the bytes Gemini expects.
+
+    Tolerates None/absent (pre-signature history rows) and malformed values —
+    a live conversation must not start erroring, and a bad signature is better
+    dropped than raised.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return base64.b64decode(value, validate=True)
+    except (TypeError, ValueError):
+        log.warning("discarding malformed thought_signature")
+        return None
+
+
+def _tool_calls_from_response(response) -> list[ToolCall]:
+    """Collect function calls from a response/chunk, keeping thought signatures.
+
+    Walks candidates -> content -> parts rather than using the flattened
+    ``.function_calls`` accessor: that accessor yields bare FunctionCall
+    objects and discards the enclosing Part, which is where Gemini 3.x puts
+    ``thought_signature``.
+    """
+    tool_calls: list[ToolCall] = []
+    for candidate in getattr(response, "candidates", None) or []:
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or []:
+            fc = getattr(part, "function_call", None)
+            if fc is None or not fc.name:
+                continue
+            raw_signature = getattr(part, "thought_signature", None)
+            tool_calls.append(ToolCall(
+                id=fc.id or fc.name,
+                name=fc.name,
+                arguments=dict(fc.args or {}),
+                thought_signature=(
+                    base64.b64encode(raw_signature).decode("ascii")
+                    if raw_signature else None
+                ),
+            ))
+    return tool_calls
+
+
 def _to_gemini_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     """Convert OpenAI-style messages to Gemini contents + system instruction.
 
     Gemini requires every function_response part to follow a model turn with
     the matching function_call part, so assistant tool_calls are converted to
     function_call parts and tool names are resolved via tool_call_id.
+
+    Gemini 3.x additionally requires each replayed function_call to carry the
+    thought_signature it was issued with. The signature belongs on the Part,
+    not on the function_call itself. Histories written before signatures were
+    captured have none, and must still convert without raising.
     """
     system = ""
     contents = []
@@ -35,7 +85,11 @@ def _to_gemini_messages(messages: list[dict]) -> tuple[str, list[dict]]:
                     args = json.loads(fn["arguments"]) if fn.get("arguments") else {}
                 except (TypeError, ValueError):
                     args = {}
-                parts.append({"function_call": {"name": fn["name"], "args": args}})
+                part: dict = {"function_call": {"name": fn["name"], "args": args}}
+                signature = _decode_signature(tc.get("thought_signature"))
+                if signature:
+                    part["thought_signature"] = signature
+                parts.append(part)
             if parts:
                 contents.append({"role": "model", "parts": parts})
         elif role == "tool":
@@ -120,11 +174,8 @@ class GeminiProvider:
         last_chunk = None
         async for chunk in await self._client.aio.models.generate_content_stream(**kwargs):
             last_chunk = chunk
-            if chunk.function_calls:
-                tool_calls = [
-                    ToolCall(id=fc.id or fc.name, name=fc.name, arguments=dict(fc.args or {}))
-                    for fc in chunk.function_calls
-                ]
+            tool_calls = _tool_calls_from_response(chunk)
+            if tool_calls:
                 usage = self._extract_usage(chunk)
                 yield AgentOutput(tool_calls=tool_calls, done=False, token_usage=usage)
                 return
@@ -142,11 +193,8 @@ class GeminiProvider:
         response = await self._client.aio.models.generate_content(**kwargs)
         usage = self._extract_usage(response)
 
-        if response.function_calls:
-            tool_calls = [
-                ToolCall(id=fc.id or fc.name, name=fc.name, arguments=dict(fc.args or {}))
-                for fc in response.function_calls
-            ]
+        tool_calls = _tool_calls_from_response(response)
+        if tool_calls:
             yield AgentOutput(tool_calls=tool_calls, done=False, token_usage=usage)
         else:
             yield AgentOutput(content=response.text or "", done=True, token_usage=usage)

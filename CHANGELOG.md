@@ -5,6 +5,29 @@ All notable changes to `agentinc-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-28
+
+### Breaking Changes
+
+- **`RawAdapter` removed** — deprecated since 0.2 with a `DeprecationWarning` announcing removal in v0.4. Use `Agent()` instead. Migration guidance is kept in `skills/agentinc-sdk/references/raw-adapter.md`.
+  ```python
+  # before
+  from agentinc.sdk import RawAdapter
+  serve(RawAdapter(my_fn), name="agent", port=8000)
+
+  # after
+  from agentinc.sdk import Agent
+  serve(Agent(role="...", model={...}), name="agent", port=8000)
+  ```
+
+### Added
+
+- **`ToolCall.thought_signature`** — optional `str | None` field (base64-encoded), defaulting to `None`. Set only by the Gemini provider on Gemini 3.x; every other provider leaves it unset and it is never emitted into their payloads.
+
+### Fixed
+
+- **Gemini 3.x tool calling** — agents on Gemini 3.x models failed on the second LLM turn with `400 INVALID_ARGUMENT: Function call is missing a thought_signature in functionCall parts`. Gemini 3.x issues an opaque signature per function call and requires it echoed back verbatim when that call is replayed in history. The signature lives on the enclosing `Part`, not on `FunctionCall`, so the flattened `response.function_calls` accessor could not see it; the provider now walks `candidates[].content.parts[]` and pairs each function call with its sibling signature, replaying it on the `Part` when converting history. Signatures also survive the memory round-trip, so turn 3+ works for Redis-backed agents. Gemini 2.5 and all other providers are unaffected; histories written before this change decode without error.
+
 ## [0.3.1] - 2026-07-07
 
 ### Fixed

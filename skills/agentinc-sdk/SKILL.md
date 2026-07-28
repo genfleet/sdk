@@ -56,8 +56,6 @@ from agentinc.sdk import (
     MCPConfig,
     DataConfig,
     AuditConfig,    # Audit backend config
-    # Deprecated
-    RawAdapter,     # DEPRECATED — use Agent() instead
 )
 
 # Serve module (requires [serve] extra)
@@ -282,7 +280,7 @@ curl -N -X POST http://localhost:8000 \
 
 1. **SDK imports only from itself.** Never add imports from `agentinc.core`, `agentinc.runner`, `agentinc.loader`, `agentinc.engine`, or `agentinc.protocols`. Those are platform internals.
 2. **Use `Agent()` as the default path.** Only implement `AgentProtocol` directly for framework integrations (LangChain, CrewAI) that manage their own LLM calls.
-3. **`RawAdapter` is deprecated.** It still works but emits a `DeprecationWarning`. Migrate to `Agent()`.
+3. **`RawAdapter` was removed in 0.4.0.** Deprecated since 0.2. Use `Agent()`; see `references/raw-adapter.md` to migrate.
 4. **Python 3.12+ required.** Always use `--python 3.12` when creating venvs with `uv`.
 5. **Provider extras are required.** `Agent` lazy-imports the provider library — install the matching extra (`[openai]`, `[anthropic]`, `[gemini]`) or the import will fail with a clear error.
 6. **Tool functions return `str`.** `ToolWrapper.call()` always returns `str`.
@@ -290,6 +288,6 @@ curl -N -X POST http://localhost:8000 \
 ## Reference Files
 
 - `references/api.md` — Complete field-level reference for Agent, all schemas, and protocols
-- `references/raw-adapter.md` — RawAdapter (deprecated) — signature patterns for migration reference
+- `references/raw-adapter.md` — RawAdapter (removed in 0.4.0) — signature patterns for migration reference
 - `references/frameworks.md` — Framework integration examples (LangChain, CrewAI)
 - `references/serve.md` — A2A serve module: endpoints, JSON-RPC methods, SSE streaming format

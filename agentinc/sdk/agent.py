@@ -37,6 +37,24 @@ def _wrap_tool(fn: Callable) -> ToolWrapper:
     return ToolWrapper(fn=fn, schema=schema)
 
 
+def _tool_call_to_dict(tc: ToolCall) -> dict:
+    """Serialize a ToolCall into the OpenAI-style message-history shape.
+
+    ``thought_signature`` is only emitted when set (Gemini 3.x), so OpenAI and
+    Anthropic payloads are byte-for-byte unchanged. It rides alongside the
+    ``function`` block rather than inside it so providers that pass the block
+    straight through never see an unexpected key.
+    """
+    d: dict = {
+        "id": tc.id,
+        "type": "function",
+        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+    }
+    if tc.thought_signature:
+        d["thought_signature"] = tc.thought_signature
+    return d
+
+
 class Agent:
     """
     High-level agent that wires together a provider, tools, MCP servers,
@@ -202,14 +220,7 @@ class Agent:
                 new_messages.append({
                     "role": "assistant",
                     "content": "".join(response_content_parts),
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
-                        }
-                        for tc in tool_calls_batch
-                    ],
+                    "tool_calls": [_tool_call_to_dict(tc) for tc in tool_calls_batch],
                 })
 
                 # Dispatch all tool calls and append results
@@ -262,6 +273,7 @@ class Agent:
                                     id=t["id"],
                                     name=t["function"]["name"],
                                     arguments=json.loads(t["function"]["arguments"] or "{}"),
+                                    thought_signature=t.get("thought_signature"),
                                 )
                                 for t in m.get("tool_calls", [])
                             ],
@@ -329,14 +341,7 @@ class Agent:
     def _message_to_dict(msg: Message) -> dict:
         d: dict = {"role": msg.role, "content": msg.content or ""}
         if msg.tool_calls:
-            d["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
-                }
-                for tc in msg.tool_calls
-            ]
+            d["tool_calls"] = [_tool_call_to_dict(tc) for tc in msg.tool_calls]
         if msg.tool_call_id:
             d["tool_call_id"] = msg.tool_call_id
         return d

@@ -7,7 +7,7 @@
 3. [Schemas](#schemas)
 4. [Protocols](#protocols)
 5. [ToolWrapper](#toolwrapper)
-6. [RawAdapter (deprecated)](#rawadapter-deprecated)
+6. [RawAdapter (removed)](#rawadapter-removed)
 7. [Serve Module](#serve-module)
 
 ---
@@ -182,10 +182,13 @@ class Message(BaseModel):
 
 ```python
 class ToolCall(BaseModel):
-    id:        str
-    name:      str
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    id:                str
+    name:              str
+    arguments:         dict[str, Any] = Field(default_factory=dict)
+    thought_signature: str | None     = None
 ```
+
+- `thought_signature` — Gemini 3.x only. Opaque per-call signature, base64-encoded, that Gemini requires echoed back when the call is replayed in history. Set automatically by the Gemini provider and threaded through memory; leave it alone. Always `None` for other providers, and never sent to them.
 
 ### ToolSchema
 
@@ -237,16 +240,10 @@ Created by `@tool`. Satisfies `ToolProtocol`. Both `call()` and `__call__()` han
 
 ---
 
-## RawAdapter (deprecated)
+## RawAdapter (removed)
 
-> **Deprecated in v0.2.** Emits `DeprecationWarning` on instantiation. Will be removed in v0.4.  
-> Migrate to `Agent()`. See `references/raw-adapter.md` for the old signature patterns.
-
-```python
-class RawAdapter:
-    def __init__(self, fn: Any) -> None: ...          # emits DeprecationWarning
-    async def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]: ...
-```
+> **Removed in v0.4.0**, deprecated since v0.2. `from agentinc.sdk import RawAdapter` now raises `ImportError`.  
+> Migrate to `Agent()`. See `references/raw-adapter.md` for the old signature patterns and migration steps.
 
 ---
 

@@ -269,7 +269,6 @@
       <a href="#schemas" class="sidebar-link">Schemas</a>
       <a href="#tool-decorator" class="sidebar-link">@tool Decorator</a>
       <a href="#tool-wrapper" class="sidebar-link">ToolWrapper</a>
-      <a href="#raw-adapter" class="sidebar-link">RawAdapter ⚠</a>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-section-title">Serving</div>
@@ -652,19 +651,6 @@ result = await greet.call(ToolCall(id="1", name="greet", arguments={"name": "Wor
 result = await greet(name="World")</code></pre>
     </div>
 
-    <div class="section" id="raw-adapter">
-      <h2>RawAdapter <span style="font-size:14px;color:#ff5555;font-weight:500;">⚠ Deprecated</span></h2>
-      <p class="section-desc">Kept for backward compatibility. Emits <code>DeprecationWarning</code> on instantiation. Will be removed in v0.4.</p>
-      <div class="api-card">
-        <div class="api-card-header"><span class="api-badge badge-deprecated">Deprecated</span><span class="api-card-name">RawAdapter(fn)</span></div>
-        <p>Wraps any callable as <code>AgentProtocol.run()</code>. Migrate to <code>Agent()</code> or implement <code>AgentProtocol</code> directly.</p>
-      </div>
-      <div class="callout callout-warn">
-        <i class="fa-solid fa-triangle-exclamation" style="font-size:16px;margin-top:2px;flex-shrink:0;"></i>
-        <span>Migrate to <code>Agent(role=..., model=..., tools=[...])</code>. For framework integrations, implement <code>AgentProtocol</code> directly.</span>
-      </div>
-    </div>
-
     <div class="section" id="serve">
       <h2>A2A Server</h2>
       <p class="section-desc">Serve any <code>AgentProtocol</code> as an A2A-compliant HTTP endpoint. Requires <code>[serve]</code> extra.</p>
@@ -949,8 +935,6 @@ if __name__ == "__main__":
     # Tools
     ToolWrapper,    # Class — wraps callable as ToolProtocol
     tool,           # Decorator — function → ToolWrapper
-    # Deprecated
-    RawAdapter,     # DEPRECATED — use Agent() instead
 )
 
 # A2A serve module (requires [serve] extra)

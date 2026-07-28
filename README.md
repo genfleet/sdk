@@ -189,7 +189,6 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 | `DataConfig` | TypedDict | RAG config (reserved) |
 | `ToolWrapper` | Class | Wraps any callable as a `ToolProtocol` |
 | `@tool` | Decorator | Function → `ToolWrapper` with auto-generated schema |
-| `RawAdapter` | Class | **Deprecated** — use `Agent()` instead |
 
 ## @tool decorator
 

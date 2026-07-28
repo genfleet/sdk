@@ -1,7 +1,6 @@
 from .agent import Agent
 from .audit.schemas import AuditConfig, AuditEvent
 from .protocol import AgentFactory, AgentProtocol, ToolProtocol
-from .raw import RawAdapter
 from .schemas import (
     AgentInput,
     AgentOutput,
@@ -40,6 +39,4 @@ __all__ = [
     # Tools
     "ToolWrapper",
     "tool",
-    # Deprecated
-    "RawAdapter",
 ]

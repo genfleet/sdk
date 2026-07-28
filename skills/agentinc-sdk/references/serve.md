@@ -154,13 +154,14 @@ Only `text` parts are extracted. Non-text parts (file, data) are ignored by the 
 
 ```python
 import httpx
-from agentinc.sdk import RawAdapter
+from agentinc.sdk import AgentInput, AgentOutput
 from agentinc.sdk.serve import create_app
 
-async def echo(message: str) -> str:
-    return f"Echo: {message}"
+class EchoAgent:
+    async def run(self, input: AgentInput):
+        yield AgentOutput(content=f"Echo: {input.message}", done=True)
 
-app = create_app(RawAdapter(echo), name="test")
+app = create_app(EchoAgent(), name="test")
 
 async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as client:
     resp = await client.post("http://test/", json={
