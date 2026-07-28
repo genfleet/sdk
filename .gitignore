@@ -30,3 +30,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Agent instruction files — local to each contributor, not shared
+CLAUDE.md
+AGENTS.md
