@@ -1,6 +1,6 @@
 # RawAdapter — Migration Reference
 
-> ⚠️ **Deprecated in v0.2.** `RawAdapter` emits a `DeprecationWarning` on instantiation and will be removed in v0.4.
+> ⚠️ **Removed in v0.4.0.** `RawAdapter` was deprecated in v0.2 and no longer ships. Pin `agentinc-sdk<0.4` if you still import it, or migrate as shown below.
 >
 > **Migrate to `Agent()`:**
 > ```python
