@@ -5,7 +5,20 @@ All notable changes to `agentinc-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-07-28
+
+### Breaking Changes
+
+- **`RawAdapter` removed** — deprecated since 0.2 with a `DeprecationWarning` announcing removal in v0.4. Use `Agent()` instead. Migration guidance is kept in `skills/agentinc-sdk/references/raw-adapter.md`.
+  ```python
+  # before
+  from agentinc.sdk import RawAdapter
+  serve(RawAdapter(my_fn), name="agent", port=8000)
+
+  # after
+  from agentinc.sdk import Agent
+  serve(Agent(role="...", model={...}), name="agent", port=8000)
+  ```
 
 ### Added
 
