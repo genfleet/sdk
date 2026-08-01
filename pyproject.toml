@@ -1,6 +1,6 @@
 [project]
 name = "agentinc-sdk"
-version = "0.4.1"
+version = "0.4.2"
 description = "Developer SDK for the Agentinc agent marketplace platform"
 license = "Apache-2.0"
 readme = "README.md"
@@ -14,7 +14,7 @@ gemini     = ["google-genai>=1.0"]
 memory     = ["redis>=5.0"]
 mcp        = ["mcp>=1.0"]
 serve      = ["fastapi>=0.115", "uvicorn[standard]>=0.34", "sse-starlette>=2.0"]
-dev        = ["pytest>=9.0", "pytest-asyncio>=1.3", "pytest-mock>=3.0"]
+dev        = ["pytest>=9.0", "pytest-asyncio>=1.3", "pytest-mock>=3.0", "build>=1.2"]
 all        = [
     "openai>=1.0",
     "anthropic>=0.25",
@@ -31,12 +31,27 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# `agentinc` is a PEP 420 implicit namespace package shared with the other
-# agentinc-* distributions. Target the subpackage directly so hatchling never
-# synthesizes an `agentinc/__init__.py` into the wheel — that would turn
-# `agentinc` into a regular package and shadow every sibling distribution.
+# DO NOT change this to `packages`, and DO NOT add an `agentinc/__init__.py`.
+#
+# `agentinc` is a PEP 420 implicit namespace package shared with every other
+# agentinc-* distribution (core, engine, loader, runner, adapter, protocols).
+# Two ways to break consumers, both of which build without a warning:
+#
+#   1. Shipping an `agentinc/__init__.py` makes `agentinc` a *regular* package.
+#      Its `__path__` collapses to this one directory and every sibling
+#      distribution becomes unimportable (`ModuleNotFoundError: agentinc.core`).
+#   2. `packages = ["agentinc/sdk"]` looks equivalent but hatchling strips the
+#      parent, producing a wheel with a top-level `sdk/` package — importable
+#      as `import sdk`, never as `agentinc.sdk`.
+#
+# `only-include` keeps the `agentinc/` prefix without synthesizing an __init__.
+# tests/test_wheel_layout.py builds the wheel and asserts both properties;
+# tests/test_packaging.py guards the source tree and the installed namespace.
 only-include = ["agentinc/sdk"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "slow: tests that shell out to the build backend (deselect with -m 'not slow')",
+]
