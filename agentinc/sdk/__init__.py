@@ -24,6 +24,12 @@ from .schemas import (
     ToolSchema,
 )
 from .tool import ToolWrapper, tool
+from .tools_loader import (
+    LocalToolResolver,
+    ToolResolutionError,
+    ToolResolver,
+    load_tools,
+)
 
 __all__ = [
     # Core
@@ -56,6 +62,10 @@ __all__ = [
     "load_agent_manifest",
     "load_tool_manifest",
     # Tools
+    "load_tools",
+    "ToolResolver",
+    "LocalToolResolver",
+    "ToolResolutionError",
     "ToolWrapper",
     "tool",
 ]
