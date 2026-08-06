@@ -9,8 +9,10 @@ is decided at run time rather than at `import` time.
 Resolution is pluggable, and the two implementations differ only in where they
 look:
 
-* **local** (this module's default) — whatever is installed, secrets from the
-  environment. What a developer gets on a laptop with no backend.
+* **local** (this module's default) — whatever tool providers are installed,
+  secrets from the environment. What a developer gets on a laptop with no
+  backend. Providers advertise themselves through an entry point group, so this
+  SDK names no particular package.
 * **platform** — the pinned digest from the registry, config and secrets from
   the tenant's installation. Supplied by the runtime, not from here.
 
@@ -21,9 +23,11 @@ registry across the open-source boundary.
 
 from __future__ import annotations
 
+import logging
 import os
+from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Callable, Protocol, runtime_checkable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from .manifest import AgentManifest, ToolRef, load_agent_manifest
 
@@ -32,6 +36,8 @@ from .manifest import AgentManifest, ToolRef, load_agent_manifest
 # Exists because an agent's own idea of where it lives is computed when the
 # code is written and can be wrong once the artifact is relocated.
 AGENT_ROOT_ENV = "AGENTINC_AGENT_ROOT"
+
+logger = logging.getLogger(__name__)
 
 
 class ToolResolutionError(RuntimeError):
@@ -45,9 +51,21 @@ class ToolResolver(Protocol):
     def resolve(self, ref: ToolRef) -> Callable: ...
 
 
+# Any installed distribution can advertise tools by publishing an entry point
+# in this group. Nothing here names a particular package on purpose: this SDK
+# is open-source, and hardcoding one would point a public user at a repository
+# they may not be able to install.
+#
+#     [project.entry-points."agentinc.tools"]
+#     agentinc_tools = "agentinc_tools:discover"
+#
+# The named callable returns {slug: object with .load() -> Callable}.
+TOOL_ENTRY_POINT_GROUP = "agentinc.tools"
+
+
 class LocalToolResolver:
     """
-    Resolve against the installed `agentinc_tools` package.
+    Resolve against whatever tool providers are installed.
 
     Deliberately ignores `ref.digest`. Local development is iteration — you are
     editing a tool and an agent together, and refusing to run because the
@@ -57,21 +75,39 @@ class LocalToolResolver:
     """
 
     def resolve(self, ref: ToolRef) -> Callable:
-        try:
-            from agentinc_tools import discover
-        except ImportError as exc:
-            raise ToolResolutionError(
-                f"{ref.slug} is referenced but agentinc-tools is not installed. "
-                "Run `uv add agentinc-tools`."
-            ) from exc
-
-        installed = discover()
+        installed = discover_installed_tools()
         if ref.slug not in installed:
             known = ", ".join(sorted(installed)) or "none"
             raise ToolResolutionError(
-                f"{ref.slug} is not installed. Available: {known}"
+                f"{ref.slug} is not installed. Available: {known}. "
+                "Tools come from a package that advertises the "
+                f"'{TOOL_ENTRY_POINT_GROUP}' entry point group."
             )
         return installed[ref.slug].load()
+
+
+def discover_installed_tools() -> dict[str, Any]:
+    """
+    Every tool advertised by an installed distribution, keyed by slug.
+
+    A provider that fails to load must not hide the others: one broken package
+    would otherwise make every tool on the machine unresolvable, and the error
+    would name the wrong thing entirely. The failure is logged rather than
+    raised, and the tools it would have supplied then fail individually with a
+    message naming the tool actually being looked for.
+    """
+    found: dict[str, Any] = {}
+    for entry_point in entry_points(group=TOOL_ENTRY_POINT_GROUP):
+        try:
+            provider = entry_point.load()
+            found.update(provider())
+        except Exception as exc:  # noqa: BLE001 — one bad provider, not all
+            logger.warning(
+                "tool provider %r failed to load and was skipped: %s",
+                entry_point.name,
+                exc,
+            )
+    return found
 
 
 def load_tools(

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from agentinc.sdk import tools_loader
 from agentinc.sdk.manifest import ToolRef
 from agentinc.sdk.tools_loader import (
     LocalToolResolver,
@@ -84,11 +85,44 @@ def test_failure_names_the_agent_not_just_the_tool(tmp_path):
         )
 
 
-def test_missing_tools_package_says_how_to_fix_it():
-    # agentinc-tools is not a dependency of the SDK — the dependency runs the
-    # other way — so this is the real uninstalled path, not a simulated one.
-    with pytest.raises(ToolResolutionError, match="uv add agentinc-tools"):
+def test_no_providers_installed_names_the_entry_point_group():
+    # No tool provider is installed in the SDK's own environment — the
+    # dependency runs the other way — so this is the real empty case.
+    with pytest.raises(ToolResolutionError, match="agentinc.tools"):
         LocalToolResolver().resolve(ToolRef(slug="@acme/jira"))
+
+
+def test_one_broken_provider_does_not_hide_the_others(monkeypatch, caplog):
+    # A third-party package that fails to import would otherwise make every
+    # tool on the machine unresolvable, with an error naming the wrong thing.
+    class _Entry:
+        def __init__(self, name, loader):
+            self.name = name
+            self._loader = loader
+
+        def load(self):
+            return self._loader
+
+    def _explode():
+        raise ImportError("provider is broken")
+
+    def _working():
+        return {"@acme/jira": _Stub()}
+
+    class _Stub:
+        def load(self):
+            return lambda: "jira"
+
+    monkeypatch.setattr(
+        tools_loader,
+        "entry_points",
+        lambda group: [_Entry("broken", _explode), _Entry("good", _working)],
+    )
+
+    found = tools_loader.discover_installed_tools()
+
+    assert list(found) == ["@acme/jira"]
+    assert "broken" in caplog.text
 
 
 def test_agent_root_env_overrides_the_hardcoded_path(tmp_path, monkeypatch):
