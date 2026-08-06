@@ -89,3 +89,43 @@ def test_missing_tools_package_says_how_to_fix_it():
     # other way — so this is the real uninstalled path, not a simulated one.
     with pytest.raises(ToolResolutionError, match="uv add agentinc-tools"):
         LocalToolResolver().resolve(ToolRef(slug="@acme/jira"))
+
+
+def test_agent_root_env_overrides_the_hardcoded_path(tmp_path, monkeypatch):
+    # An agent computes its root from __file__ when the code is written. Once
+    # the runtime unpacks the artifact somewhere else, that path is a stale
+    # guess and the environment is the authority. Raised in review on .
+    relocated = tmp_path / "unpacked"
+    relocated.mkdir()
+    (relocated / "agentinc.toml").write_text(
+        '[agent]\nname = "relocated"\n\n[tools]\n"@acme/jira" = "*"\n'
+    )
+    stale = tmp_path / "where-the-code-thinks-it-is"
+    stale.mkdir()
+    (stale / "agentinc.toml").write_text('[agent]\nname = "stale"\n')
+
+    monkeypatch.setenv("AGENTINC_AGENT_ROOT", str(relocated))
+    resolver = StubResolver()
+
+    assert len(load_tools(stale, resolver=resolver)) == 1
+    assert resolver.asked == ["@acme/jira"]
+
+
+def test_an_explicit_manifest_needs_no_filesystem_at_all(tmp_path, monkeypatch):
+    # The platform path: the pinned manifest comes from the published artifact
+    # and may never touch this machine's disk.
+    from agentinc.sdk.manifest import AgentManifest, ToolRef
+
+    monkeypatch.setenv("AGENTINC_AGENT_ROOT", str(tmp_path / "does-not-exist"))
+    resolver = StubResolver()
+
+    tools = load_tools(
+        manifest=AgentManifest(
+            name="from-registry",
+            tools=[ToolRef(slug="@acme/jira", version="1.0.0", digest="sha256:ab")],
+        ),
+        resolver=resolver,
+    )
+
+    assert resolver.asked == ["@acme/jira"]
+    assert len(tools) == 1

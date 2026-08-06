@@ -21,10 +21,17 @@ registry across the open-source boundary.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Callable, Protocol, runtime_checkable
 
 from .manifest import AgentManifest, ToolRef, load_agent_manifest
+
+
+# Set by whatever unpacked the agent — the engine, a sandbox, a test harness.
+# Exists because an agent's own idea of where it lives is computed when the
+# code is written and can be wrong once the artifact is relocated.
+AGENT_ROOT_ENV = "AGENTINC_AGENT_ROOT"
 
 
 class ToolResolutionError(RuntimeError):
@@ -45,7 +52,7 @@ class LocalToolResolver:
     Deliberately ignores `ref.digest`. Local development is iteration — you are
     editing a tool and an agent together, and refusing to run because the
     working copy does not hash to a published digest would make that
-    impossible. `agentinc-registry pull` is the mode that does verify, for when
+    impossible. `ag agents pull` is the mode that does verify, for when
     the question is "what will the platform actually run".
     """
 
@@ -68,7 +75,7 @@ class LocalToolResolver:
 
 
 def load_tools(
-    directory: Path | str = ".",
+    directory: Path | str | None = None,
     *,
     resolver: ToolResolver | None = None,
     manifest: AgentManifest | None = None,
@@ -81,10 +88,26 @@ def load_tools(
         def build_agent():
             return Agent(role="…", model={…}, tools=load_tools())
 
+    Where the manifest comes from, in order:
+
+    1. **`manifest=`** — the manifest object itself. This is the platform's
+       path: it holds the *pinned* manifest from the published artifact, which
+       may never touch this machine's filesystem at all.
+    2. **`AGENTINC_AGENT_ROOT`** — set by whatever unpacked the agent. It wins
+       over `directory` deliberately: after relocation the environment knows
+       where the agent actually landed, and a path computed from `__file__`
+       when the code was written is a guess that can be stale.
+    3. **`directory`**, then the working directory — the local-development
+       path, where the manifest really is sitting next to the code.
+
     `mcps` are *not* included: they are configuration rather than callables and
-    reach `Agent` through its own `mcps=` argument. See `load_mcps`.
+    reach `Agent` through its own `mcps=` argument.
     """
-    spec = manifest or load_agent_manifest(directory)
+    if manifest is None:
+        root = os.environ.get(AGENT_ROOT_ENV) or directory or "."
+        spec = load_agent_manifest(root)
+    else:
+        spec = manifest
     active = resolver or LocalToolResolver()
 
     resolved: list[Callable] = []
