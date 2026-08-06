@@ -1,6 +1,6 @@
 [project]
 name = "agentinc-sdk"
-version = "0.8.0"
+version = "0.8.1"
 description = "Developer SDK for the Agentinc agent marketplace platform"
 license = "Apache-2.0"
 readme = "README.md"
@@ -12,7 +12,7 @@ openai     = ["openai>=1.0"]
 anthropic  = ["anthropic>=0.25"]
 gemini     = ["google-genai>=1.0"]
 memory     = ["redis>=5.0"]
-mcp        = ["mcp>=1.0"]
+mcp        = ["mcp>=1.28.1"]
 serve      = ["fastapi>=0.115", "uvicorn[standard]>=0.34", "sse-starlette>=2.0"]
 dev        = ["pytest>=9.0", "pytest-asyncio>=1.3", "pytest-mock>=3.0", "build>=1.2"]
 all        = [
@@ -20,11 +20,22 @@ all        = [
     "anthropic>=0.25",
     "google-genai>=1.0",
     "redis>=5.0",
-    "mcp>=1.0",
+    "mcp>=1.28.1",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "sse-starlette>=2.0",
 ]
+
+[tool.uv]
+# `cryptography` reaches us transitively (mcp -> pyjwt[crypto]). 48.0.1 is the
+# version that patches the bundled-OpenSSL advisory, and also the last one
+# publishing a macOS x86_64 wheel — 49+ ship none, so an Intel Mac tries to
+# build from source and needs a newer rustc than the toolchain here.
+#
+# The cap is a platform-support decision, not a security one: 48.0.1 is
+# already patched. REVISIT when no one develops on an Intel Mac, or when
+# cryptography resumes x86_64 macOS wheels.
+constraint-dependencies = ["cryptography>=48.0.1,<49"]
 
 [build-system]
 requires = ["hatchling"]
