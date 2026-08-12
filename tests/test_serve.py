@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import AsyncIterator
 
 import pytest
@@ -127,3 +128,73 @@ def test_send_subscribe_forwards_session(agent: RecordingAgent, client: TestClie
     assert resp.status_code == 200
     assert "completed" in resp.text
     assert agent.inputs[0].metadata["session_id"] == "sse-sess"
+
+
+# --------------------------------------------------------------------------
+# sdk#20 — the agent's exception must not cross the network
+# --------------------------------------------------------------------------
+
+#: Stands in for what providers actually put in exception text: OpenAI echoes
+#: the submitted key, others embed request payloads, file paths, console URLs.
+LEAKY_MESSAGE = (
+    "Incorrect API key provided: sk-proj-REDACTME. "
+    'File "/home/dev/.venv/lib/site-packages/openai/_client.py", line 1'
+)
+
+
+class ExplodingAgent:
+    """Raises the way a provider SDK does — with secrets in the message."""
+
+    async def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
+        raise RuntimeError(LEAKY_MESSAGE)
+        yield  # pragma: no cover — unreachable, keeps this an async generator
+
+
+@pytest.fixture()
+def exploding_client() -> TestClient:
+    return TestClient(create_app(ExplodingAgent(), name="boom"))
+
+
+def test_send_does_not_return_the_exception_text(exploding_client: TestClient) -> None:
+    body = _send(exploding_client, _params())
+
+    message = body["error"]["message"]
+    assert "sk-proj-REDACTME" not in message
+    assert "site-packages" not in message
+    assert body["error"]["code"] == -32603
+
+
+def test_stream_does_not_return_the_exception_text(exploding_client: TestClient) -> None:
+    """The flag named only tasks/send; this path leaked the same way."""
+    resp = exploding_client.post("/", json={
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tasks/sendSubscribe",
+        "params": _params(),
+    })
+
+    assert resp.status_code == 200
+    assert "sk-proj-REDACTME" not in resp.text
+    assert "site-packages" not in resp.text
+    # Not `"failed" in resp.text`: OPAQUE_FAILURE_MESSAGE contains the word
+    # "failed", so that assertion passes even on a completed task.
+    events = [json.loads(line[6:]) for line in resp.text.splitlines() if line.startswith("data: ")]
+    status = events[-1]["result"]["status"]
+    assert status["state"] == "failed"
+    # A2A shape: the message is a Message, so the id is reachable by a
+    # spec-conforming client rather than only by reading the raw stream.
+    text = "".join(p["text"] for p in status["message"]["parts"] if p["type"] == "text")
+    assert "error id: " in text
+
+
+def test_failure_carries_an_id_the_operator_can_correlate(
+    exploding_client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An opaque message is only useful if the detail is findable somewhere."""
+    with caplog.at_level("ERROR", logger="agentinc.sdk.serve"):
+        message = _send(exploding_client, _params())["error"]["message"]
+
+    error_id = message.rsplit("error id: ", 1)[1].rstrip(")")
+    assert error_id in caplog.text
+    # The operator's own log is where the detail is allowed to be.
+    assert "sk-proj-REDACTME" in caplog.text

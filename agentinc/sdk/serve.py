@@ -49,6 +49,30 @@ def _build_agent_input(message_text: str, params: dict[str, Any]) -> AgentInput:
     return AgentInput(message=message_text, history=history, metadata=metadata)
 
 
+#: What a caller is told when the agent raised. Deliberately fixed text: the
+#: alternative — scanning the exception for provider markers and redacting
+#: matches — is a denylist, and a denylist is a list of the leaks someone
+#: remembered. The next provider's error format is exposed by default.
+OPAQUE_FAILURE_MESSAGE = "The agent failed to handle this request."
+
+
+def _opaque_failure(context: str) -> str:
+    """Log the active exception; return what the caller is told instead.
+
+    `serve` is the public package's network surface, running on machines the
+    platform does not operate, so the exception text never crosses it: provider
+    errors carry request payloads, file paths, console URLs, and — observed on
+    OpenAI — an echo of the submitted API key (sdk#20). The detail stays in the
+    operator's own log, reachable from the id quoted back to the caller.
+
+    Both failure paths go through here so the two cannot drift into saying
+    different amounts about the same failure.
+    """
+    error_id = uuid.uuid4().hex[:12]
+    log.exception("%s [error_id=%s]", context, error_id)
+    return f"{OPAQUE_FAILURE_MESSAGE} (error id: {error_id})"
+
+
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> JSONResponse:
     return JSONResponse({
         "jsonrpc": "2.0",
@@ -103,11 +127,28 @@ async def _stream_output(
             if output.done:
                 yield _event({"id": task_id, "status": {"state": "completed"}, "final": True})
                 return
-    except Exception as exc:
-        log.exception("streaming failed")
+    except Exception:
+        # The same leak as `tasks/send`, on the streaming path. The flag
+        # (sdk#20) named only the other one; both reach the network.
+        message = _opaque_failure("streaming failed")
         yield _event({
             "id": task_id,
-            "status": {"state": "failed", "message": str(exc)},
+            "status": {
+                "state": "failed",
+                # A2A types `TaskStatus.message` as a Message, not a string.
+                # It was emitted as a bare string here, so a spec-conforming
+                # reader — including the platform's own A2A client, which does
+                # `status_msg.get("parts")` — raised AttributeError instead of
+                # reporting the failure. That made the error id unreachable on
+                # exactly the path this fix exists to cover.
+                "message": {
+                    "role": "agent",
+                    "parts": [{
+                        "type": "text",
+                        "text": message,
+                    }],
+                },
+            },
             "final": True,
         })
 
@@ -160,9 +201,9 @@ def create_app(
         if method == "tasks/send":
             try:
                 output = await _collect_output(agent, agent_input)
-            except Exception as exc:
-                log.exception("tasks/send failed")
-                return _jsonrpc_error(req_id, -32603, str(exc))
+            except Exception:
+                message = _opaque_failure("tasks/send failed")
+                return _jsonrpc_error(req_id, -32603, message)
 
             return _jsonrpc_result(req_id, {
                 "id": task_id,
