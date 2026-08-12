@@ -127,8 +127,11 @@ data: {"jsonrpc":"2.0","id":1,"result":{"id":"task-123","status":{"state":"compl
 
 4. Error (if agent fails):
 ```
-data: {"jsonrpc":"2.0","id":1,"result":{"id":"task-123","status":{"state":"failed","message":"error details"},"final":true}}
+data: {"jsonrpc":"2.0","id":1,"result":{"id":"task-123","status":{"state":"failed","message":{"role":"agent","parts":[{"type":"text","text":"The agent failed to handle this request. (error id: 9f2c1ab40e7d)"}]}},"final":true}}
 ```
+
+`status.message` is a Message object, like any other A2A message — not a bare
+string.
 
 ## Error Codes
 
@@ -137,6 +140,23 @@ data: {"jsonrpc":"2.0","id":1,"result":{"id":"task-123","status":{"state":"faile
 | -32700 | Parse error (malformed JSON) |
 | -32601 | Method not found (not `tasks/send` or `tasks/sendSubscribe`) |
 | -32603 | Internal error (agent raised an exception) |
+
+## Failure detail is not returned to the caller
+
+When your agent raises, both `tasks/send` and `tasks/sendSubscribe` return a
+fixed message plus a random **error id**. The exception — type, message,
+traceback — goes to the `agentinc.sdk.serve` logger under that same id.
+
+This is deliberate. `serve` puts your agent on the network, and provider
+exceptions routinely carry request payloads, file paths, console URLs, and (on
+OpenAI) an echo of the API key you submitted. Returning them would hand those
+to whoever called you.
+
+To debug a failure, take the error id from the response and grep your own logs:
+
+```
+grep 9f2c1ab40e7d agent.log
+```
 
 ## Message Parsing
 
