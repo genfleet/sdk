@@ -5,10 +5,10 @@ import logging
 
 from ..schemas import MemoryConfig, Message
 
-log = logging.getLogger("agentinc.sdk.memory.redis")
+log = logging.getLogger("fleet.sdk.memory.redis")
 
 _TTL = 86400  # 24 hours
-_KEY_PREFIX = "agentinc:session"
+_KEY_PREFIX = "fleet:session"
 
 
 class RedisMemory:
@@ -18,7 +18,7 @@ class RedisMemory:
         except ImportError:
             raise ImportError(
                 "Redis memory requires the memory extra: "
-                "pip install 'agentinc-sdk[memory]'"
+                "pip install 'withfleet-sdk[memory]'"
             )
         self._redis = aioredis.from_url(
             config["connection"],

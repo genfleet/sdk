@@ -5,7 +5,7 @@ Each request that includes a `session_id` in metadata will have its history
 automatically loaded from Redis and saved back after the response.
 
 Requires:
-    pip install 'agentinc-sdk[openai,memory,serve]'
+    pip install 'withfleet-sdk[openai,memory,serve]'
 
 Start Redis:
     docker run -d -p 6379:6379 redis:7
@@ -41,8 +41,8 @@ Test (turn 2 — verify memory):
 
 import os
 
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 
 agent = Agent(

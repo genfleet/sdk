@@ -17,12 +17,12 @@ For external orchestration frameworks (LangChain, CrewAI) that manage their own 
 
 ## OpenAI
 
-**Install:** `pip install 'agentinc-sdk[openai,serve]'`
+**Install:** `pip install 'withfleet-sdk[openai,serve]'`
 
 ```python
 import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 def get_weather(city: str) -> str:
     """Gets the current weather for a city."""
@@ -60,12 +60,12 @@ curl -X POST http://localhost:8000 \
 
 ## Anthropic
 
-**Install:** `pip install 'agentinc-sdk[anthropic,serve]'`
+**Install:** `pip install 'withfleet-sdk[anthropic,serve]'`
 
 ```python
 import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 def lookup(topic: str) -> str:
     """Looks up a fact."""
@@ -84,12 +84,12 @@ serve(agent, name="anthropic-agent", port=8002)
 
 ## Gemini
 
-**Install:** `pip install 'agentinc-sdk[gemini,serve]'`
+**Install:** `pip install 'withfleet-sdk[gemini,serve]'`
 
 ```python
 import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 agent = Agent(
     role="You are a helpful assistant.",
@@ -143,7 +143,7 @@ agent = Agent(
 
 For LangChain, implement `AgentProtocol` directly since LangChain manages its own LLM invocations.
 
-**Install:** `pip install langchain-openai langchain-core 'agentinc-sdk[serve]'`
+**Install:** `pip install langchain-openai langchain-core 'withfleet-sdk[serve]'`
 
 ```python
 import os
@@ -151,8 +151,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool as lc_tool
 from langchain_openai import ChatOpenAI
 
-from agentinc.sdk import AgentInput, AgentOutput
-from agentinc.sdk.serve import serve
+from fleet.sdk import AgentInput, AgentOutput
+from fleet.sdk.serve import serve
 
 
 @lc_tool
@@ -194,7 +194,7 @@ serve(LangChainAgent(), name="langchain-agent", port=8003)
 **Key notes:**
 - Use LangChain's own `@tool` decorator for LangChain tools
 - LangChain tool calls use `tc["args"]` (not `tc["arguments"]`) — map accordingly
-- Convert agentinc `Message` objects to LangChain message types when building history
+- Convert fleet `Message` objects to LangChain message types when building history
 
 ---
 
@@ -202,14 +202,14 @@ serve(LangChainAgent(), name="langchain-agent", port=8003)
 
 For CrewAI, implement `AgentProtocol` directly since CrewAI manages its own orchestration.
 
-**Install:** `pip install crewai 'agentinc-sdk[serve]'`
+**Install:** `pip install crewai 'withfleet-sdk[serve]'`
 
 ```python
 import asyncio
 from crewai import Agent as CrewAgent, Crew, Task
 
-from agentinc.sdk import AgentInput, AgentOutput
-from agentinc.sdk.serve import serve
+from fleet.sdk import AgentInput, AgentOutput
+from fleet.sdk.serve import serve
 
 
 researcher = CrewAgent(

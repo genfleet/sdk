@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentinc.sdk.manifest import (
+from fleet.sdk.manifest import (
     ManifestError,
     load_agent_manifest,
     load_tool_manifest,
@@ -12,7 +12,7 @@ from agentinc.sdk.manifest import (
 
 
 def _write(directory, body: str):
-    (directory / "agentinc.toml").write_text(body)
+    (directory / "fleet.toml").write_text(body)
     return directory
 
 
@@ -83,7 +83,7 @@ def test_secret_value_in_a_tool_manifest_is_refused(tmp_path):
                 [tool]
                 slug = "@acme/jira"
                 version = "1.0.0"
-                entry = "agentinc_tools.jira:search"
+                entry = "fleet_tools.jira:search"
 
                 [secrets]
                 api_token = { value = "sk-live-oops" }
@@ -101,7 +101,7 @@ def test_tool_declares_config_and_secret_names(tmp_path):
             slug = "@acme/jira"
             version = "1.4.2"
             kind = "cli"
-            entry = "agentinc_tools.jira:search_issues"
+            entry = "fleet_tools.jira:search_issues"
 
             [config]
             base_url = { type = "string", required = true }
@@ -114,12 +114,12 @@ def test_tool_declares_config_and_secret_names(tmp_path):
 
     assert manifest.config["base_url"].required
     assert manifest.secrets["api_token"].required
-    assert manifest.entry == "agentinc_tools.jira:search_issues"
+    assert manifest.entry == "fleet_tools.jira:search_issues"
 
 
 def test_missing_manifest_names_the_path(tmp_path):
     # These are authored by hand; an error that does not say where is useless.
-    with pytest.raises(ManifestError, match="agentinc.toml"):
+    with pytest.raises(ManifestError, match="fleet.toml"):
         load_agent_manifest(tmp_path)
 
 

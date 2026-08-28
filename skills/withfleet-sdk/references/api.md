@@ -1,4 +1,4 @@
-# Agentinc SDK — Complete API Reference
+# Fleet SDK — Complete API Reference
 
 ## Table of Contents
 
@@ -63,9 +63,9 @@ Uses explicit `provider/model-name` format:
 
 | Provider prefix | Provider | Install |
 |--------|----------|---------|
-| `openai/` | OpenAI (+ any compatible endpoint) | `pip install 'agentinc-sdk[openai]'` |
-| `anthropic/` | Anthropic | `pip install 'agentinc-sdk[anthropic]'` |
-| `gemini/` | Google Gemini | `pip install 'agentinc-sdk[gemini]'` |
+| `openai/` | OpenAI (+ any compatible endpoint) | `pip install 'withfleet-sdk[openai]'` |
+| `anthropic/` | Anthropic | `pip install 'withfleet-sdk[anthropic]'` |
+| `gemini/` | Google Gemini | `pip install 'withfleet-sdk[gemini]'` |
 
 ### MemoryConfig
 
@@ -77,9 +77,9 @@ class MemoryConfig(TypedDict, total=False):
     password:   str
 ```
 
-Requires `pip install 'agentinc-sdk[memory]'`.
+Requires `pip install 'withfleet-sdk[memory]'`.
 
-Session key pattern: `agentinc:session:{session_id}:history` (TTL 24h).  
+Session key pattern: `fleet:session:{session_id}:history` (TTL 24h).  
 Session ID from `input.metadata["session_id"]` — falls back to a per-request UUID.
 
 ### MCPConfig
@@ -99,7 +99,7 @@ class MCPSseConfig(TypedDict):
 MCPConfig = MCPStdioConfig | MCPSseConfig
 ```
 
-Requires `pip install 'agentinc-sdk[mcp]'`.
+Requires `pip install 'withfleet-sdk[mcp]'`.
 
 ### DataConfig
 
@@ -125,7 +125,7 @@ class AuditConfig(TypedDict, total=False):
 ```
 
 Built-in backends:
-- **console** — structured JSON via `logging.getLogger("agentinc.audit")`
+- **console** — structured JSON via `logging.getLogger("fleet.audit")`
 - **file** — appends JSONL to `file_path`
 - **callback** — calls your sync or async function with an `AuditEvent`
 
@@ -135,7 +135,7 @@ Events emitted: `invocation.start`, `llm.request`, `llm.response`, `tool.call`, 
 
 ## Schemas
 
-All schemas are Pydantic v2 `BaseModel` subclasses from `agentinc.sdk.schemas`.
+All schemas are Pydantic v2 `BaseModel` subclasses from `fleet.sdk.schemas`.
 
 ### AgentInput
 
@@ -242,14 +242,14 @@ Created by `@tool`. Satisfies `ToolProtocol`. Both `call()` and `__call__()` han
 
 ## RawAdapter (removed)
 
-> **Removed in v0.4.0**, deprecated since v0.2. `from agentinc.sdk import RawAdapter` now raises `ImportError`.  
+> **Removed in v0.4.0**, deprecated since v0.2. `from fleet.sdk import RawAdapter` now raises `ImportError`.  
 > Migrate to `Agent()`. See `references/raw-adapter.md` for the old signature patterns and migration steps.
 
 ---
 
 ## Serve Module
 
-Exported from `agentinc.sdk.serve`. Requires `pip install 'agentinc-sdk[serve]'`.
+Exported from `fleet.sdk.serve`. Requires `pip install 'withfleet-sdk[serve]'`.
 
 ### serve()
 

@@ -7,7 +7,7 @@ from typing import AsyncIterator
 
 from ..schemas import AgentOutput, ModelConfig, TokenUsage, ToolCall, ToolSchema
 
-log = logging.getLogger("agentinc.sdk.providers.gemini")
+log = logging.getLogger("fleet.sdk.providers.gemini")
 
 
 def _decode_signature(value: object) -> bytes | None:
@@ -116,7 +116,7 @@ class GeminiProvider:
         except ImportError:
             raise ImportError(
                 "Gemini provider requires the gemini extra: "
-                "pip install 'agentinc-sdk[gemini]'"
+                "pip install 'withfleet-sdk[gemini]'"
             )
         self._client = genai.Client(api_key=config["api_key"])
         self._model = config["model"]

@@ -1,5 +1,5 @@
 import pytest
-from agentinc.sdk import tool, ToolWrapper, ToolCall
+from fleet.sdk import tool, ToolWrapper, ToolCall
 
 
 def test_tool_decorator_bare():

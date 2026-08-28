@@ -27,7 +27,7 @@ from .schemas import (
 )
 from .tool import ToolWrapper, _build_schema
 
-log = logging.getLogger("agentinc.sdk.agent")
+log = logging.getLogger("fleet.sdk.agent")
 
 
 def _wrap_tool(fn: Callable) -> ToolWrapper:
@@ -359,7 +359,7 @@ async def _fetch_mcp_tools(config: MCPConfig) -> dict[str, dict]:
         from mcp.client.sse import sse_client
     except ImportError:
         raise ImportError(
-            "MCP support requires the mcp extra: pip install 'agentinc-sdk[mcp]'"
+            "MCP support requires the mcp extra: pip install 'withfleet-sdk[mcp]'"
         )
 
     tools: dict[str, dict] = {}

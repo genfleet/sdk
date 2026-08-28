@@ -39,16 +39,16 @@
 10. `_make_agent()` - 16 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `agentinc CLI (login/publish/agents list)` --semantically_similar_to--> `Publish to PyPI Workflow`  [INFERRED] [semantically similar]
+- `fleet CLI (login/publish/agents list)` --semantically_similar_to--> `Publish to PyPI Workflow`  [INFERRED] [semantically similar]
   docs/index.html → .github/workflows/publish.yml
 - `Publish to PyPI Workflow` --semantically_similar_to--> `Ship to the Marketplace flow`  [INFERRED] [semantically similar]
   .github/workflows/publish.yml → docs/index.html
-- `agentinc-sdk coding-agent skill` --semantically_similar_to--> `Agentinc SDK Developer Documentation (single-page)`  [INFERRED] [semantically similar]
+- `withfleet-sdk coding-agent skill` --semantically_similar_to--> `Fleet SDK Developer Documentation (single-page)`  [INFERRED] [semantically similar]
   README.md → docs/index.html
 - `test_message_with_tool_call_id()` --calls--> `Message`  [EXTRACTED]
-  tests/test_schemas.py → agentinc/sdk/schemas.py
+  tests/test_schemas.py → fleet/sdk/schemas.py
 - `test_tool_schema()` --calls--> `ToolSchema`  [EXTRACTED]
-  tests/test_schemas.py → agentinc/sdk/schemas.py
+  tests/test_schemas.py → fleet/sdk/schemas.py
 
 ## Import Cycles
 - None detected.
@@ -56,10 +56,10 @@
 ## Hyperedges (group relationships)
 - **Agent wires provider, memory, MCP, and audit configs** — readme_agent, readme_modelconfig, readme_memoryconfig, readme_mcpconfig, readme_auditconfig [EXTRACTED 1.00]
 - **Tool-call round-trip history conversion fixes across providers** — changelog_gemini_tool_history_fix, changelog_anthropic_tool_dispatch_fix, changelog_memory_replay_fix, changelog_openai_streaming_usage_fix [INFERRED 0.85]
-- **Marketplace publishing flow: manifest, entrypoint, CLI, secret injection** — docs_index_marketplace_publishing, docs_index_agent_json_manifest, docs_index_entrypoint_agent_variable, docs_index_agentinc_cli, docs_index_runtime_secret_injection [EXTRACTED 1.00]
-- **Declare Agent -> AgentProtocol -> serve over A2A** — skills_agentinc_sdk_references_api_agent, skills_agentinc_sdk_references_api_agentprotocol, skills_agentinc_sdk_references_api_serve, skills_agentinc_sdk_references_serve_tasks_send, skills_agentinc_sdk_references_serve_agent_card [EXTRACTED 1.00]
-- **Tool dispatch data model (@tool, ToolWrapper, ToolSchema, ToolCall, ToolProtocol)** — skills_agentinc_sdk_skill_tool_decorator, skills_agentinc_sdk_references_api_toolwrapper, skills_agentinc_sdk_references_api_toolschema, skills_agentinc_sdk_references_api_toolcall, skills_agentinc_sdk_references_api_toolprotocol [EXTRACTED 1.00]
-- **Provider backends selected via ModelConfig prefix** — skills_agentinc_sdk_references_api_modelconfig, skills_agentinc_sdk_references_frameworks_openai, skills_agentinc_sdk_references_frameworks_anthropic, skills_agentinc_sdk_references_frameworks_gemini, skills_agentinc_sdk_references_frameworks_openai_compatible [EXTRACTED 1.00]
+- **Marketplace publishing flow: manifest, entrypoint, CLI, secret injection** — docs_index_marketplace_publishing, docs_index_agent_json_manifest, docs_index_entrypoint_agent_variable, docs_index_fleet_cli, docs_index_runtime_secret_injection [EXTRACTED 1.00]
+- **Declare Agent -> AgentProtocol -> serve over A2A** — skills_fleet_sdk_references_api_agent, skills_fleet_sdk_references_api_agentprotocol, skills_fleet_sdk_references_api_serve, skills_fleet_sdk_references_serve_tasks_send, skills_fleet_sdk_references_serve_agent_card [EXTRACTED 1.00]
+- **Tool dispatch data model (@tool, ToolWrapper, ToolSchema, ToolCall, ToolProtocol)** — skills_fleet_sdk_skill_tool_decorator, skills_fleet_sdk_references_api_toolwrapper, skills_fleet_sdk_references_api_toolschema, skills_fleet_sdk_references_api_toolcall, skills_fleet_sdk_references_api_toolprotocol [EXTRACTED 1.00]
+- **Provider backends selected via ModelConfig prefix** — skills_fleet_sdk_references_api_modelconfig, skills_fleet_sdk_references_frameworks_openai, skills_fleet_sdk_references_frameworks_anthropic, skills_fleet_sdk_references_frameworks_gemini, skills_fleet_sdk_references_frameworks_openai_compatible [EXTRACTED 1.00]
 
 ## Communities (18 total, 0 thin omitted)
 
@@ -69,7 +69,7 @@ Nodes (45): Agent, _fetch_mcp_tools(), _invoke_mcp_tool(), Connect to an MCP ser
 
 ### Community 1 - "RawAdapter & Example Agents"
 Cohesion: 0.07
-Nodes (44): _chunk_to_output(), _history_to_dicts(), _is_str_param(), Any, .. deprecated::         RawAdapter is deprecated. Use :class:`agentinc.sdk.Agent, RawAdapter, _resolve_arg(), _schemas_to_dicts() (+36 more)
+Nodes (44): _chunk_to_output(), _history_to_dicts(), _is_str_param(), Any, .. deprecated::         RawAdapter is deprecated. Use :class:`fleet.sdk.Agent, RawAdapter, _resolve_arg(), _schemas_to_dicts() (+36 more)
 
 ### Community 2 - "Audit Backends & Events"
 Cohesion: 0.09
@@ -101,11 +101,11 @@ Nodes (10): GeminiProvider, Convert OpenAI-style messages to Gemini contents + s
 
 ### Community 9 - "Favicon Icon Set"
 Cohesion: 0.23
-Nodes (13): Puzzle Piece Mark (Android Chrome 192x192), Android Chrome Home-Screen Icon (192px), Agentinc SDK Favicon Icon Set, Puzzle Piece Mark (Android Chrome 512x512), Android PWA Splash / Maskable Icon (512px), Puzzle Piece Mark (Apple Touch Icon), iOS Safari Home-Screen Icon (180px), Puzzle Piece Mark (Favicon 16x16) (+5 more)
+Nodes (13): Puzzle Piece Mark (Android Chrome 192x192), Android Chrome Home-Screen Icon (192px), Fleet SDK Favicon Icon Set, Puzzle Piece Mark (Android Chrome 512x512), Android PWA Splash / Maskable Icon (512px), Puzzle Piece Mark (Apple Touch Icon), iOS Safari Home-Screen Icon (180px), Puzzle Piece Mark (Favicon 16x16) (+5 more)
 
 ### Community 10 - "Brand Logo System"
 Cohesion: 0.29
-Nodes (12): Chevron Apex Stroke (outer A silhouette), Inner Crossbar Stroke (short A leg), Near-Black Ink Color (#231f20), Agentinc "A" Monogram Logo Mark, Red Accent Sliver (#ed1c24), Black Fill (#000000) for Light Backgrounds, Agentinc Brand Logo System (light/dark variants), Agentinc Pinwheel Glyph (black variant) (+4 more)
+Nodes (12): Chevron Apex Stroke (outer A silhouette), Inner Crossbar Stroke (short A leg), Near-Black Ink Color (#231f20), Fleet "A" Monogram Logo Mark, Red Accent Sliver (#ed1c24), Black Fill (#000000) for Light Backgrounds, Fleet Brand Logo System (light/dark variants), Fleet Pinwheel Glyph (black variant) (+4 more)
 
 ### Community 11 - "LightRAG Retrieval Agent"
 Cohesion: 0.36
@@ -128,29 +128,29 @@ Cohesion: 0.67
 Nodes (3): @tool decorator, ToolProtocol, ToolWrapper
 
 ## Ambiguous Edges - Review These
-- `Agentinc "A" Monogram Logo Mark` → `Agentinc Brand Logo System (light/dark variants)`  [AMBIGUOUS]
-  docs/images/agentinc/logo.svg · relation: conceptually_related_to
-- `Agentinc "A" Monogram Logo Mark` → `Agentinc Pinwheel Glyph (black variant)`  [AMBIGUOUS]
-  docs/images/agentinc/logo.svg · relation: semantically_similar_to
+- `Fleet "A" Monogram Logo Mark` → `Fleet Brand Logo System (light/dark variants)`  [AMBIGUOUS]
+  docs/images/fleet/logo.svg · relation: conceptually_related_to
+- `Fleet "A" Monogram Logo Mark` → `Fleet Pinwheel Glyph (black variant)`  [AMBIGUOUS]
+  docs/images/fleet/logo.svg · relation: semantically_similar_to
 - `Chevron Apex Stroke (outer A silhouette)` → `Red Accent Sliver (#ed1c24)`  [AMBIGUOUS]
-  docs/images/agentinc/logo.svg · relation: conceptually_related_to
-- `Puzzle Piece Metaphor (Pluggable Agent / Interoperability)` → `Agentinc SDK Favicon Icon Set`  [AMBIGUOUS]
+  docs/images/fleet/logo.svg · relation: conceptually_related_to
+- `Puzzle Piece Metaphor (Pluggable Agent / Interoperability)` → `Fleet SDK Favicon Icon Set`  [AMBIGUOUS]
   docs/images/favicon/favicon-32x32.png · relation: rationale_for
 
 ## Knowledge Gaps
-- **26 isolated node(s):** `Open-source boundary (sdk never imports platform internals)`, `Release 0.3.1`, `Keep a Changelog + SemVer convention`, `agentinc-sdk coding-agent skill`, `ToolProtocol` (+21 more)
+- **26 isolated node(s):** `Open-source boundary (sdk never imports platform internals)`, `Release 0.3.1`, `Keep a Changelog + SemVer convention`, `withfleet-sdk coding-agent skill`, `ToolProtocol` (+21 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **What is the exact relationship between `Agentinc "A" Monogram Logo Mark` and `Agentinc Brand Logo System (light/dark variants)`?**
+- **What is the exact relationship between `Fleet "A" Monogram Logo Mark` and `Fleet Brand Logo System (light/dark variants)`?**
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
-- **What is the exact relationship between `Agentinc "A" Monogram Logo Mark` and `Agentinc Pinwheel Glyph (black variant)`?**
+- **What is the exact relationship between `Fleet "A" Monogram Logo Mark` and `Fleet Pinwheel Glyph (black variant)`?**
   _Edge tagged AMBIGUOUS (relation: semantically_similar_to) - confidence is low._
 - **What is the exact relationship between `Chevron Apex Stroke (outer A silhouette)` and `Red Accent Sliver (#ed1c24)`?**
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
-- **What is the exact relationship between `Puzzle Piece Metaphor (Pluggable Agent / Interoperability)` and `Agentinc SDK Favicon Icon Set`?**
+- **What is the exact relationship between `Puzzle Piece Metaphor (Pluggable Agent / Interoperability)` and `Fleet SDK Favicon Icon Set`?**
   _Edge tagged AMBIGUOUS (relation: rationale_for) - confidence is low._
 - **Why does `AgentOutput` connect `RawAdapter & Example Agents` to `Agent Core, Memory & MCP`, `Audit Backends & Events`, `A2A Serve Layer & Tool Examples`, `Tool Decorator & Agent Tests`, `Serve Session Forwarding Tests`, `Gemini Provider & Conversion`, `LightRAG Retrieval Agent`, `Anthropic Provider`?**
   _High betweenness centrality (0.113) - this node is a cross-community bridge._

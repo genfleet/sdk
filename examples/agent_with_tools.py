@@ -5,7 +5,7 @@ Demonstrates automatic tool wrapping — plain Python functions are passed
 directly to Agent(); no @tool decorator required.
 
 Requires:
-    pip install 'agentinc-sdk[openai,serve]'
+    pip install 'withfleet-sdk[openai,serve]'
 
 Run:
     export OPENAI_API_KEY=sk-...
@@ -19,8 +19,8 @@ Test:
 
 import os
 
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 
 def get_weather(city: str) -> str:

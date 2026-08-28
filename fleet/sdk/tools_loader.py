@@ -51,7 +51,7 @@ from .manifest import (
 # Set by whatever unpacked the agent — the engine, a sandbox, a test harness.
 # Exists because an agent's own idea of where it lives is computed when the
 # code is written and can be wrong once the artifact is relocated.
-AGENT_ROOT_ENV = "AGENTINC_AGENT_ROOT"
+AGENT_ROOT_ENV = "FLEET_AGENT_ROOT"
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +72,11 @@ class ToolResolver(Protocol):
 # is open-source, and hardcoding one would point a public user at a repository
 # they may not be able to install.
 #
-#     [project.entry-points."agentinc.tools"]
-#     agentinc_tools = "agentinc_tools:discover"
+#     [project.entry-points."fleet.tools"]
+#     fleet_tools = "fleet_tools:discover"
 #
 # The named callable returns {slug: object with .load() -> Callable}.
-TOOL_ENTRY_POINT_GROUP = "agentinc.tools"
+TOOL_ENTRY_POINT_GROUP = "fleet.tools"
 
 
 class LocalToolResolver:
@@ -132,11 +132,11 @@ def discover_installed_tools() -> dict[str, Any]:
 # Its presence is what selects the mounted resolver over the local one: agent
 # code calls `load_tools()` with no arguments, so the choice cannot be made at
 # the call site, and a tenant cannot know where their artifact was mounted.
-TOOLS_ROOT_ENV = "AGENTINC_TOOLS_ROOT"
+TOOLS_ROOT_ENV = "FLEET_TOOLS_ROOT"
 
 #: The synthetic package every mounted tool is loaded underneath. A namespace
 #: rather than a real one — it exists only to give the loaded modules a parent.
-_MOUNTED_PACKAGE = "agentinc_mounted_tools"
+_MOUNTED_PACKAGE = "fleet_mounted_tools"
 
 
 class MountedToolResolver:
@@ -157,8 +157,8 @@ class MountedToolResolver:
 
     Layout, one directory per tool, named from the slug::
 
-        <root>/agentinc/echo/agentinc.toml   # the tool manifest
-        <root>/agentinc/echo/__init__.py     # its code
+        <root>/fleet/echo/fleet.toml   # the tool manifest
+        <root>/fleet/echo/__init__.py     # its code
 
     `ref.digest` is not re-verified here. The engine verified it before
     unpacking (`sandbox/delivery.verify_digest`), and re-hashing an unpacked
@@ -233,7 +233,7 @@ def _import_from_directory(slug: str, directory: Path, entry: str) -> ModuleType
     """Import a mounted tool's entry module without touching `sys.path`.
 
     Two constraints shape this. The module in `entry` is written as it would
-    be *installed* — `agentinc_tools.echo` — while the mount holds only that
+    be *installed* — `fleet_tools.echo` — while the mount holds only that
     one tool's directory, so the leading package segments have no counterpart
     on disk. And `sys.path` is process-global: appending each mount would let
     the first tool mounted shadow a later one's imports, which is a
@@ -241,7 +241,7 @@ def _import_from_directory(slug: str, directory: Path, entry: str) -> ModuleType
 
     So candidates are the suffixes of the module path, longest first, and the
     module is loaded from its file. Longest first matters: a tool that really
-    does ship `agentinc_tools/echo.py` inside its artifact resolves to itself,
+    does ship `fleet_tools/echo.py` inside its artifact resolves to itself,
     and this stays a widening rather than a change of meaning.
     """
     module_path, separator, attribute = entry.partition(":")
@@ -266,7 +266,7 @@ def _import_from_directory(slug: str, directory: Path, entry: str) -> ModuleType
 
     # The whole module path stripped away: the artifact root *is* the module,
     # which is the common case — `ag tools push` archives the tool's own
-    # directory, so `agentinc_tools/echo/__init__.py` arrives as `__init__.py`
+    # directory, so `fleet_tools/echo/__init__.py` arrives as `__init__.py`
     # at the root. Guarded on the directory name matching the last segment so
     # this cannot quietly answer for a differently-named tool.
     root_init = directory / "__init__.py"
@@ -297,7 +297,7 @@ def _is_inside(candidate: Path, directory: Path) -> bool:
 def _load_module(slug: str, file: Path, directory: Path) -> ModuleType:
     """Load `file` under a name derived from the slug.
 
-    Named `agentinc_mounted_tools.<scope>_<name>` rather than the module path
+    Named `fleet_mounted_tools.<scope>_<name>` rather than the module path
     the entry declares: two tools whose artifacts both contain `tool.py` would
     otherwise claim one `sys.modules` key, and the second import would
     silently return the first tool's module.
@@ -337,9 +337,9 @@ def _ensure_mounted_package() -> None:
     """Register the parent package mounted tools are loaded under.
 
     Python resolves ``from . import helpers`` by importing the *parent* of the
-    current module, so a module named ``agentinc_mounted_tools.acme_calc``
-    with no ``agentinc_mounted_tools`` in ``sys.modules`` fails with
-    ``No module named 'agentinc_mounted_tools'`` — raised from inside the
+    current module, so a module named ``fleet_mounted_tools.acme_calc``
+    with no ``fleet_mounted_tools`` in ``sys.modules`` fails with
+    ``No module named 'fleet_mounted_tools'`` — raised from inside the
     tool, which reads as the tool being broken rather than as the loader
     missing a step.
 
@@ -376,9 +376,9 @@ def load_tools(
     manifest: AgentManifest | None = None,
 ) -> list[Callable]:
     """
-    The tools named in an agent's `agentinc.toml`, ready to pass to `Agent`.
+    The tools named in an agent's `fleet.toml`, ready to pass to `Agent`.
 
-        from agentinc.sdk import Agent, load_tools
+        from fleet.sdk import Agent, load_tools
 
         def build_agent(remote_tools=()):
             return Agent(
@@ -406,7 +406,7 @@ def load_tools(
     1. **`manifest=`** — the manifest object itself. This is the platform's
        path: it holds the *pinned* manifest from the published artifact, which
        may never touch this machine's filesystem at all.
-    2. **`AGENTINC_AGENT_ROOT`** — set by whatever unpacked the agent. It wins
+    2. **`FLEET_AGENT_ROOT`** — set by whatever unpacked the agent. It wins
        over `directory` deliberately: after relocation the environment knows
        where the agent actually landed, and a path computed from `__file__`
        when the code was written is a guess that can be stale.

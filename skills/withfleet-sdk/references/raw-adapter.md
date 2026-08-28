@@ -1,6 +1,6 @@
 # RawAdapter — Migration Reference
 
-> ⚠️ **Removed in v0.4.0.** `RawAdapter` was deprecated in v0.2 and no longer ships. Pin `agentinc-sdk<0.4` if you still import it, or migrate as shown below.
+> ⚠️ **Removed in v0.4.0.** `RawAdapter` was deprecated in v0.2 and no longer ships. Pin `withfleet-sdk<0.4` if you still import it, or migrate as shown below.
 >
 > **Migrate to `Agent()`:**
 > ```python

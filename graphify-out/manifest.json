@@ -1,95 +1,95 @@
 {
-  "agentinc/__init__.py": {
+  "fleet/__init__.py": {
     "mtime": 1778629752.276889,
     "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
-  "agentinc/sdk/__init__.py": {
+  "fleet/sdk/__init__.py": {
     "mtime": 1781782361.6811316,
     "ast_hash": "5b363a9ffe91f66180dab32f29bb7ee3",
     "semantic_hash": "5b363a9ffe91f66180dab32f29bb7ee3"
   },
-  "agentinc/sdk/agent.py": {
+  "fleet/sdk/agent.py": {
     "mtime": 1783358091.0386655,
     "ast_hash": "9090428cca39648fae60e795562875a4",
     "semantic_hash": "9090428cca39648fae60e795562875a4"
   },
-  "agentinc/sdk/audit/__init__.py": {
+  "fleet/sdk/audit/__init__.py": {
     "mtime": 1781782435.9795628,
     "ast_hash": "621c491ba65faa40b8be0844bb543026",
     "semantic_hash": "621c491ba65faa40b8be0844bb543026"
   },
-  "agentinc/sdk/audit/backends.py": {
+  "fleet/sdk/audit/backends.py": {
     "mtime": 1781782231.6933267,
     "ast_hash": "49bec3e59ad1ccadd91af81fb9a9b9ea",
     "semantic_hash": "49bec3e59ad1ccadd91af81fb9a9b9ea"
   },
-  "agentinc/sdk/audit/schemas.py": {
+  "fleet/sdk/audit/schemas.py": {
     "mtime": 1781782433.907955,
     "ast_hash": "947f282c85b969915a644597759782e8",
     "semantic_hash": "947f282c85b969915a644597759782e8"
   },
-  "agentinc/sdk/memory/__init__.py": {
+  "fleet/sdk/memory/__init__.py": {
     "mtime": 1780690739.6689281,
     "ast_hash": "8a2d21fa39e4bad6ffc7caa4ee0152b6",
     "semantic_hash": "8a2d21fa39e4bad6ffc7caa4ee0152b6"
   },
-  "agentinc/sdk/memory/base.py": {
+  "fleet/sdk/memory/base.py": {
     "mtime": 1780690718.2587097,
     "ast_hash": "44dffb99f7f9fc28687d4ba562f62770",
     "semantic_hash": "44dffb99f7f9fc28687d4ba562f62770"
   },
-  "agentinc/sdk/memory/redis.py": {
+  "fleet/sdk/memory/redis.py": {
     "mtime": 1780690728.6620412,
     "ast_hash": "c78b159b4a250b2d610e767a0fe6da84",
     "semantic_hash": "c78b159b4a250b2d610e767a0fe6da84"
   },
-  "agentinc/sdk/protocol.py": {
+  "fleet/sdk/protocol.py": {
     "mtime": 1778629753.6961753,
     "ast_hash": "7451ce614645ec9dbb74c49fecc6121c",
     "semantic_hash": "7451ce614645ec9dbb74c49fecc6121c"
   },
-  "agentinc/sdk/providers/__init__.py": {
+  "fleet/sdk/providers/__init__.py": {
     "mtime": 1781858449.1262772,
     "ast_hash": "aa8b8c21e5fb06b0400236178e477557",
     "semantic_hash": "aa8b8c21e5fb06b0400236178e477557"
   },
-  "agentinc/sdk/providers/anthropic.py": {
+  "fleet/sdk/providers/anthropic.py": {
     "mtime": 1781859121.455733,
     "ast_hash": "b5eb694a7ad792a5a6348985a2f2e8d3",
     "semantic_hash": "b5eb694a7ad792a5a6348985a2f2e8d3"
   },
-  "agentinc/sdk/providers/base.py": {
+  "fleet/sdk/providers/base.py": {
     "mtime": 1780690661.553064,
     "ast_hash": "e8fc0794eb36ba863cfa2e000237fff6",
     "semantic_hash": "e8fc0794eb36ba863cfa2e000237fff6"
   },
-  "agentinc/sdk/providers/gemini.py": {
+  "fleet/sdk/providers/gemini.py": {
     "mtime": 1783413186.2177775,
     "ast_hash": "2f8c3dcd594c7792cf94d98b5651dc3f",
     "semantic_hash": "2f8c3dcd594c7792cf94d98b5651dc3f"
   },
-  "agentinc/sdk/providers/openai.py": {
+  "fleet/sdk/providers/openai.py": {
     "mtime": 1781858167.7619038,
     "ast_hash": "94f3e18ad3120304d3311d4437e416c9",
     "semantic_hash": "94f3e18ad3120304d3311d4437e416c9"
   },
-  "agentinc/sdk/raw.py": {
+  "fleet/sdk/raw.py": {
     "mtime": 1783358091.0393865,
     "ast_hash": "6376c1dae021ba56d6715f422a157da7",
     "semantic_hash": "6376c1dae021ba56d6715f422a157da7"
   },
-  "agentinc/sdk/schemas.py": {
+  "fleet/sdk/schemas.py": {
     "mtime": 1781858455.8710089,
     "ast_hash": "fb079c1e6031a25cb5a2c060ba197b58",
     "semantic_hash": "fb079c1e6031a25cb5a2c060ba197b58"
   },
-  "agentinc/sdk/serve.py": {
+  "fleet/sdk/serve.py": {
     "mtime": 1783358091.0403318,
     "ast_hash": "459ad3b24e8ace1a06891edc9a17999b",
     "semantic_hash": "459ad3b24e8ace1a06891edc9a17999b"
   },
-  "agentinc/sdk/tool.py": {
+  "fleet/sdk/tool.py": {
     "mtime": 1778629754.2904136,
     "ast_hash": "39ccad307a325fd1d76e40adbed719c7",
     "semantic_hash": "39ccad307a325fd1d76e40adbed719c7"
@@ -234,32 +234,32 @@
     "ast_hash": "033431988c05af856d3ad143ef1780ee",
     "semantic_hash": "033431988c05af856d3ad143ef1780ee"
   },
-  "skills/agentinc-sdk/SKILL.md": {
+  "skills/withfleet-sdk/SKILL.md": {
     "mtime": 1781859712.4012294,
     "ast_hash": "2d239fd333f020779a3c73c717e02eb6",
     "semantic_hash": "2d239fd333f020779a3c73c717e02eb6"
   },
-  "skills/agentinc-sdk/references/api.md": {
+  "skills/withfleet-sdk/references/api.md": {
     "mtime": 1783358091.0422165,
     "ast_hash": "ff28fc641f1a8e237318ce87204254f1",
     "semantic_hash": "ff28fc641f1a8e237318ce87204254f1"
   },
-  "skills/agentinc-sdk/references/frameworks.md": {
+  "skills/withfleet-sdk/references/frameworks.md": {
     "mtime": 1781859792.7882838,
     "ast_hash": "2664abb7d4e7299a0ff0bcb5dc92846d",
     "semantic_hash": "2664abb7d4e7299a0ff0bcb5dc92846d"
   },
-  "skills/agentinc-sdk/references/raw-adapter.md": {
+  "skills/withfleet-sdk/references/raw-adapter.md": {
     "mtime": 1783358091.042928,
     "ast_hash": "7225e10dafa8af5f99cd174849892113",
     "semantic_hash": "7225e10dafa8af5f99cd174849892113"
   },
-  "skills/agentinc-sdk/references/serve.md": {
+  "skills/withfleet-sdk/references/serve.md": {
     "mtime": 1780693023.534969,
     "ast_hash": "0ea56abebef2d29561e1dfa04dc4b7f1",
     "semantic_hash": "0ea56abebef2d29561e1dfa04dc4b7f1"
   },
-  "docs/images/agentinc/logo.svg": {
+  "docs/images/fleet/logo.svg": {
     "mtime": 1769886510.947234,
     "ast_hash": "61f429f724eb65dbb4412aaae31cfe17",
     "semantic_hash": "61f429f724eb65dbb4412aaae31cfe17"

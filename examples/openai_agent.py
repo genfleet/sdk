@@ -2,7 +2,7 @@
 Agent using OpenAI via Agent(), served over A2A.
 
 Requires:
-    pip install 'agentinc-sdk[openai,serve]'
+    pip install 'withfleet-sdk[openai,serve]'
 
 Run:
     export OPENAI_API_KEY=sk-...
@@ -21,8 +21,8 @@ Test:
 
 import os
 
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 
 def get_weather(city: str) -> str:

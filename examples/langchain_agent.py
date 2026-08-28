@@ -5,7 +5,7 @@ For framework integrations where you manage the LLM call yourself,
 implement AgentProtocol directly (a class with async run()).
 
 Requires:
-    pip install langchain-openai langchain-core 'agentinc-sdk[serve]'
+    pip install langchain-openai langchain-core 'withfleet-sdk[serve]'
 
 Run:
     export OPENAI_API_KEY=sk-...
@@ -21,8 +21,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool as lc_tool
 from langchain_openai import ChatOpenAI
 
-from agentinc.sdk import AgentInput, AgentOutput
-from agentinc.sdk.serve import serve
+from fleet.sdk import AgentInput, AgentOutput
+from fleet.sdk.serve import serve
 
 
 @lc_tool

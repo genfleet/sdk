@@ -1,21 +1,21 @@
 ---
-name: agentinc-sdk
-description: "How to build and serve AI agents using the agentinc-sdk Python package. Use this skill whenever the user is working with agentinc, agentinc-sdk, AgentProtocol, Agent(), RawAdapter, or wants to create agents for the Agentinc marketplace. Also trigger when you see imports from agentinc.sdk, files referencing agentinc agent patterns, Agent() constructor with role=/model=/tools=/mcps=/memory= params, or when the user asks about wrapping OpenAI/Anthropic/Gemini/LangChain/CrewAI agents into a universal protocol. Even if the user doesn't say 'agentinc' explicitly, trigger if they're working in a project that has agentinc-sdk as a dependency or has agentinc/ in its import paths."
+name: withfleet-sdk
+description: "How to build and serve AI agents using the withfleet-sdk Python package. Use this skill whenever the user is working with fleet, withfleet-sdk, AgentProtocol, Agent(), RawAdapter, or wants to create agents for the Fleet marketplace. Also trigger when you see imports from fleet.sdk, files referencing fleet agent patterns, Agent() constructor with role=/model=/tools=/mcps=/memory= params, or when the user asks about wrapping OpenAI/Anthropic/Gemini/LangChain/CrewAI agents into a universal protocol. Even if the user doesn't say 'fleet' explicitly, trigger if they're working in a project that has withfleet-sdk as a dependency or has fleet/ in its import paths."
 ---
 
-# Agentinc SDK
+# Fleet SDK
 
-The agentinc-sdk is the developer interface for the Agentinc agent marketplace. Developers declare an agent using `Agent()`, and the SDK handles provider selection, tool dispatch, memory, and MCP connections automatically.
+The withfleet-sdk is the developer interface for the Fleet agent marketplace. Developers declare an agent using `Agent()`, and the SDK handles provider selection, tool dispatch, memory, and MCP connections automatically.
 
 The SDK is **open-source**. Core (`pydantic>=2.7`) has zero LLM dependencies. Provider libraries are installed as optional extras.
 
 ## Installation
 
 ```bash
-pip install agentinc-sdk                    # core only (pydantic)
-pip install 'agentinc-sdk[openai,serve]'    # OpenAI + A2A server
-pip install 'agentinc-sdk[anthropic,serve]' # Anthropic + A2A server
-pip install 'agentinc-sdk[all]'             # everything
+pip install withfleet-sdk                    # core only (pydantic)
+pip install 'withfleet-sdk[openai,serve]'    # OpenAI + A2A server
+pip install 'withfleet-sdk[anthropic,serve]' # Anthropic + A2A server
+pip install 'withfleet-sdk[all]'             # everything
 ```
 
 Requires **Python 3.12+**.
@@ -36,7 +36,7 @@ No provider client setup, no manual tool dispatch loop, no history wiring needed
 ### All Exports
 
 ```python
-from agentinc.sdk import (
+from fleet.sdk import (
     Agent,          # Main class — declare and run agents
     AgentProtocol,  # Protocol — implement run(input) -> AsyncIterator[AgentOutput]
     ToolProtocol,   # Protocol — implement schema() + call()
@@ -59,15 +59,15 @@ from agentinc.sdk import (
 )
 
 # Serve module (requires [serve] extra)
-from agentinc.sdk.serve import create_app, serve
+from fleet.sdk.serve import create_app, serve
 ```
 
 ### Minimal Agent (4 lines)
 
 ```python
 import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 serve(
     Agent(role="You are a helpful assistant.", model={"model": "openai/gpt-4o-mini", "api_key": os.environ["OPENAI_API_KEY"]}),
@@ -141,8 +141,8 @@ MCP tool schemas are fetched and merged with local tools on first `run()` call.
 
 ```python
 import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 def get_weather(city: str) -> str:
     """Gets the current weather for a city."""
@@ -160,8 +160,8 @@ serve(agent, name="assistant", port=8000)
 
 ```python
 import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 agent = Agent(
     role="You are a customer support agent.",
@@ -219,7 +219,7 @@ agent = Agent(
 Turns any function into a `ToolProtocol` with auto-generated JSON Schema from type hints. When using `Agent(tools=[...])`, plain functions are auto-wrapped — `@tool` is optional but useful for adding descriptions.
 
 ```python
-from agentinc.sdk import tool, ToolCall
+from fleet.sdk import tool, ToolCall
 
 @tool(description="adds two numbers")
 def add(a: float, b: float) -> str:
@@ -237,7 +237,7 @@ result = await add.call(ToolCall(id="1", name="add", arguments={"a": 3, "b": 4})
 For framework integrations (LangChain, CrewAI) where you manage the LLM yourself, implement `AgentProtocol` directly instead of using `Agent()`:
 
 ```python
-from agentinc.sdk import AgentInput, AgentOutput, AgentProtocol
+from fleet.sdk import AgentInput, AgentOutput, AgentProtocol
 
 class MyAgent:
     async def run(self, input: AgentInput):
@@ -250,7 +250,7 @@ serve(MyAgent(), name="my-agent", port=8000)
 ## Serving Over A2A
 
 ```python
-from agentinc.sdk.serve import serve, create_app
+from fleet.sdk.serve import serve, create_app
 
 # Blocking (dev/scripts)
 serve(agent, name="my-agent", description="Does things", host="0.0.0.0", port=8000)
@@ -278,7 +278,7 @@ curl -N -X POST http://localhost:8000 \
 
 ## Key Rules
 
-1. **SDK imports only from itself.** Never add imports from `agentinc.core`, `agentinc.runner`, `agentinc.loader`, `agentinc.engine`, or `agentinc.protocols`. Those are platform internals.
+1. **SDK imports only from itself.** Never add imports from `fleet.core`, `fleet.runner`, `fleet.loader`, `fleet.engine`, or `fleet.protocols`. Those are platform internals.
 2. **Use `Agent()` as the default path.** Only implement `AgentProtocol` directly for framework integrations (LangChain, CrewAI) that manage their own LLM calls.
 3. **`RawAdapter` was removed in 0.4.0.** Deprecated since 0.2. Use `Agent()`; see `references/raw-adapter.md` to migrate.
 4. **Python 3.12+ required.** Always use `--python 3.12` when creating venvs with `uv`.

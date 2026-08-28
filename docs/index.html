@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agentinc SDK — Developer Documentation</title>
+  <title>Fleet SDK — Developer Documentation</title>
   <link id="site-favicon" rel="icon" type="image/svg+xml" href="images/logo_white.svg" />
   <script>
     (function () {
       try {
-        const saved = localStorage.getItem('agentinc-docs-theme');
+        const saved = localStorage.getItem('fleet-docs-theme');
         const theme = saved === 'light' || saved === 'dark' ? saved
           : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
         document.documentElement.dataset.theme = theme;
@@ -245,7 +245,7 @@
   <div class="sidebar-header">
     <a href="#" class="sidebar-logo">
       <div class="sidebar-logo-icon"><img id="sidebar-logo-image" src="images/logo_white.svg" alt="" aria-hidden="true"/></div>
-      <span class="sidebar-logo-text">agentinc-sdk</span>
+      <span class="sidebar-logo-text">withfleet-sdk</span>
       <span class="sidebar-version">v0.3.0</span>
     </a>
   </div>
@@ -292,7 +292,7 @@
     </div>
   </div>
   <div class="sidebar-footer">
-    <a href="https://github.com/agentinc/sdk" target="_blank" rel="noopener">
+    <a href="https://github.com/withfleet/sdk" target="_blank" rel="noopener">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
       GitHub
     </a>
@@ -309,12 +309,12 @@
       <button class="gh-star-btn theme-toggle-btn" id="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
         <svg id="theme-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2"/><path d="M12 21v2"/><path d="m4.22 4.22 1.42 1.42"/><path d="m18.36 18.36 1.42 1.42"/><path d="M1 12h2"/><path d="M21 12h2"/><path d="m4.22 19.78 1.42-1.42"/><path d="m18.36 5.64 1.42-1.42"/></svg>
       </button>
-      <a href="https://github.com/agentinc/sdk" target="_blank" rel="noopener" class="gh-star-btn">
+      <a href="https://github.com/withfleet/sdk" target="_blank" rel="noopener" class="gh-star-btn">
         <i class="fa-brands fa-github" style="font-size:15px;"></i>
         Star on GitHub
       </a>
       <div class="topbar-logo-btn">
-        <img src="images/agentinc/logo.svg" alt="Agentinc" class="topbar-logo" aria-hidden="true" />
+        <img src="images/fleet/logo.svg" alt="Fleet" class="topbar-logo" aria-hidden="true" />
       </div>
     </div>
   </div>
@@ -327,10 +327,10 @@
         Simple agent SDK
       </div>
       <h1>Your agent,<br/><span>ready to ship.</span></h1>
-      <p class="hero-sub">Any model. Built-in tools, memory, and MCP. Serve locally or publish to the Agentinc marketplace — all from one package.</p>
+      <p class="hero-sub">Any model. Built-in tools, memory, and MCP. Serve locally or publish to the Fleet marketplace — all from one package.</p>
       <div class="hero-install">
-        <code id="install-cmd">pip install "agentinc-sdk[openai,serve]"</code>
-        <button class="copy-btn" onclick="copyText('pip install &quot;agentinc-sdk[openai,serve]&quot;', this)" aria-label="Copy install command">
+        <code id="install-cmd">pip install "withfleet-sdk[openai,serve]"</code>
+        <button class="copy-btn" onclick="copyText('pip install &quot;withfleet-sdk[openai,serve]&quot;', this)" aria-label="Copy install command">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
         </button>
       </div>
@@ -340,16 +340,16 @@
       <h2>Installation</h2>
       <p class="section-desc">Install the SDK with pip or uv. Core depends only on Pydantic — extras add provider clients and the A2A server.</p>
       <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash"># Core (pydantic only)
-pip install agentinc-sdk
+pip install withfleet-sdk
 
 # With OpenAI + A2A server
-pip install "agentinc-sdk[openai,serve]"
+pip install "withfleet-sdk[openai,serve]"
 
 # With Anthropic + A2A server
-pip install "agentinc-sdk[anthropic,serve]"
+pip install "withfleet-sdk[anthropic,serve]"
 
 # Everything
-pip install "agentinc-sdk[all]"</code></pre>
+pip install "withfleet-sdk[all]"</code></pre>
       <div class="table-wrap"><table>
         <thead><tr><th>Extra</th><th>Installs</th><th>Use for</th></tr></thead>
         <tbody>
@@ -370,8 +370,8 @@ pip install "agentinc-sdk[all]"</code></pre>
 
     <div class="section" id="skill">
       <h2>Agent Skill</h2>
-      <p class="section-desc">Install the agentinc-sdk skill so your coding agent understands the <code>Agent</code> API and can help you build agents faster.</p>
-      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">npx skills add agentinc/sdk</code></pre>
+      <p class="section-desc">Install the withfleet-sdk skill so your coding agent understands the <code>Agent</code> API and can help you build agents faster.</p>
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">npx skills add fleet/sdk</code></pre>
       <div class="feature-grid">
         <div class="feature-item"><div class="feature-item-title">Build agents</div><div class="feature-item-desc">Ask your agent to create an <code>Agent()</code> with tools, MCP servers, or memory — it uses current SDK patterns.</div></div>
         <div class="feature-item"><div class="feature-item-title">Debug issues</div><div class="feature-item-desc">Your coding agent knows the Agent constructor, provider config rules, tool schemas, and A2A formats.</div></div>
@@ -384,8 +384,8 @@ pip install "agentinc-sdk[all]"</code></pre>
       <h2>Quickstart</h2>
       <p class="section-desc">Create an <code>Agent</code>, give it a model and a tool, then serve it over A2A.</p>
       <pre><div class="code-header">quickstart.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 def get_weather(city: str) -> str:
     """Gets the current weather for a city."""
@@ -409,7 +409,7 @@ curl -X POST http://localhost:8000 \
 
     <div class="section" id="concepts">
       <h2>Core Concepts</h2>
-      <p class="section-desc">The SDK defines the contract between your agent code and the Agentinc platform.</p>
+      <p class="section-desc">The SDK defines the contract between your agent code and the Fleet platform.</p>
       <div class="feature-grid">
         <div class="feature-item"><div class="feature-item-title">Agent</div><div class="feature-item-desc">The main class. Wires the provider, tool dispatch loop, session memory, and MCP connections automatically.</div></div>
         <div class="feature-item"><div class="feature-item-title">AgentProtocol</div><div class="feature-item-desc">Universal agent contract. Implement <code>run()</code> for framework integrations that manage their own LLM calls.</div></div>
@@ -468,7 +468,7 @@ curl -X POST http://localhost:8000 \
 
     <div class="section" id="memory-config">
       <h2>MemoryConfig</h2>
-      <p class="section-desc">Redis-backed session memory. History is loaded at the start of each <code>run()</code> and saved at the end. Requires <code>pip install 'agentinc-sdk[memory]'</code>.</p>
+      <p class="section-desc">Redis-backed session memory. History is loaded at the start of each <code>run()</code> and saved at the end. Requires <code>pip install 'withfleet-sdk[memory]'</code>.</p>
       <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">{
     "type":       "redis",
     "connection": "redis://localhost:6379/0",
@@ -483,7 +483,7 @@ curl -X POST http://localhost:8000 \
 
     <div class="section" id="mcp-config">
       <h2>MCPConfig</h2>
-      <p class="section-desc">Connect to MCP servers. Tool schemas are fetched on the first <code>run()</code> call and merged with local tools. Requires <code>pip install 'agentinc-sdk[mcp]'</code>.</p>
+      <p class="section-desc">Connect to MCP servers. Tool schemas are fetched on the first <code>run()</code> call and merged with local tools. Requires <code>pip install 'withfleet-sdk[mcp]'</code>.</p>
       <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python"># stdio — spawns a subprocess
 {
     "type":    "stdio",
@@ -554,8 +554,8 @@ audit={"backend": "callback", "callback": my_handler}</code></pre>
 class AgentProtocol(Protocol):
     def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]: ...</code></pre>
       <h3>Direct implementation</h3>
-      <pre><div class="code-header">my_agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from agentinc.sdk import AgentInput, AgentOutput, AgentProtocol
-from agentinc.sdk.serve import serve
+      <pre><div class="code-header">my_agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from fleet.sdk import AgentInput, AgentOutput, AgentProtocol
+from fleet.sdk.serve import serve
 
 class MyAgent:
     async def run(self, input: AgentInput):
@@ -607,7 +607,7 @@ class ToolProtocol(Protocol):
       <h2>@tool Decorator</h2>
       <p class="section-desc">Turn any function into a <code>ToolProtocol</code> with one line. Schema auto-generated from type hints and docstring.</p>
       <div class="api-card"><div class="api-card-header"><span class="api-badge badge-decorator">Decorator</span><span class="api-card-name">@tool</span></div><p>Returns a <code>ToolWrapper</code>. Works with sync and async functions.</p></div>
-      <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from agentinc.sdk import tool
+      <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from fleet.sdk import tool
 
 # Bare — schema from type hints + docstring
 @tool
@@ -637,7 +637,7 @@ def add_numbers(a: float, b: float) -> str:
       <h2>ToolWrapper</h2>
       <p class="section-desc">The object returned by <code>@tool</code>. Satisfies <code>ToolProtocol</code> — call directly or via a <code>ToolCall</code>.</p>
       <div class="api-card"><div class="api-card-header"><span class="api-badge badge-class">Class</span><span class="api-card-name">ToolWrapper</span></div><p>Wraps any sync or async callable with a JSON schema and <code>ToolProtocol</code> interface.</p></div>
-      <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from agentinc.sdk import tool, ToolCall
+      <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from fleet.sdk import tool, ToolCall
 
 @tool
 def greet(name: str) -> str:
@@ -666,8 +666,8 @@ result = await greet(name="World")</code></pre>
     <div class="section" id="create-app">
       <h3>create_app()</h3>
       <div class="api-card"><div class="api-card-header"><span class="api-badge badge-function">Function</span><span class="api-card-name">create_app(agent, *, name, description) → FastAPI</span></div><p>Returns a FastAPI app for custom ASGI deployments.</p></div>
-      <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from agentinc.sdk import Agent
-from agentinc.sdk.serve import create_app
+      <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from fleet.sdk import Agent
+from fleet.sdk.serve import create_app
 
 app = create_app(
     Agent(role="You are helpful.", model={"model": "openai/gpt-4o-mini", "api_key": "sk-..."}),
@@ -695,8 +695,8 @@ app = create_app(
       <h2>Example: OpenAI Agent</h2>
       <p class="section-desc">Minimal <code>Agent</code> with a tool using an OpenAI model.</p>
       <pre><div class="code-header">openai_agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 def get_weather(city: str) -> str:
     """Gets the current weather for a city."""
@@ -715,8 +715,8 @@ serve(agent, name="openai-agent", port=8000)</code></pre>
       <h2>Example: Anthropic Agent</h2>
       <p class="section-desc">Claude-powered agent — provider auto-detected from the <code>claude-</code> prefix.</p>
       <pre><div class="code-header">anthropic_agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 def lookup(topic: str) -> str:
     """Looks up a fact in the knowledge base."""
@@ -735,8 +735,8 @@ serve(agent, name="anthropic-agent", port=8002)</code></pre>
       <h2>Example: Session Memory</h2>
       <p class="section-desc">Persistent multi-turn conversations backed by Redis.</p>
       <pre><div class="code-header">memory_agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 agent = Agent(
     role="You are a friendly assistant with a long memory.",
@@ -762,8 +762,8 @@ curl -X POST http://localhost:8000 \
       <h2>Example: MCP Server</h2>
       <p class="section-desc">Connect to an MCP server. Tool schemas are fetched on first call and merged with local tools.</p>
       <pre><div class="code-header">mcp_agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 def read_file(path: str) -> str:
     """Reads a local file."""
@@ -790,8 +790,8 @@ serve(agent, name="mcp-agent", port=8000)</code></pre>
       <pre><div class="code-header">langchain_agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool as lc_tool
 from langchain_openai import ChatOpenAI
-from agentinc.sdk import AgentInput, AgentOutput
-from agentinc.sdk.serve import serve
+from fleet.sdk import AgentInput, AgentOutput
+from fleet.sdk.serve import serve
 
 @lc_tool
 def calculator(expression: str) -> str:
@@ -827,8 +827,8 @@ serve(LangChainAgent(), name="langchain-agent", port=8003)</code></pre>
       <p class="section-desc">CrewAI manages its own orchestration — implement <code>AgentProtocol</code> directly and wrap the blocking call.</p>
       <pre><div class="code-header">crewai_agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">import asyncio
 from crewai import Agent as CrewAgent, Crew, Task
-from agentinc.sdk import AgentInput, AgentOutput
-from agentinc.sdk.serve import serve
+from fleet.sdk import AgentInput, AgentOutput
+from fleet.sdk.serve import serve
 
 researcher = CrewAgent(
     role="Senior Research Analyst",
@@ -850,11 +850,11 @@ serve(CrewAIAgent(), name="crewai-agent", port=8004)</code></pre>
 
     <div class="section" id="marketplace">
       <h2>Ship to the Marketplace</h2>
-      <p class="section-desc">Once your agent works locally, publish it to the Agentinc marketplace so tenants can discover and deploy it into their own isolated namespaces.</p>
+      <p class="section-desc">Once your agent works locally, publish it to the Fleet marketplace so tenants can discover and deploy it into their own isolated namespaces.</p>
       <div class="feature-grid">
         <div class="feature-item"><div class="feature-item-title">1. Build &amp; test locally</div><div class="feature-item-desc">Run <code>serve()</code> and verify your agent responds correctly over A2A before publishing.</div></div>
         <div class="feature-item"><div class="feature-item-title">2. Add an agent manifest</div><div class="feature-item-desc">Create <code>agent.json</code> in your project with name, description, version, and entry point.</div></div>
-        <div class="feature-item"><div class="feature-item-title">3. Publish via CLI</div><div class="feature-item-desc">Run <code>agentinc publish</code> to bundle and upload your agent to the marketplace registry.</div></div>
+        <div class="feature-item"><div class="feature-item-title">3. Publish via CLI</div><div class="feature-item-desc">Run <code>fleet publish</code> to bundle and upload your agent to the marketplace registry.</div></div>
         <div class="feature-item"><div class="feature-item-title">4. Tenants deploy it</div><div class="feature-item-desc">Tenants find your agent in the marketplace and deploy it into their namespace with one click.</div></div>
       </div>
       <h3>agent.json manifest</h3>
@@ -871,22 +871,22 @@ serve(CrewAIAgent(), name="crewai-agent", port=8004)</code></pre>
   }
 }</code></pre>
       <h3>Publish</h3>
-      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash"># Login to the Agentinc registry
-agentinc login
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash"># Login to the Fleet registry
+fleet login
 
 # Publish from your project directory
-agentinc publish
+fleet publish
 
 # Publish a specific version
-agentinc publish --version 1.2.0
+fleet publish --version 1.2.0
 
 # List your published agents
-agentinc agents list</code></pre>
+fleet agents list</code></pre>
       <h3>Entry point structure</h3>
       <p>Your <code>entrypoint</code> file must expose a top-level variable named <code>agent</code> that satisfies <code>AgentProtocol</code>.</p>
       <pre><div class="code-header">agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python"># agent.py — this file is what the platform imports
 import os
-from agentinc.sdk import Agent
+from fleet.sdk import Agent
 
 def get_weather(city: str) -> str:
     """Gets the current weather for a city."""
@@ -901,7 +901,7 @@ agent = Agent(
 
 # Optional: run locally for testing
 if __name__ == "__main__":
-    from agentinc.sdk.serve import serve
+    from fleet.sdk.serve import serve
     serve(agent, name="weather-agent", port=8000)</code></pre>
       <div class="callout callout-info">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
@@ -911,8 +911,8 @@ if __name__ == "__main__":
 
     <div class="section" id="exports">
       <h2>All Exports</h2>
-      <p class="section-desc">Everything exported from <code>agentinc.sdk</code>.</p>
-      <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from agentinc.sdk import (
+      <p class="section-desc">Everything exported from <code>fleet.sdk</code>.</p>
+      <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">from fleet.sdk import (
     # Core
     Agent,          # Main class — declare and run agents
     AgentProtocol,  # Protocol — implement run() for custom integrations
@@ -938,7 +938,7 @@ if __name__ == "__main__":
 )
 
 # A2A serve module (requires [serve] extra)
-from agentinc.sdk.serve import create_app, serve</code></pre>
+from fleet.sdk.serve import create_app, serve</code></pre>
     </div>
 
   </div>
@@ -968,7 +968,7 @@ const themeToggle = document.getElementById('theme-toggle');
 const themeToggleIcon = document.getElementById('theme-toggle-icon');
 const sidebarLogoImage = document.getElementById('sidebar-logo-image');
 const siteFavicon = document.getElementById('site-favicon');
-const THEME_KEY = 'agentinc-docs-theme';
+const THEME_KEY = 'fleet-docs-theme';
 const themeIcons = {
   light: '<circle cx="12" cy="12" r="5"/><path d="M12 1v2"/><path d="M12 21v2"/><path d="m4.22 4.22 1.42 1.42"/><path d="m18.36 18.36 1.42 1.42"/><path d="M1 12h2"/><path d="M21 12h2"/><path d="m4.22 19.78 1.42-1.42"/><path d="m18.36 5.64 1.42-1.42"/>',
   dark: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/>',

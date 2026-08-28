@@ -6,7 +6,7 @@ This example shows the current recommended approach: implement AgentProtocol
 directly and inject retrieved context into the system prompt per-query.
 
 Requires:
-    pip install 'agentinc-sdk[openai,serve]' lightrag-hku[openai]
+    pip install 'withfleet-sdk[openai,serve]' lightrag-hku[openai]
 
 Index documents first:
     python -c "
@@ -34,8 +34,8 @@ from lightrag import LightRAG, QueryParam
 from lightrag.llm.openai import openai_complete_if_cache, openai_embed
 from lightrag.utils import EmbeddingFunc
 
-from agentinc.sdk import AgentInput, AgentOutput
-from agentinc.sdk.serve import serve
+from fleet.sdk import AgentInput, AgentOutput
+from fleet.sdk.serve import serve
 
 
 RAG_STORAGE = str(Path(__file__).parent / "rag_storage")

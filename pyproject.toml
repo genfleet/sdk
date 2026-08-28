@@ -1,7 +1,7 @@
 [project]
-name = "agentinc-sdk"
+name = "withfleet-sdk"
 version = "0.8.2"
-description = "Developer SDK for the Agentinc agent marketplace platform"
+description = "Developer SDK for the Fleet agent marketplace platform"
 license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -42,23 +42,23 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# DO NOT change this to `packages`, and DO NOT add an `agentinc/__init__.py`.
+# DO NOT change this to `packages`, and DO NOT add an `fleet/__init__.py`.
 #
-# `agentinc` is a PEP 420 implicit namespace package shared with every other
-# agentinc-* distribution (core, engine, loader, runner, adapter, protocols).
+# `fleet` is a PEP 420 implicit namespace package shared with every other
+# fleet-* distribution (core, engine, loader, runner, adapter, protocols).
 # Two ways to break consumers, both of which build without a warning:
 #
-#   1. Shipping an `agentinc/__init__.py` makes `agentinc` a *regular* package.
+#   1. Shipping an `fleet/__init__.py` makes `fleet` a *regular* package.
 #      Its `__path__` collapses to this one directory and every sibling
-#      distribution becomes unimportable (`ModuleNotFoundError: agentinc.core`).
-#   2. `packages = ["agentinc/sdk"]` looks equivalent but hatchling strips the
+#      distribution becomes unimportable (`ModuleNotFoundError: fleet.core`).
+#   2. `packages = ["fleet/sdk"]` looks equivalent but hatchling strips the
 #      parent, producing a wheel with a top-level `sdk/` package — importable
-#      as `import sdk`, never as `agentinc.sdk`.
+#      as `import sdk`, never as `fleet.sdk`.
 #
-# `only-include` keeps the `agentinc/` prefix without synthesizing an __init__.
+# `only-include` keeps the `fleet/` prefix without synthesizing an __init__.
 # tests/test_wheel_layout.py builds the wheel and asserts both properties;
 # tests/test_packaging.py guards the source tree and the installed namespace.
-only-include = ["agentinc/sdk"]
+only-include = ["fleet/sdk"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

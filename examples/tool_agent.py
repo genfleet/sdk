@@ -9,7 +9,7 @@ Run:
 import asyncio
 import os
 
-from agentinc.sdk import Agent, AgentInput, ToolCall, tool
+from fleet.sdk import Agent, AgentInput, ToolCall, tool
 
 
 @tool(description="adds two numbers")

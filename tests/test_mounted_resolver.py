@@ -13,8 +13,8 @@ import sys
 
 import pytest
 
-from agentinc.sdk.manifest import ToolRef
-from agentinc.sdk.tools_loader import (
+from fleet.sdk.manifest import ToolRef
+from fleet.sdk.tools_loader import (
     LocalToolResolver,
     MountedToolResolver,
     ToolResolutionError,
@@ -28,7 +28,7 @@ def mount_tool(root, slug, *, entry, body, package=False):
     scope, _, name = slug.lstrip("@").partition("/")
     directory = root / scope / name
     directory.mkdir(parents=True)
-    (directory / "agentinc.toml").write_text(
+    (directory / "fleet.toml").write_text(
         f'[tool]\nslug = "{slug}"\nversion = "1.0.0"\nentry = "{entry}"\n'
     )
     module_path, _, _ = entry.partition(":")
@@ -56,36 +56,36 @@ def _no_leaked_modules():
 
 
 def test_it_resolves_a_tool_pushed_as_its_own_package_directory(tmp_path):
-    # The shape `ag tools push src/agentinc_tools/echo` actually produces: the
+    # The shape `ag tools push src/fleet_tools/echo` actually produces: the
     # archive root *is* the package, so the entry's leading segments have no
     # counterpart on disk.
     mount_tool(
         tmp_path,
-        "@agentinc/echo",
-        entry="agentinc_tools.echo:echo",
+        "@fleet/echo",
+        entry="fleet_tools.echo:echo",
         body="def echo(text):\n    return text\n",
         package=True,
     )
 
-    resolved = MountedToolResolver(tmp_path).resolve(ToolRef(slug="@agentinc/echo"))
+    resolved = MountedToolResolver(tmp_path).resolve(ToolRef(slug="@fleet/echo"))
 
     assert resolved("hi") == "hi"
 
 
 def test_a_tool_that_really_ships_the_full_package_path_resolves_to_itself(tmp_path):
     # Longest-suffix-first is what keeps this a widening rather than a change
-    # of meaning: an artifact containing `agentinc_tools/echo.py` must not be
+    # of meaning: an artifact containing `fleet_tools/echo.py` must not be
     # answered by a root `__init__.py` that happens to sit beside it.
-    directory = tmp_path / "agentinc" / "echo"
-    (directory / "agentinc_tools").mkdir(parents=True)
-    (directory / "agentinc.toml").write_text(
-        '[tool]\nslug = "@agentinc/echo"\nversion = "1.0.0"\n'
-        'entry = "agentinc_tools.echo:echo"\n'
+    directory = tmp_path / "fleet" / "echo"
+    (directory / "fleet_tools").mkdir(parents=True)
+    (directory / "fleet.toml").write_text(
+        '[tool]\nslug = "@fleet/echo"\nversion = "1.0.0"\n'
+        'entry = "fleet_tools.echo:echo"\n'
     )
-    (directory / "agentinc_tools" / "echo.py").write_text("def echo(t):\n    return 'inner'\n")
+    (directory / "fleet_tools" / "echo.py").write_text("def echo(t):\n    return 'inner'\n")
     (directory / "__init__.py").write_text("def echo(t):\n    return 'root'\n")
 
-    resolved = MountedToolResolver(tmp_path).resolve(ToolRef(slug="@agentinc/echo"))
+    resolved = MountedToolResolver(tmp_path).resolve(ToolRef(slug="@fleet/echo"))
 
     assert resolved("x") == "inner"
 
@@ -96,14 +96,14 @@ def test_a_multi_file_tool_can_import_its_own_helpers(tmp_path):
     # ImportError, which is the ordinary way to write a tool of any size.
     directory = mount_tool(
         tmp_path,
-        "@agentinc/calc",
-        entry="agentinc_tools.calc:add",
+        "@fleet/calc",
+        entry="fleet_tools.calc:add",
         body="from . import helpers\n\ndef add(a, b):\n    return helpers.total(a, b)\n",
         package=True,
     )
     (directory / "helpers.py").write_text("def total(a, b):\n    return a + b\n")
 
-    resolved = MountedToolResolver(tmp_path).resolve(ToolRef(slug="@agentinc/calc"))
+    resolved = MountedToolResolver(tmp_path).resolve(ToolRef(slug="@fleet/calc"))
 
     assert resolved(2, 3) == 5
 
@@ -168,7 +168,7 @@ def test_a_tool_that_raises_on_import_is_reported_and_not_left_in_sys_modules(tm
     with pytest.raises(ToolResolutionError, match="failed to import"):
         MountedToolResolver(tmp_path).resolve(ToolRef(slug="@acme/boom"))
 
-    assert "agentinc_mounted_tools.acme_boom" not in sys.modules
+    assert "fleet_mounted_tools.acme_boom" not in sys.modules
 
 
 def test_load_tools_uses_the_mount_when_the_engine_set_one(tmp_path, monkeypatch):
@@ -176,17 +176,17 @@ def test_load_tools_uses_the_mount_when_the_engine_set_one(tmp_path, monkeypatch
     # `load_tools()` with no arguments, so nothing at the call site can choose.
     agent = tmp_path / "agent"
     agent.mkdir()
-    (agent / "agentinc.toml").write_text(
-        '[agent]\nname = "a"\n\n[tools]\n"@agentinc/echo" = "*"\n'
+    (agent / "fleet.toml").write_text(
+        '[agent]\nname = "a"\n\n[tools]\n"@fleet/echo" = "*"\n'
     )
     mounted = tmp_path / "tools"
     mount_tool(
-        mounted, "@agentinc/echo", entry="agentinc_tools.echo:echo",
+        mounted, "@fleet/echo", entry="fleet_tools.echo:echo",
         body="def echo(t):\n    return t\n", package=True,
     )
 
-    monkeypatch.setenv("AGENTINC_AGENT_ROOT", str(agent))
-    monkeypatch.setenv("AGENTINC_TOOLS_ROOT", str(mounted))
+    monkeypatch.setenv("FLEET_AGENT_ROOT", str(agent))
+    monkeypatch.setenv("FLEET_TOOLS_ROOT", str(mounted))
 
     tools = load_tools()
 
@@ -194,5 +194,5 @@ def test_load_tools_uses_the_mount_when_the_engine_set_one(tmp_path, monkeypatch
 
 
 def test_without_the_mount_variable_the_local_resolver_is_still_the_default(monkeypatch):
-    monkeypatch.delenv("AGENTINC_TOOLS_ROOT", raising=False)
+    monkeypatch.delenv("FLEET_TOOLS_ROOT", raising=False)
     assert isinstance(default_resolver(), LocalToolResolver)

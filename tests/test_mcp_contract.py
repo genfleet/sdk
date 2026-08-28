@@ -16,7 +16,7 @@ import importlib
 
 import pytest
 
-# module -> the names agentinc/sdk/agent.py imports from it
+# module -> the names fleet/sdk/agent.py imports from it
 MCP_IMPORTS = {
     "mcp": ["ClientSession", "StdioServerParameters"],
     "mcp.client.stdio": ["stdio_client"],

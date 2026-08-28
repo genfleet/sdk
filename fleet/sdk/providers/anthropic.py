@@ -5,7 +5,7 @@ from typing import AsyncIterator
 
 from ..schemas import AgentOutput, ModelConfig, TokenUsage, ToolCall, ToolSchema
 
-log = logging.getLogger("agentinc.sdk.providers.anthropic")
+log = logging.getLogger("fleet.sdk.providers.anthropic")
 
 _SYSTEM_KEY = "__system__"
 
@@ -81,7 +81,7 @@ class AnthropicProvider:
         except ImportError:
             raise ImportError(
                 "Anthropic provider requires the anthropic extra: "
-                "pip install 'agentinc-sdk[anthropic]'"
+                "pip install 'withfleet-sdk[anthropic]'"
             )
         self._client = self._anthropic.AsyncAnthropic(api_key=config["api_key"])
         self._model = config["model"]

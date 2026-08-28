@@ -5,7 +5,7 @@ MCP tool schemas are fetched from the server on first run() and merged
 with any local tools. Both stdio and SSE transports are supported.
 
 Requires:
-    pip install 'agentinc-sdk[openai,mcp,serve]'
+    pip install 'withfleet-sdk[openai,mcp,serve]'
     npx -y @modelcontextprotocol/server-filesystem /tmp   # example MCP server
 
 Run:
@@ -26,8 +26,8 @@ Test:
 
 import os
 
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from fleet.sdk import Agent
+from fleet.sdk.serve import serve
 
 
 # ── stdio MCP server (spawns a subprocess) ────────────────────────────────

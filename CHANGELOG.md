@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `agentinc-sdk` will be documented in this file.
+All notable changes to `withfleet-sdk` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -9,20 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`agentinc` is once again a PEP 420 implicit namespace package** — the SDK shipped an empty `agentinc/__init__.py`, which made `agentinc` a *regular* package in this distribution. Installed alongside any sibling (`agentinc-core`, `agentinc-engine`, `agentinc-loader`, `agentinc-runner`, `agentinc-adapter`, `agentinc-protocols`), `agentinc.__path__` collapsed to the single site-packages directory and every sibling became unimportable with `ModuleNotFoundError: No module named 'agentinc.core'`. The file is removed and the wheel build now targets `agentinc/sdk` directly, so no `agentinc/__init__.py` is synthesized. No public API changed.
+- **`fleet` is once again a PEP 420 implicit namespace package** — the SDK shipped an empty `fleet/__init__.py`, which made `fleet` a *regular* package in this distribution. Installed alongside any sibling (`withfleet-core`, `withfleet-engine`, `withfleet-loader`, `withfleet-runner`, `withfleet-adapter`, `withfleet-protocols`), `fleet.__path__` collapsed to the single site-packages directory and every sibling became unimportable with `ModuleNotFoundError: No module named 'fleet.core'`. The file is removed and the wheel build now targets `fleet/sdk` directly, so no `fleet/__init__.py` is synthesized. No public API changed.
 
 ## [0.4.0] - 2026-07-28
 
 ### Breaking Changes
 
-- **`RawAdapter` removed** — deprecated since 0.2 with a `DeprecationWarning` announcing removal in v0.4. Use `Agent()` instead. Migration guidance is kept in `skills/agentinc-sdk/references/raw-adapter.md`.
+- **`RawAdapter` removed** — deprecated since 0.2 with a `DeprecationWarning` announcing removal in v0.4. Use `Agent()` instead. Migration guidance is kept in `skills/withfleet-sdk/references/raw-adapter.md`.
   ```python
   # before
-  from agentinc.sdk import RawAdapter
+  from fleet.sdk import RawAdapter
   serve(RawAdapter(my_fn), name="agent", port=8000)
 
   # after
-  from agentinc.sdk import Agent
+  from fleet.sdk import Agent
   serve(Agent(role="...", model={...}), name="agent", port=8000)
   ```
 

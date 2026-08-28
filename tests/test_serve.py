@@ -10,8 +10,8 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
-from agentinc.sdk import AgentInput, AgentOutput
-from agentinc.sdk.serve import create_app
+from fleet.sdk import AgentInput, AgentOutput
+from fleet.sdk.serve import create_app
 
 
 class RecordingAgent:
@@ -191,7 +191,7 @@ def test_failure_carries_an_id_the_operator_can_correlate(
     exploding_client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     """An opaque message is only useful if the detail is findable somewhere."""
-    with caplog.at_level("ERROR", logger="agentinc.sdk.serve"):
+    with caplog.at_level("ERROR", logger="fleet.sdk.serve"):
         message = _send(exploding_client, _params())["error"]["message"]
 
     error_id = message.rsplit("error id: ", 1)[1].rstrip(")")

@@ -7,14 +7,14 @@ import json
 
 import pytest
 
-from agentinc.sdk.agent import _tool_call_to_dict
-from agentinc.sdk.providers.gemini import (
+from fleet.sdk.agent import _tool_call_to_dict
+from fleet.sdk.providers.gemini import (
     _decode_signature,
     _to_gemini_messages,
     _tool_calls_from_response,
 )
-from agentinc.sdk.providers.openai import _sanitize_messages
-from agentinc.sdk.schemas import Message, ToolCall
+from fleet.sdk.providers.openai import _sanitize_messages
+from fleet.sdk.schemas import Message, ToolCall
 
 
 def test_system_and_user_messages():

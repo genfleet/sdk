@@ -7,7 +7,7 @@ from typing import Protocol, runtime_checkable
 
 from .schemas import AuditEvent
 
-log = logging.getLogger("agentinc.audit")
+log = logging.getLogger("fleet.audit")
 
 
 @runtime_checkable
