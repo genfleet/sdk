@@ -86,7 +86,7 @@ class LocalToolResolver:
     Deliberately ignores `ref.digest`. Local development is iteration — you are
     editing a tool and an agent together, and refusing to run because the
     working copy does not hash to a published digest would make that
-    impossible. `ag agents pull` is the mode that does verify, for when
+    impossible. `fleet agents pull` is the mode that does verify, for when
     the question is "what will the platform actually run".
     """
 
@@ -265,7 +265,7 @@ def _import_from_directory(slug: str, directory: Path, entry: str) -> ModuleType
             tried.append(str(candidate.relative_to(directory)))
 
     # The whole module path stripped away: the artifact root *is* the module,
-    # which is the common case — `ag tools push` archives the tool's own
+    # which is the common case — `fleet tools push` archives the tool's own
     # directory, so `fleet_tools/echo/__init__.py` arrives as `__init__.py`
     # at the root. Guarded on the directory name matching the last segment so
     # this cannot quietly answer for a differently-named tool.

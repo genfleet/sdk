@@ -56,7 +56,7 @@ def _no_leaked_modules():
 
 
 def test_it_resolves_a_tool_pushed_as_its_own_package_directory(tmp_path):
-    # The shape `ag tools push src/fleet_tools/echo` actually produces: the
+    # The shape `fleet tools push src/fleet_tools/echo` actually produces: the
     # archive root *is* the package, so the entry's leading segments have no
     # counterpart on disk.
     mount_tool(
