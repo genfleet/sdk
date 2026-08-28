@@ -41,6 +41,15 @@ constraint-dependencies = ["cryptography>=48.0.1,<49"]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[project.urls]
+# Shown on the PyPI page. Without these the listing has no route back to the
+# source, the issue tracker or the docs, which for an open-source SDK is most
+# of what a reader arrives wanting.
+Homepage = "https://github.com/withfleet/sdk"
+Repository = "https://github.com/withfleet/sdk"
+Issues = "https://github.com/withfleet/sdk/issues"
+Changelog = "https://github.com/withfleet/sdk/blob/dev/CHANGELOG.md"
+
 [tool.hatch.build.targets.wheel]
 # DO NOT change this to `packages`, and DO NOT add an `fleet/__init__.py`.
 #
