@@ -340,7 +340,7 @@
       <h2>Installation</h2>
       <p class="section-desc">Install the SDK with pip or uv. Core depends only on Pydantic — extras add provider clients and the A2A server.</p>
       <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash"># Core (pydantic only)
-pip install withfleet-sdk
+pip install "withfleet-sdk @ git+https://github.com/withfleet/sdk@dev"
 
 # With OpenAI + A2A server
 pip install "withfleet-sdk[openai,serve]"

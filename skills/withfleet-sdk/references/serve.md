@@ -7,7 +7,7 @@ The serve module (`fleet.sdk.serve`) exposes any `AgentProtocol` as an A2A-compl
 Install the `[serve]` extra:
 
 ```bash
-pip install withfleet-sdk[serve]
+pip install "withfleet-sdk[serve] @ git+https://github.com/withfleet/sdk@dev"
 ```
 
 This adds: `fastapi>=0.115`, `uvicorn[standard]>=0.34`, `sse-starlette>=2.0`.

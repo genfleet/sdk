@@ -7,11 +7,15 @@ Declare an agent with `Agent()` — give it a role, model, tools, memory, or MCP
 ## Install
 
 ```bash
-pip install withfleet-sdk                    # core (pydantic only)
-pip install 'withfleet-sdk[openai,serve]'    # OpenAI + A2A server
-pip install 'withfleet-sdk[anthropic,serve]' # Anthropic + A2A server
-pip install 'withfleet-sdk[all]'             # everything
+pip install "withfleet-sdk @ git+https://github.com/withfleet/sdk@dev"                    # core (pydantic only)
+pip install "withfleet-sdk[openai,serve] @ git+https://github.com/withfleet/sdk@dev"      # OpenAI + A2A server
+pip install "withfleet-sdk[anthropic,serve] @ git+https://github.com/withfleet/sdk@dev"   # Anthropic + A2A server
+pip install "withfleet-sdk[all] @ git+https://github.com/withfleet/sdk@dev"               # everything
 ```
+
+Installed from GitHub rather than PyPI: the package is not published yet, so
+the git reference is the supported way to get it. Pin a tag or commit instead
+of `@dev` if you need a fixed version.
 
 Requires **Python 3.12+**.
 
