@@ -872,7 +872,7 @@ serve(CrewAIAgent(), name="crewai-agent", port=8004)</code></pre>
 }</code></pre>
       <h3>Publish</h3>
       <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash"># Login to the Genfleet registry
-genfleet login
+gf login
 
 # Publish from your project directory
 genfleet publish
@@ -881,7 +881,7 @@ genfleet publish
 genfleet publish --version 1.2.0
 
 # List your published agents
-genfleet agents list</code></pre>
+gf agents list</code></pre>
       <h3>Entry point structure</h3>
       <p>Your <code>entrypoint</code> file must expose a top-level variable named <code>agent</code> that satisfies <code>AgentProtocol</code>.</p>
       <pre><div class="code-header">agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python"># agent.py — this file is what the platform imports
