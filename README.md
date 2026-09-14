@@ -1,16 +1,16 @@
-# withfleet-sdk
+# genfleet-sdk
 
-The developer SDK for the [Fleet](https://withfleet.com) agent marketplace platform.
+The developer SDK for the [Genfleet](https://genfleet.ai) agent marketplace platform.
 
 Declare an agent with `Agent()` — give it a role, model, tools, memory, or MCP connections — and serve it over [A2A](https://google.github.io/A2A/). The SDK handles provider selection, tool dispatch, session memory, and streaming automatically.
 
 ## Install
 
 ```bash
-pip install "withfleet-sdk @ git+https://github.com/withfleet/sdk@dev"                    # core (pydantic only)
-pip install "withfleet-sdk[openai,serve] @ git+https://github.com/withfleet/sdk@dev"      # OpenAI + A2A server
-pip install "withfleet-sdk[anthropic,serve] @ git+https://github.com/withfleet/sdk@dev"   # Anthropic + A2A server
-pip install "withfleet-sdk[all] @ git+https://github.com/withfleet/sdk@dev"               # everything
+pip install "genfleet-sdk @ git+https://github.com/genfleet/sdk@dev"                    # core (pydantic only)
+pip install "genfleet-sdk[openai,serve] @ git+https://github.com/genfleet/sdk@dev"      # OpenAI + A2A server
+pip install "genfleet-sdk[anthropic,serve] @ git+https://github.com/genfleet/sdk@dev"   # Anthropic + A2A server
+pip install "genfleet-sdk[all] @ git+https://github.com/genfleet/sdk@dev"               # everything
 ```
 
 Installed from GitHub rather than PyPI: the package is not published yet, so
@@ -21,10 +21,10 @@ Requires **Python 3.12+**.
 
 ## Agent Skill
 
-Install the withfleet-sdk skill so your coding agent understands the SDK and can help you build agents:
+Install the genfleet-sdk skill so your coding agent understands the SDK and can help you build agents:
 
 ```bash
-npx skills add fleet/sdk
+npx skills add genfleet/sdk
 ```
 
 Your coding agent will automatically use it when working with `Agent()`, `AgentProtocol`, `@tool`, `serve()`, and all framework integration patterns.
@@ -33,8 +33,8 @@ Your coding agent will automatically use it when working with `Agent()`, `AgentP
 
 ```python
 import os
-from fleet.sdk import Agent
-from fleet.sdk.serve import serve
+from genfleet.sdk import Agent
+from genfleet.sdk.serve import serve
 
 def get_weather(city: str) -> str:
     """Gets the current weather for a city."""
@@ -126,7 +126,7 @@ agent = Agent(
 )
 ```
 
-**Console backend** — emits structured JSON to the `fleet.audit` logger:
+**Console backend** — emits structured JSON to the `genfleet.audit` logger:
 
 ```python
 audit={"backend": "console"}
@@ -199,7 +199,7 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 Plain functions passed to `tools=` are auto-wrapped. Use `@tool` when you want an explicit name or description:
 
 ```python
-from fleet.sdk import tool, ToolCall
+from genfleet.sdk import tool, ToolCall
 
 @tool(name="add", description="Adds two numbers")
 def add(a: float, b: float) -> str:
@@ -214,8 +214,8 @@ result = await add.call(ToolCall(id="1", name="add", arguments={"a": 3, "b": 4})
 For framework integrations (LangChain, CrewAI) that manage their own LLM calls, implement `AgentProtocol` directly:
 
 ```python
-from fleet.sdk import AgentInput, AgentOutput, AgentProtocol
-from fleet.sdk.serve import serve
+from genfleet.sdk import AgentInput, AgentOutput, AgentProtocol
+from genfleet.sdk.serve import serve
 
 class MyAgent:
     async def run(self, input: AgentInput):

@@ -1,5 +1,5 @@
 """
-`fleet.toml` — what an agent depends on, and what a tool offers.
+`genfleet.toml` — what an agent depends on, and what a tool offers.
 
 Two manifests share this module because they are two halves of one contract:
 an agent names the tools it wants, a tool declares what it needs to run. The
@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-MANIFEST_NAME = "fleet.toml"
+MANIFEST_NAME = "genfleet.toml"
 
 # `@scope/name` — the scope is the publishing tenant's namespace, which the
 # backend already enforces at submit time (backend#74).
@@ -95,7 +95,7 @@ class SecretField(BaseModel):
 
 
 class AgentManifest(BaseModel):
-    """The `fleet.toml` sitting next to an agent's entry point."""
+    """The `genfleet.toml` sitting next to an agent's entry point."""
 
     name: str
     kind: AgentKind = "code"
@@ -111,7 +111,7 @@ class AgentManifest(BaseModel):
 
 
 class ToolManifest(BaseModel):
-    """The `fleet.toml` sitting next to a tool's implementation."""
+    """The `genfleet.toml` sitting next to a tool's implementation."""
 
     slug: str
     version: str
@@ -173,7 +173,7 @@ def _parse_refs(table: Any, section: str, path: Path) -> list[ToolRef]:
 
 
 def load_agent_manifest(directory: Path | str) -> AgentManifest:
-    """Read and validate the `fleet.toml` in an agent directory."""
+    """Read and validate the `genfleet.toml` in an agent directory."""
     path = Path(directory) / MANIFEST_NAME
     raw = _read_toml(path)
 
@@ -192,7 +192,7 @@ def load_agent_manifest(directory: Path | str) -> AgentManifest:
 
 
 def load_tool_manifest(directory: Path | str) -> ToolManifest:
-    """Read and validate the `fleet.toml` in a tool directory."""
+    """Read and validate the `genfleet.toml` in a tool directory."""
     path = Path(directory) / MANIFEST_NAME
     raw = _read_toml(path)
 

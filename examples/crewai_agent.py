@@ -5,7 +5,7 @@ For framework integrations where you manage the LLM call yourself,
 implement AgentProtocol directly (a class with async run()).
 
 Requires:
-    pip install crewai 'withfleet-sdk[serve]'
+    pip install crewai 'genfleet-sdk[serve]'
 
 Run:
     export OPENAI_API_KEY=sk-...
@@ -21,8 +21,8 @@ import asyncio
 
 from crewai import Agent as CrewAgent, Crew, Task
 
-from fleet.sdk import AgentInput, AgentOutput
-from fleet.sdk.serve import serve
+from genfleet.sdk import AgentInput, AgentOutput
+from genfleet.sdk.serve import serve
 
 
 researcher = CrewAgent(

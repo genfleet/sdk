@@ -4,15 +4,15 @@
 interpreter state. Neither catches the two ways the build config can ship a
 broken wheel from a source tree that looks correct:
 
-1. Hatchling is pointed at `packages = ["fleet"]` (or the source tree grows
-   an `fleet/__init__.py`). The wheel then contains `fleet/__init__.py`,
-   which turns the shared `fleet` namespace into a *regular* package on the
+1. Hatchling is pointed at `packages = ["genfleet"]` (or the source tree grows
+   an `genfleet/__init__.py`). The wheel then contains `genfleet/__init__.py`,
+   which turns the shared `genfleet` namespace into a *regular* package on the
    consumer's machine and shadows every sibling distribution
-   (withfleet-core, withfleet-engine, ...). This is the regression that shipped.
+   (genfleet-core, genfleet-engine, ...). This is the regression that shipped.
 
-2. The naive fix `packages = ["fleet/sdk"]` is applied. Hatchling strips the
+2. The naive fix `packages = ["genfleet/sdk"]` is applied. Hatchling strips the
    parent and emits a wheel with a **top-level `sdk/` package** — importable as
-   `import sdk`, never as `fleet.sdk`. It builds with no warning at all.
+   `import sdk`, never as `genfleet.sdk`. It builds with no warning at all.
 
 Only inspecting the built archive catches either one, so this module actually
 runs the build backend and reads the resulting zip.
@@ -66,36 +66,36 @@ def wheel_names(tmp_path_factory) -> list[str]:
 
 @pytest.mark.slow
 def test_wheel_has_no_namespace_init(wheel_names):
-    """Failure mode 1: an `fleet/__init__.py` in the wheel."""
-    assert "fleet/__init__.py" not in wheel_names, (
-        "wheel ships fleet/__init__.py — this makes `fleet` a regular "
-        "package and shadows every sibling fleet-* distribution. "
-        "Keep `only-include = [\"fleet/sdk\"]` in pyproject.toml."
+    """Failure mode 1: an `genfleet/__init__.py` in the wheel."""
+    assert "genfleet/__init__.py" not in wheel_names, (
+        "wheel ships genfleet/__init__.py — this makes `genfleet` a regular "
+        "package and shadows every sibling genfleet-* distribution. "
+        "Keep `only-include = [\"genfleet/sdk\"]` in pyproject.toml."
     )
 
 
 @pytest.mark.slow
 def test_wheel_ships_the_sdk_subpackage(wheel_names):
     """The wheel must actually contain the code, under the right prefix."""
-    assert "fleet/sdk/__init__.py" in wheel_names, (
-        f"wheel is missing fleet/sdk/__init__.py; contents: {wheel_names}"
+    assert "genfleet/sdk/__init__.py" in wheel_names, (
+        f"wheel is missing genfleet/sdk/__init__.py; contents: {wheel_names}"
     )
 
 
 @pytest.mark.slow
 def test_wheel_has_no_top_level_sdk_package(wheel_names):
-    """Failure mode 2: `packages = ["fleet/sdk"]` flattens to top-level `sdk/`."""
+    """Failure mode 2: `packages = ["genfleet/sdk"]` flattens to top-level `sdk/`."""
     flattened = [n for n in wheel_names if n.startswith("sdk/")]
     assert not flattened, (
         f"wheel contains a top-level sdk/ package: {flattened}. "
         "hatchling's `packages` strips the parent directory; use "
-        "`only-include` so the `fleet/` prefix is preserved."
+        "`only-include` so the `genfleet/` prefix is preserved."
     )
 
 
 @pytest.mark.slow
-def test_wheel_top_level_is_only_fleet_and_metadata(wheel_names):
+def test_wheel_top_level_is_only_genfleet_and_metadata(wheel_names):
     """Nothing else leaks into the wheel root."""
     tops = {n.split("/")[0] for n in wheel_names}
-    unexpected = {t for t in tops if t != "fleet" and not t.endswith(".dist-info")}
+    unexpected = {t for t in tops if t != "genfleet" and not t.endswith(".dist-info")}
     assert not unexpected, f"unexpected top-level entries in wheel: {sorted(unexpected)}"

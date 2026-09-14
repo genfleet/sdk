@@ -10,9 +10,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fleet.sdk import Agent, AgentInput, AgentOutput, AuditConfig, AuditEvent, TokenUsage, ToolCall
-from fleet.sdk.audit import Auditor, audit_for, _truncate
-from fleet.sdk.audit.backends import (
+from genfleet.sdk import Agent, AgentInput, AgentOutput, AuditConfig, AuditEvent, TokenUsage, ToolCall
+from genfleet.sdk.audit import Auditor, audit_for, _truncate
+from genfleet.sdk.audit.backends import (
     CallbackAuditBackend,
     ConsoleAuditBackend,
     FileAuditBackend,
@@ -99,12 +99,12 @@ def test_audit_for_unknown_backend_raises():
 @pytest.mark.asyncio
 async def test_console_backend_emits(caplog):
     import logging
-    logging.getLogger("fleet.audit").setLevel(logging.INFO)
+    logging.getLogger("genfleet.audit").setLevel(logging.INFO)
 
     backend = ConsoleAuditBackend()
     event = AuditEvent(event_type="test.event", data={"key": "value"})
 
-    with caplog.at_level(logging.INFO, logger="fleet.audit"):
+    with caplog.at_level(logging.INFO, logger="genfleet.audit"):
         await backend.emit(event)
 
     assert "test.event" in caplog.text
