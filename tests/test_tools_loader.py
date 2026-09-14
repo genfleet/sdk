@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from fleet.sdk import tools_loader
-from fleet.sdk.manifest import ToolRef
-from fleet.sdk.tools_loader import (
+from genfleet.sdk import tools_loader
+from genfleet.sdk.manifest import ToolRef
+from genfleet.sdk.tools_loader import (
     LocalToolResolver,
     ToolResolutionError,
     load_tools,
@@ -32,7 +32,7 @@ class StubResolver:
 
 
 def _manifest(tmp_path, body: str):
-    (tmp_path / "fleet.toml").write_text(body)
+    (tmp_path / "genfleet.toml").write_text(body)
     return tmp_path
 
 
@@ -88,7 +88,7 @@ def test_failure_names_the_agent_not_just_the_tool(tmp_path):
 def test_no_providers_installed_names_the_entry_point_group():
     # No tool provider is installed in the SDK's own environment — the
     # dependency runs the other way — so this is the real empty case.
-    with pytest.raises(ToolResolutionError, match="fleet.tools"):
+    with pytest.raises(ToolResolutionError, match="genfleet.tools"):
         LocalToolResolver().resolve(ToolRef(slug="@acme/jira"))
 
 
@@ -131,14 +131,14 @@ def test_agent_root_env_overrides_the_hardcoded_path(tmp_path, monkeypatch):
     # guess and the environment is the authority. Raised in review on agents#3.
     relocated = tmp_path / "unpacked"
     relocated.mkdir()
-    (relocated / "fleet.toml").write_text(
+    (relocated / "genfleet.toml").write_text(
         '[agent]\nname = "relocated"\n\n[tools]\n"@acme/jira" = "*"\n'
     )
     stale = tmp_path / "where-the-code-thinks-it-is"
     stale.mkdir()
-    (stale / "fleet.toml").write_text('[agent]\nname = "stale"\n')
+    (stale / "genfleet.toml").write_text('[agent]\nname = "stale"\n')
 
-    monkeypatch.setenv("FLEET_AGENT_ROOT", str(relocated))
+    monkeypatch.setenv("GENFLEET_AGENT_ROOT", str(relocated))
     resolver = StubResolver()
 
     assert len(load_tools(stale, resolver=resolver)) == 1
@@ -148,9 +148,9 @@ def test_agent_root_env_overrides_the_hardcoded_path(tmp_path, monkeypatch):
 def test_an_explicit_manifest_needs_no_filesystem_at_all(tmp_path, monkeypatch):
     # The platform path: the pinned manifest comes from the published artifact
     # and may never touch this machine's disk.
-    from fleet.sdk.manifest import AgentManifest, ToolRef
+    from genfleet.sdk.manifest import AgentManifest, ToolRef
 
-    monkeypatch.setenv("FLEET_AGENT_ROOT", str(tmp_path / "does-not-exist"))
+    monkeypatch.setenv("GENFLEET_AGENT_ROOT", str(tmp_path / "does-not-exist"))
     resolver = StubResolver()
 
     tools = load_tools(

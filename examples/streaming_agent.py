@@ -13,8 +13,8 @@ Test (streaming):
 
 import asyncio
 
-from fleet.sdk import AgentInput, AgentOutput
-from fleet.sdk.serve import serve
+from genfleet.sdk import AgentInput, AgentOutput
+from genfleet.sdk.serve import serve
 
 
 class StorytellerAgent:

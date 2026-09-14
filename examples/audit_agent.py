@@ -2,7 +2,7 @@
 Agent with audit logging — demonstrates all three audit backends.
 
 Requires:
-    pip install 'withfleet-sdk[openai,serve]'
+    pip install 'genfleet-sdk[openai,serve]'
 
 Run:
     export OPENAI_API_KEY=sk-...
@@ -20,8 +20,8 @@ Check audit output:
 import logging
 import os
 
-from fleet.sdk import Agent, AuditEvent
-from fleet.sdk.serve import serve
+from genfleet.sdk import Agent, AuditEvent
+from genfleet.sdk.serve import serve
 from dotenv import load_dotenv
 
 load_dotenv()
