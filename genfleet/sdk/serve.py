@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator
 from .protocol import AgentProtocol
 from .schemas import AgentInput, AgentOutput, Message
 
-log = logging.getLogger("fleet.sdk.serve")
+log = logging.getLogger("genfleet.sdk.serve")
 
 try:
     from fastapi import FastAPI, Request
@@ -17,7 +17,7 @@ try:
 except ImportError as exc:
     raise ImportError(
         "The serve helper requires the serve extra. "
-        "Install it with: pip install 'withfleet-sdk[serve]'"
+        "Install it with: pip install 'genfleet-sdk[serve]'"
     ) from exc
 
 

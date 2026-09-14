@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from fleet.sdk import Agent, AgentInput, AgentOutput, AgentProtocol, ToolCall, tool
-from fleet.sdk.agent import _wrap_tool
-from fleet.sdk.schemas import ToolSchema
+from genfleet.sdk import Agent, AgentInput, AgentOutput, AgentProtocol, ToolCall, tool
+from genfleet.sdk.agent import _wrap_tool
+from genfleet.sdk.schemas import ToolSchema
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +262,7 @@ async def test_agent_system_prompt_includes_context():
 
 @pytest.mark.asyncio
 async def test_agent_loads_and_saves_memory():
-    from fleet.sdk.schemas import Message
+    from genfleet.sdk.schemas import Message
 
     stored: dict[str, list] = {}
 

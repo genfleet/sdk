@@ -1,4 +1,4 @@
-from fleet.sdk import AgentInput, AgentOutput, Message, ToolCall, ToolSchema
+from genfleet.sdk import AgentInput, AgentOutput, Message, ToolCall, ToolSchema
 
 
 def test_agent_input_minimal():

@@ -1,18 +1,18 @@
 # A2A Serve Module — Detailed Reference
 
-The serve module (`fleet.sdk.serve`) exposes any `AgentProtocol` as an A2A-compliant HTTP endpoint using FastAPI. It supports both synchronous request/response and streaming via Server-Sent Events (SSE).
+The serve module (`genfleet.sdk.serve`) exposes any `AgentProtocol` as an A2A-compliant HTTP endpoint using FastAPI. It supports both synchronous request/response and streaming via Server-Sent Events (SSE).
 
 ## Prerequisites
 
 Install the `[serve]` extra:
 
 ```bash
-pip install "withfleet-sdk[serve] @ git+https://github.com/withfleet/sdk@dev"
+pip install "genfleet-sdk[serve] @ git+https://github.com/genfleet/sdk@dev"
 ```
 
 This adds: `fastapi>=0.115`, `uvicorn[standard]>=0.34`, `sse-starlette>=2.0`.
 
-If you import from `fleet.sdk.serve` without these installed, you get a clear `ImportError` telling you what to install.
+If you import from `genfleet.sdk.serve` without these installed, you get a clear `ImportError` telling you what to install.
 
 ## Functions
 
@@ -145,7 +145,7 @@ string.
 
 When your agent raises, both `tasks/send` and `tasks/sendSubscribe` return a
 fixed message plus a random **error id**. The exception — type, message,
-traceback — goes to the `fleet.sdk.serve` logger under that same id.
+traceback — goes to the `genfleet.sdk.serve` logger under that same id.
 
 This is deliberate. `serve` puts your agent on the network, and provider
 exceptions routinely carry request payloads, file paths, console URLs, and (on
@@ -174,8 +174,8 @@ Only `text` parts are extracted. Non-text parts (file, data) are ignored by the 
 
 ```python
 import httpx
-from fleet.sdk import AgentInput, AgentOutput
-from fleet.sdk.serve import create_app
+from genfleet.sdk import AgentInput, AgentOutput
+from genfleet.sdk.serve import create_app
 
 class EchoAgent:
     async def run(self, input: AgentInput):

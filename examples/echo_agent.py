@@ -13,8 +13,8 @@ Test:
     curl -s http://localhost:8000/.well-known/agent.json | python -m json.tool
 """
 
-from fleet.sdk import AgentInput, AgentOutput, AgentProtocol
-from fleet.sdk.serve import serve
+from genfleet.sdk import AgentInput, AgentOutput, AgentProtocol
+from genfleet.sdk.serve import serve
 
 
 class EchoAgent:

@@ -2,7 +2,7 @@
 Agent using Anthropic Claude via Agent(), served over A2A.
 
 Requires:
-    pip install 'withfleet-sdk[anthropic,serve]'
+    pip install 'genfleet-sdk[anthropic,serve]'
 
 Run:
     export ANTHROPIC_API_KEY=sk-ant-...
@@ -21,8 +21,8 @@ Test:
 
 import os
 
-from fleet.sdk import Agent
-from fleet.sdk.serve import serve
+from genfleet.sdk import Agent
+from genfleet.sdk.serve import serve
 
 
 def lookup(topic: str) -> str:

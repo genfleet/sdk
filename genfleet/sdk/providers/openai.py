@@ -6,7 +6,7 @@ from typing import AsyncIterator
 
 from ..schemas import AgentOutput, ModelConfig, TokenUsage, ToolCall, ToolSchema
 
-log = logging.getLogger("fleet.sdk.providers.openai")
+log = logging.getLogger("genfleet.sdk.providers.openai")
 
 # Keys carried in message history for other providers' benefit, which the
 # OpenAI chat-completions API rejects as unknown fields. Messages are passed
@@ -44,7 +44,7 @@ class OpenAIProvider:
         except ImportError:
             raise ImportError(
                 "OpenAI provider requires the openai extra: "
-                "pip install 'withfleet-sdk[openai]'"
+                "pip install 'genfleet-sdk[openai]'"
             )
         self._client = AsyncOpenAI(
             api_key=config["api_key"],

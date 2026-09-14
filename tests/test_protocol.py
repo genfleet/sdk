@@ -1,4 +1,4 @@
-from fleet.sdk import AgentInput, AgentOutput, AgentProtocol, ToolProtocol, ToolCall, ToolSchema
+from genfleet.sdk import AgentInput, AgentOutput, AgentProtocol, ToolProtocol, ToolCall, ToolSchema
 
 
 class MyAgent:

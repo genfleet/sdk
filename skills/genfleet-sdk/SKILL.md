@@ -1,21 +1,21 @@
 ---
-name: withfleet-sdk
-description: "How to build and serve AI agents using the withfleet-sdk Python package. Use this skill whenever the user is working with fleet, withfleet-sdk, AgentProtocol, Agent(), RawAdapter, or wants to create agents for the Fleet marketplace. Also trigger when you see imports from fleet.sdk, files referencing fleet agent patterns, Agent() constructor with role=/model=/tools=/mcps=/memory= params, or when the user asks about wrapping OpenAI/Anthropic/Gemini/LangChain/CrewAI agents into a universal protocol. Even if the user doesn't say 'fleet' explicitly, trigger if they're working in a project that has withfleet-sdk as a dependency or has fleet/ in its import paths."
+name: genfleet-sdk
+description: "How to build and serve AI agents using the genfleet-sdk Python package. Use this skill whenever the user is working with genfleet, genfleet-sdk, AgentProtocol, Agent(), RawAdapter, or wants to create agents for the Genfleet marketplace. Also trigger when you see imports from genfleet.sdk, files referencing genfleet agent patterns, Agent() constructor with role=/model=/tools=/mcps=/memory= params, or when the user asks about wrapping OpenAI/Anthropic/Gemini/LangChain/CrewAI agents into a universal protocol. Even if the user doesn't say 'genfleet' explicitly, trigger if they're working in a project that has genfleet-sdk as a dependency or has genfleet/ in its import paths."
 ---
 
-# Fleet SDK
+# Genfleet SDK
 
-The withfleet-sdk is the developer interface for the Fleet agent marketplace. Developers declare an agent using `Agent()`, and the SDK handles provider selection, tool dispatch, memory, and MCP connections automatically.
+The genfleet-sdk is the developer interface for the Genfleet agent marketplace. Developers declare an agent using `Agent()`, and the SDK handles provider selection, tool dispatch, memory, and MCP connections automatically.
 
 The SDK is **open-source**. Core (`pydantic>=2.7`) has zero LLM dependencies. Provider libraries are installed as optional extras.
 
 ## Installation
 
 ```bash
-pip install "withfleet-sdk @ git+https://github.com/withfleet/sdk@dev"                    # core (pydantic only)
-pip install "withfleet-sdk[openai,serve] @ git+https://github.com/withfleet/sdk@dev"      # OpenAI + A2A server
-pip install "withfleet-sdk[anthropic,serve] @ git+https://github.com/withfleet/sdk@dev"   # Anthropic + A2A server
-pip install "withfleet-sdk[all] @ git+https://github.com/withfleet/sdk@dev"               # everything
+pip install "genfleet-sdk @ git+https://github.com/genfleet/sdk@dev"                    # core (pydantic only)
+pip install "genfleet-sdk[openai,serve] @ git+https://github.com/genfleet/sdk@dev"      # OpenAI + A2A server
+pip install "genfleet-sdk[anthropic,serve] @ git+https://github.com/genfleet/sdk@dev"   # Anthropic + A2A server
+pip install "genfleet-sdk[all] @ git+https://github.com/genfleet/sdk@dev"               # everything
 ```
 
 Installed from GitHub rather than PyPI: the package is not published yet, so
@@ -40,7 +40,7 @@ No provider client setup, no manual tool dispatch loop, no history wiring needed
 ### All Exports
 
 ```python
-from fleet.sdk import (
+from genfleet.sdk import (
     Agent,          # Main class — declare and run agents
     AgentProtocol,  # Protocol — implement run(input) -> AsyncIterator[AgentOutput]
     ToolProtocol,   # Protocol — implement schema() + call()
@@ -63,15 +63,15 @@ from fleet.sdk import (
 )
 
 # Serve module (requires [serve] extra)
-from fleet.sdk.serve import create_app, serve
+from genfleet.sdk.serve import create_app, serve
 ```
 
 ### Minimal Agent (4 lines)
 
 ```python
 import os
-from fleet.sdk import Agent
-from fleet.sdk.serve import serve
+from genfleet.sdk import Agent
+from genfleet.sdk.serve import serve
 
 serve(
     Agent(role="You are a helpful assistant.", model={"model": "openai/gpt-4o-mini", "api_key": os.environ["OPENAI_API_KEY"]}),
@@ -145,8 +145,8 @@ MCP tool schemas are fetched and merged with local tools on first `run()` call.
 
 ```python
 import os
-from fleet.sdk import Agent
-from fleet.sdk.serve import serve
+from genfleet.sdk import Agent
+from genfleet.sdk.serve import serve
 
 def get_weather(city: str) -> str:
     """Gets the current weather for a city."""
@@ -164,8 +164,8 @@ serve(agent, name="assistant", port=8000)
 
 ```python
 import os
-from fleet.sdk import Agent
-from fleet.sdk.serve import serve
+from genfleet.sdk import Agent
+from genfleet.sdk.serve import serve
 
 agent = Agent(
     role="You are a customer support agent.",
@@ -223,7 +223,7 @@ agent = Agent(
 Turns any function into a `ToolProtocol` with auto-generated JSON Schema from type hints. When using `Agent(tools=[...])`, plain functions are auto-wrapped — `@tool` is optional but useful for adding descriptions.
 
 ```python
-from fleet.sdk import tool, ToolCall
+from genfleet.sdk import tool, ToolCall
 
 @tool(description="adds two numbers")
 def add(a: float, b: float) -> str:
@@ -241,7 +241,7 @@ result = await add.call(ToolCall(id="1", name="add", arguments={"a": 3, "b": 4})
 For framework integrations (LangChain, CrewAI) where you manage the LLM yourself, implement `AgentProtocol` directly instead of using `Agent()`:
 
 ```python
-from fleet.sdk import AgentInput, AgentOutput, AgentProtocol
+from genfleet.sdk import AgentInput, AgentOutput, AgentProtocol
 
 class MyAgent:
     async def run(self, input: AgentInput):
@@ -254,7 +254,7 @@ serve(MyAgent(), name="my-agent", port=8000)
 ## Serving Over A2A
 
 ```python
-from fleet.sdk.serve import serve, create_app
+from genfleet.sdk.serve import serve, create_app
 
 # Blocking (dev/scripts)
 serve(agent, name="my-agent", description="Does things", host="0.0.0.0", port=8000)
@@ -282,7 +282,7 @@ curl -N -X POST http://localhost:8000 \
 
 ## Key Rules
 
-1. **SDK imports only from itself.** Never add imports from `fleet.core`, `fleet.runner`, `fleet.loader`, `fleet.engine`, or `fleet.protocols`. Those are platform internals.
+1. **SDK imports only from itself.** Never add imports from `genfleet.core`, `genfleet.runner`, `genfleet.loader`, `genfleet.engine`, or `genfleet.protocols`. Those are platform internals.
 2. **Use `Agent()` as the default path.** Only implement `AgentProtocol` directly for framework integrations (LangChain, CrewAI) that manage their own LLM calls.
 3. **`RawAdapter` was removed in 0.4.0.** Deprecated since 0.2. Use `Agent()`; see `references/raw-adapter.md` to migrate.
 4. **Python 3.12+ required.** Always use `--python 3.12` when creating venvs with `uv`.
