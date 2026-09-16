@@ -7,7 +7,14 @@ PROVIDER_MAP = {
     "openai": "openai",
     "anthropic": "anthropic",
     "gemini": "gemini",
+    "openrouter": "openai",
 }
+
+#: OpenRouter is an OpenAI-compatible gateway in front of every vendor.
+#: `openrouter/<vendor>/<model>` selects the OpenAI provider with this base
+#: URL and passes the vendor id through intact, so the same agent runs on any
+#: model with one key. An explicit `base_url` in the config still wins.
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 def _parse_model(model: str) -> tuple[str, str]:
@@ -16,7 +23,8 @@ def _parse_model(model: str) -> tuple[str, str]:
         raise ValueError(
             f"Invalid model format: '{model}'. "
             f"Expected 'provider/model-name', e.g. 'openai/gpt-4o-mini', "
-            f"'anthropic/claude-sonnet-4-6', 'gemini/gemini-1.5-pro'."
+            f"'anthropic/claude-sonnet-4-6', 'gemini/gemini-1.5-pro', "
+            f"'openrouter/google/gemini-2.5-flash'."
         )
     provider, _, model_name = model.partition("/")
     provider = provider.lower()
@@ -41,8 +49,11 @@ def provider_for(config: ModelConfig) -> Provider:
         from .gemini import GeminiProvider
         return GeminiProvider(resolved)
 
+    if provider_key == "openrouter":
+        resolved.setdefault("base_url", OPENROUTER_BASE_URL)
+
     from .openai import OpenAIProvider
     return OpenAIProvider(resolved)
 
 
-__all__ = ["Provider", "provider_for"]
+__all__ = ["OPENROUTER_BASE_URL", "Provider", "provider_for"]
