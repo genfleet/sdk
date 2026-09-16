@@ -100,7 +100,7 @@ Agent(
 
 ```python
 {
-    "model":    str,       # "openai/gpt-4o-mini", "anthropic/claude-sonnet-4-6", "gemini/gemini-1.5-pro"
+    "model":    str,       # "openai/gpt-4o-mini", "anthropic/claude-sonnet-4-6", "gemini/gemini-1.5-pro", "openrouter/google/gemini-2.5-flash"
     "api_key":  str,
     "base_url": str,       # optional — for OpenAI-compatible endpoints (DeepSeek, Groq, Ollama, …)
 }
@@ -113,6 +113,7 @@ Uses explicit `provider/model-name` format.
 | `openai/` | OpenAI (+ any compatible endpoint) | `[openai]` |
 | `anthropic/` | Anthropic | `[anthropic]` |
 | `gemini/` | Google Gemini | `[gemini]` |
+| `openrouter/<vendor>/<model>` | OpenRouter gateway — any vendor, one key | `[openai]` |
 
 ### MemoryConfig
 
