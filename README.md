@@ -76,6 +76,7 @@ Agent(
 {"model": "openai/gpt-4o-mini",       "api_key": "sk-..."}     # OpenAI
 {"model": "anthropic/claude-sonnet-4-6", "api_key": "sk-ant-..."} # Anthropic
 {"model": "gemini/gemini-1.5-pro",     "api_key": "..."}        # Gemini
+{"model": "openrouter/google/gemini-2.5-flash", "api_key": "sk-or-..."}  # any vendor via OpenRouter
 {"model": "openai/deepseek-chat",      "api_key": "sk-...", "base_url": "https://api.deepseek.com"}  # any OpenAI-compatible
 ```
 
