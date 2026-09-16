@@ -5,6 +5,20 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-09-16
+
+### Added
+
+- **`openrouter/<vendor>/<model>` provider prefix** — routes to the OpenAI provider pointed at the OpenRouter gateway (`https://openrouter.ai/api/v1`), passing the vendor id through intact, so one key reaches every vendor OpenRouter fronts.
+  ```python
+  {"model": "openrouter/google/gemini-2.5-flash", "api_key": "sk-or-..."}
+  ```
+  A non-empty `base_url` in the config still wins; a missing, `None` or empty `base_url` falls back to the gateway. The prefix requires the vendor segment — `openrouter/<model>` raises `ValueError`.
+
+## [0.5.0] – [0.8.2]
+
+See git history.
+
 ## [0.4.1] - 2026-08-01
 
 ### Fixed

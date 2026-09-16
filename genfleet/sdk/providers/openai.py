@@ -8,6 +8,11 @@ from ..schemas import AgentOutput, ModelConfig, TokenUsage, ToolCall, ToolSchema
 
 log = logging.getLogger("genfleet.sdk.providers.openai")
 
+try:  # the openai extra is optional
+    from openai import AsyncOpenAI
+except ImportError:  # pragma: no cover - exercised only without the extra
+    AsyncOpenAI = None
+
 # Keys carried in message history for other providers' benefit, which the
 # OpenAI chat-completions API rejects as unknown fields. Messages are passed
 # through verbatim, so they must be stripped here: a session started on Gemini
@@ -39,9 +44,7 @@ class OpenAIProvider:
     """Covers OpenAI and any OpenAI-compatible endpoint (DeepSeek, Groq, Ollama, …)."""
 
     def __init__(self, config: ModelConfig) -> None:
-        try:
-            from openai import AsyncOpenAI
-        except ImportError:
+        if AsyncOpenAI is None:
             raise ImportError(
                 "OpenAI provider requires the openai extra: "
                 "pip install 'genfleet-sdk[openai]'"

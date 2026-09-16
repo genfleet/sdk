@@ -54,7 +54,7 @@ These are plain Python `TypedDict` classes. Pass as regular dicts.
 
 ```python
 class ModelConfig(TypedDict, total=False):
-    model:    Required[str]   # e.g. "openai/gpt-4o-mini", "anthropic/claude-sonnet-4-6", "gemini/gemini-1.5-pro"
+    model:    Required[str]   # e.g. "openai/gpt-4o-mini", "anthropic/claude-sonnet-4-6", "gemini/gemini-1.5-pro", "openrouter/google/gemini-2.5-flash"
     api_key:  Required[str]
     base_url: str             # optional — for OpenAI-compatible endpoints
 ```
@@ -66,6 +66,7 @@ Uses explicit `provider/model-name` format:
 | `openai/` | OpenAI (+ any compatible endpoint) | `pip install 'genfleet-sdk[openai]'` |
 | `anthropic/` | Anthropic | `pip install 'genfleet-sdk[anthropic]'` |
 | `gemini/` | Google Gemini | `pip install 'genfleet-sdk[gemini]'` |
+| `openrouter/<vendor>/<model>` | OpenRouter gateway — any vendor, one key | `pip install 'genfleet-sdk[openai]'` |
 
 ### MemoryConfig
 

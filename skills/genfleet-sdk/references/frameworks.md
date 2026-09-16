@@ -1,6 +1,6 @@
 # Framework Integration Examples
 
-For LLM providers supported natively by the SDK (OpenAI, Anthropic, Gemini), use `Agent()` directly.
+For LLM providers supported natively by the SDK (OpenAI, Anthropic, Gemini, and any vendor behind OpenRouter), use `Agent()` directly.
 
 For external orchestration frameworks (LangChain, CrewAI) that manage their own LLM calls, implement `AgentProtocol` directly.
 
@@ -9,9 +9,10 @@ For external orchestration frameworks (LangChain, CrewAI) that manage their own 
 1. [OpenAI](#openai)
 2. [Anthropic](#anthropic)
 3. [Gemini](#gemini)
-4. [OpenAI-Compatible Endpoints](#openai-compatible-endpoints)
-5. [LangChain](#langchain)
-6. [CrewAI](#crewai)
+4. [OpenRouter](#openrouter)
+5. [OpenAI-Compatible Endpoints](#openai-compatible-endpoints)
+6. [LangChain](#langchain)
+7. [CrewAI](#crewai)
 
 ---
 
@@ -98,6 +99,26 @@ agent = Agent(
 
 serve(agent, name="gemini-agent", port=8005)
 ```
+
+---
+
+## OpenRouter
+
+**Install:** `pip install 'genfleet-sdk[openai,serve]'`
+
+`openrouter/<vendor>/<model>` routes through the OpenRouter gateway, so one key reaches every vendor it fronts. The vendor id is passed through intact — no `base_url` needed:
+
+```python
+agent = Agent(
+    role="You are a helpful assistant.",
+    model={
+        "model":   "openrouter/google/gemini-2.5-flash",
+        "api_key": os.environ["OPENROUTER_API_KEY"],
+    },
+)
+```
+
+The vendor segment is required: `openrouter/gemini-2.5-flash` raises `ValueError`. A non-empty `base_url` still wins if you need a different gateway.
 
 ---
 
