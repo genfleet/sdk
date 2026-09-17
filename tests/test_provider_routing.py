@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from genfleet.sdk.providers import _OPENROUTER_BASE_URL, provider_for
+from genfleet.sdk.providers import _OPENROUTER_BASE_URL, _OPENROUTER_HEADERS, provider_for
 from genfleet.sdk.providers import openai as openai_provider
 from genfleet.sdk.providers.openai import OpenAIProvider
 
@@ -63,7 +63,11 @@ async def test_openrouter_selects_the_openai_provider_at_the_gateway(clients):
 
     assert isinstance(provider, OpenAIProvider)
     await _drive_one_completion(provider)
-    assert clients[0].init_kwargs == {"api_key": "sk-or-k", "base_url": _OPENROUTER_BASE_URL}
+    assert clients[0].init_kwargs == {
+        "api_key": "sk-or-k",
+        "base_url": _OPENROUTER_BASE_URL,
+        "default_headers": _OPENROUTER_HEADERS,
+    }
     assert clients[0].create_kwargs["model"] == VENDOR_MODEL
 
 
@@ -82,6 +86,8 @@ async def test_an_explicit_base_url_beats_the_gateway_default(clients):
 
     await _drive_one_completion(provider)
     assert clients[0].init_kwargs["base_url"] == "http://localhost:11434/v1"
+    # Attribution headers are OpenRouter's; a Groq or Ollama endpoint gets none.
+    assert clients[0].init_kwargs.get("default_headers") is None
     # The vendor id survives the override — only the endpoint changes.
     assert clients[0].create_kwargs["model"] == VENDOR_MODEL
 
@@ -99,3 +105,16 @@ def test_unknown_prefix_lists_the_supported_ones():
 def test_a_model_without_a_prefix_is_rejected():
     with pytest.raises(ValueError, match="Expected 'provider/model-name'"):
         provider_for({"model": "gpt-4o-mini", "api_key": "k"})
+
+
+async def test_caller_headers_are_kept_alongside_the_attribution_ones(clients):
+    provider = provider_for({
+        "model": f"openrouter/{VENDOR_MODEL}",
+        "api_key": "k",
+        "default_headers": {"X-OpenRouter-Title": "My App", "X-Custom": "1"},
+    })
+    await _drive_one_completion(provider)
+    sent = clients[0].init_kwargs["default_headers"]
+    assert sent["X-OpenRouter-Title"] == "My App"      # the caller's value wins
+    assert sent["HTTP-Referer"] == _OPENROUTER_HEADERS["HTTP-Referer"]
+    assert sent["X-Custom"] == "1"

@@ -5,6 +5,11 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-09-17
+
+### Added
+- `openrouter/` requests carry OpenRouter's attribution headers (`HTTP-Referer: https://genfleet.ai`, `X-OpenRouter-Title: Genfleet`) when they go to the gateway. `ModelConfig.default_headers` lets a caller add or override headers on any OpenAI-compatible provider.
+
 ## [0.9.0] - 2026-09-16
 
 ### Added
