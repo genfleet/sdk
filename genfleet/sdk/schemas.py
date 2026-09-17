@@ -58,6 +58,7 @@ class ModelConfig(TypedDict, total=False):
     model: Required[str]      # e.g. "openai/gpt-4o-mini", "anthropic/claude-sonnet-4-6", "gemini/gemini-1.5-pro", "openrouter/google/gemini-2.5-flash"
     api_key: Required[str]
     base_url: str             # optional — for OpenAI-compatible endpoints
+    default_headers: dict[str, str]  # optional — sent on every request (OpenAI-compatible providers)
 
 
 class MemoryConfig(TypedDict, total=False):

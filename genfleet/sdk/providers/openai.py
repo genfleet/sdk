@@ -52,6 +52,7 @@ class OpenAIProvider:
         self._client = AsyncOpenAI(
             api_key=config["api_key"],
             base_url=config.get("base_url"),
+            default_headers=config.get("default_headers"),
         )
         self._model = config["model"]
 

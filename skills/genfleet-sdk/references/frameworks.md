@@ -122,6 +122,8 @@ The vendor segment is required: `openrouter/gemini-2.5-flash` raises `ValueError
 
 ---
 
+Requests to the gateway carry OpenRouter's attribution headers (`HTTP-Referer: https://genfleet.ai`, `X-OpenRouter-Title: Genfleet`). Set `default_headers` in the model config to add or override them; an explicit `base_url` to another endpoint sends none.
+
 ## OpenAI-Compatible Endpoints
 
 Any provider with an OpenAI-compatible API (DeepSeek, Groq, Ollama, Together, etc.) works with `openai/` prefix + `base_url`:
