@@ -63,9 +63,8 @@ Agent(
     model:   ModelConfig,              # provider + credentials
     tools:   list[Callable] = [],      # plain Python functions — auto-wrapped
     mcps:    list[MCPConfig] = [],     # MCP server connections
-    memory:  MemoryConfig | None = None,  # Redis-backed session memory
+    memory:  MemoryConfig | "platform" | None = None,  # episodic memory (see below)
     context: str | None = None,        # extra context appended to system prompt
-    data:    DataConfig | None = None, # RAG config (reserved, not yet implemented)
     audit:   AuditConfig | None = None, # structured audit logging
 )
 ```
@@ -79,6 +78,18 @@ Agent(
 {"model": "openrouter/google/gemini-2.5-flash", "api_key": "sk-or-..."}  # any vendor via OpenRouter
 {"model": "openai/deepseek-chat",      "api_key": "sk-...", "base_url": "https://api.deepseek.com"}  # any OpenAI-compatible
 ```
+
+### Memory
+
+Memory is episodic: one thread of messages per `session_id`, loaded before a
+turn and appended to after it.
+
+- **On the platform** you need not name a backend. A hosted agent is given
+  `GENFLEET_MEMORY_URL` / `GENFLEET_MEMORY_TOKEN` by its sandbox and uses the
+  platform's store, scoped to that agent instance. `memory="platform"` says so
+  explicitly and fails fast outside a sandbox. `agent.memory.search(subject, query)`
+  and `agent.memory.purge(subject)` are available on it.
+- **Anywhere else** pass your own Redis, or nothing for a stateless agent.
 
 ### With Redis memory
 
@@ -188,7 +199,7 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 | `TokenUsage` | Model | Token counts (input, output, total) |
 | `AuditEvent` | Model | Structured audit event |
 | `ModelConfig` | TypedDict | Provider + credentials config |
-| `MemoryConfig` | TypedDict | Redis memory config |
+| `MemoryConfig` | TypedDict | Memory config — `{"type": "redis", ...}` or `{"type": "platform"}` |
 | `AuditConfig` | TypedDict | Audit backend config |
 | `MCPConfig` | TypedDict | MCP server connection config |
 | `DataConfig` | TypedDict | RAG config (reserved) |

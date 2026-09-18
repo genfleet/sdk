@@ -10,13 +10,12 @@ from typing import Any, AsyncIterator
 from .audit import Auditor, audit_for
 from .audit.schemas import AuditConfig
 from .memory import memory_for
-from .memory.base import Memory
+from .memory.base import AppendableMemory, Memory
 from .providers import provider_for
 from .providers.base import Provider
 from .schemas import (
     AgentInput,
     AgentOutput,
-    DataConfig,
     MCPConfig,
     MemoryConfig,
     Message,
@@ -58,7 +57,7 @@ def _tool_call_to_dict(tc: ToolCall) -> dict:
 class Agent:
     """
     High-level agent that wires together a provider, tools, MCP servers,
-    Redis memory, and optional context into a single AgentProtocol-compatible object.
+    episodic memory, and optional context into a single AgentProtocol-compatible object.
 
     Usage::
 
@@ -66,9 +65,12 @@ class Agent:
             role="You are a helpful assistant.",
             model={"model": "gpt-4o-mini", "api_key": "sk-…"},
             tools=[my_function],
-            memory={"type": "redis", "connection": "redis://localhost:6379"},
+            memory="platform",   # the platform's store when hosted; or {"type": "redis", ...}
         )
         serve(agent, name="my-agent", port=8000)
+
+    ``memory`` may be left out: hosted on the platform the agent then gets
+    the platform store anyway; on a laptop it runs without memory.
     """
 
     def __init__(
@@ -77,9 +79,8 @@ class Agent:
         model: ModelConfig,
         tools: list[Callable] | None = None,
         mcps: list[MCPConfig] | None = None,
-        memory: MemoryConfig | None = None,
+        memory: MemoryConfig | str | None = None,
         context: str | None = None,
-        data: DataConfig | None = None,
         audit: AuditConfig | None = None,
     ) -> None:
         self._role = role
@@ -87,7 +88,7 @@ class Agent:
         self._model_config = model
 
         self._provider: Provider = provider_for(model)
-        self._memory: Memory | None = memory_for(memory) if memory else None
+        self._memory: Memory | None = memory_for(memory)
         self._auditor: Auditor | None = audit_for(audit)
         self._mcp_configs: list[MCPConfig] = mcps or []
 
@@ -100,8 +101,12 @@ class Agent:
         self._mcp_tools: dict[str, Any] = {}
         self._mcp_ready = False
 
-        if data is not None:
-            log.debug("data= parameter accepted but not yet implemented (reserved for RAG)")
+    @property
+    def memory(self) -> Memory | None:
+        """The episodic backend, for calls beyond the turn loop — a
+        :class:`~genfleet.sdk.memory.PlatformMemory` exposes ``search`` and
+        ``purge``. ``None`` when the agent runs without memory."""
+        return self._memory
 
     # ------------------------------------------------------------------
     # AgentProtocol
@@ -258,14 +263,14 @@ class Agent:
                         "content": result,
                     })
 
-            # Persist updated history — keep the full assistant/tool structure so
+            # Persist this turn — keep the full assistant/tool structure so
             # replayed histories remain valid provider payloads (tool messages must
             # follow an assistant turn carrying the matching tool_calls ids).
             if self._memory:
-                updated = list(history) + [Message(role="user", content=input.message)]
+                turn = [Message(role="user", content=input.message)]
                 for m in new_messages:
                     if m["role"] == "assistant":
-                        updated.append(Message(
+                        turn.append(Message(
                             role="assistant",
                             content=m.get("content", "") or "",
                             tool_calls=[
@@ -279,12 +284,24 @@ class Agent:
                             ],
                         ))
                     elif m["role"] == "tool":
-                        updated.append(Message(
+                        turn.append(Message(
                             role="tool",
                             content=m.get("content", "") or "",
                             tool_call_id=m.get("tool_call_id"),
                         ))
-                await self._memory.save(session_id, updated)
+                if isinstance(self._memory, AppendableMemory):
+                    # One turn, not the whole thread: the store already holds
+                    # what ``load`` returned. ``subject`` and the session's
+                    # metadata ride on the input — a channel ingress sets them
+                    # (ADR-0019 §4); a plain caller may leave them out.
+                    await self._memory.append(
+                        session_id,
+                        turn,
+                        subject=_optional_str(input.metadata.get("subject")),
+                        metadata=_session_metadata(input.metadata),
+                    )
+                else:
+                    await self._memory.save(session_id, list(history) + turn)
 
             if auditor:
                 await auditor.emit(
@@ -419,3 +436,17 @@ async def _invoke_mcp_tool(config: MCPConfig, name: str, arguments: dict) -> str
                 return str(result.content)
 
     return "Error: unsupported MCP transport"
+
+
+def _optional_str(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+#: Input-metadata keys that describe the *session* rather than the turn, and
+#: are worth keeping with it. Everything else in ``metadata`` is per request.
+_SESSION_METADATA_KEYS = ("channel", "contact")
+
+
+def _session_metadata(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    kept = {k: metadata[k] for k in _SESSION_METADATA_KEYS if metadata.get(k) is not None}
+    return kept or None

@@ -5,6 +5,19 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-09-18
+
+### Added
+- **Platform episodic memory** (ADR-0018). `Agent(memory="platform")` — or `memory` omitted, when the sandbox provides `GENFLEET_MEMORY_URL` / `GENFLEET_MEMORY_TOKEN` — selects `PlatformMemory`, an HTTP client for the engine's memory proxy. It never sends a tenant or agent id; the proxy's per-spawn token *is* the scope. Stdlib HTTP, no new dependency.
+- `AppendableMemory`: a backend that can add one turn without rewriting the thread. `Agent.run` appends the turn on such a backend and only falls back to whole-thread `save` on others (Redis). `subject`, `channel` and `contact` from the input metadata are kept with the session.
+- `PlatformMemory.search(subject, query)` and `.purge(subject)`; `Agent.memory` exposes the backend.
+
+### Removed
+- **`Agent(data=...)` and `DataConfig`** — reserved for RAG since 0.1 and never implemented. RAG is the semantic layer of memory and arrives through the same backend. Passing `data=` is now a `TypeError`.
+
+### Changed
+- `MemoryConfig.type` accepts `"platform"`; `connection` is required only for `"redis"`.
+
 ## [0.9.1] - 2026-09-17
 
 ### Added

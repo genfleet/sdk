@@ -63,9 +63,31 @@ def test_agent_context_optional():
     assert agent_with_ctx._context == "extra context"
 
 
-def test_agent_data_ignored_no_error():
-    agent = _make_agent(data={"type": "lightrag", "storage_dir": "/tmp"})
-    assert agent is not None
+def test_agent_data_parameter_is_gone():
+    # Reserved for RAG since 0.1 and never implemented; ADR-0018 folds RAG
+    # into memory. A silent no-op parameter is worse than a TypeError.
+    with pytest.raises(TypeError):
+        _make_agent(data={"type": "lightrag", "storage_dir": "/tmp"})
+
+
+def test_agent_without_memory_stays_stateless_outside_a_sandbox(monkeypatch):
+    monkeypatch.delenv("GENFLEET_MEMORY_URL", raising=False)
+    assert _make_agent().memory is None
+
+
+def test_agent_without_memory_gets_the_platform_store_inside_a_sandbox(monkeypatch):
+    from genfleet.sdk.memory import PlatformMemory
+
+    monkeypatch.setenv("GENFLEET_MEMORY_URL", "http://127.0.0.1:1/memory")
+    monkeypatch.setenv("GENFLEET_MEMORY_TOKEN", "spawn-token")
+    assert isinstance(_make_agent().memory, PlatformMemory)
+    assert isinstance(_make_agent(memory="platform").memory, PlatformMemory)
+
+
+def test_platform_memory_outside_a_sandbox_names_the_missing_variable(monkeypatch):
+    monkeypatch.delenv("GENFLEET_MEMORY_URL", raising=False)
+    with pytest.raises(RuntimeError, match="GENFLEET_MEMORY_URL"):
+        _make_agent(memory="platform")
 
 
 # ---------------------------------------------------------------------------
@@ -287,3 +309,47 @@ async def test_agent_loads_and_saves_memory():
     assert "sess-1" in stored
     messages = stored["sess-1"]
     assert any(m.role == "user" for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_agent_appends_one_turn_when_the_backend_can():
+    """An appendable backend gets only this turn — never the thread it already holds."""
+    from genfleet.sdk.schemas import Message
+
+    class FakeAppendable:
+        def __init__(self):
+            self.loaded = [Message(role="user", content="earlier"), Message(role="assistant", content="ok")]
+            self.appended = []
+            self.saved = []
+
+        async def load(self, session_id):
+            return list(self.loaded)
+
+        async def save(self, session_id, history):
+            self.saved.append(history)
+
+        async def clear(self, session_id):
+            pass
+
+        async def append(self, session_id, messages, *, subject=None, metadata=None):
+            self.appended.append((session_id, messages, subject, metadata))
+
+    mem = FakeAppendable()
+    agent = _make_agent()
+    agent._memory = mem
+    agent._provider = _mock_provider([AgentOutput(content="Hi!", done=True)])
+
+    async for _ in agent.run(AgentInput(
+        message="hello",
+        metadata={"session_id": "whatsapp:1", "subject": "cust-1", "channel": "whatsapp", "request_id": "r9"},
+    )):
+        pass
+
+    assert mem.saved == []
+    (session_id, messages, subject, metadata), = mem.appended
+    assert session_id == "whatsapp:1"
+    assert [m.role for m in messages] == ["user", "assistant"]
+    assert messages[0].content == "hello"
+    assert subject == "cust-1"
+    assert metadata == {"channel": "whatsapp"}  # request_id is per turn, not per session
+
