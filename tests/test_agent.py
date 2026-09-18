@@ -331,8 +331,8 @@ async def test_agent_appends_one_turn_when_the_backend_can():
         async def clear(self, session_id):
             pass
 
-        async def append(self, session_id, messages, *, subject=None, metadata=None):
-            self.appended.append((session_id, messages, subject, metadata))
+        async def append(self, session_id, messages, *, subject=None, metadata=None, turn_id=None):
+            self.appended.append((session_id, messages, subject, metadata, turn_id))
 
     mem = FakeAppendable()
     agent = _make_agent()
@@ -346,10 +346,74 @@ async def test_agent_appends_one_turn_when_the_backend_can():
         pass
 
     assert mem.saved == []
-    (session_id, messages, subject, metadata), = mem.appended
+    (session_id, messages, subject, metadata, turn_id), = mem.appended
     assert session_id == "whatsapp:1"
     assert [m.role for m in messages] == ["user", "assistant"]
     assert messages[0].content == "hello"
     assert subject == "cust-1"
     assert metadata == {"channel": "whatsapp"}  # request_id is per turn, not per session
+    assert turn_id == "r9"  # the caller's id, so a retry of it is recognisable
 
+
+
+@pytest.mark.asyncio
+async def test_the_turn_is_persisted_even_when_the_caller_stops_at_done():
+    """``serve`` breaks out of the ``async for`` on ``done``, which closes the
+    generator. Anything written after that yield is never written at all."""
+
+    class FakeAppendable:
+        def __init__(self):
+            self.appended = []
+
+        async def load(self, session_id):
+            return []
+
+        async def save(self, session_id, history):  # pragma: no cover — appendable
+            raise AssertionError("save must not be used on an appendable backend")
+
+        async def clear(self, session_id):
+            pass
+
+        async def append(self, session_id, messages, *, subject=None, metadata=None, turn_id=None):
+            self.appended.append(messages)
+
+    mem = FakeAppendable()
+    agent = _make_agent()
+    agent._memory = mem
+    agent._provider = _mock_provider([AgentOutput(content="Hi!", done=True)])
+
+    async for output in agent.run(AgentInput(message="hello", metadata={"session_id": "s"})):
+        if output.done:
+            break
+
+    assert [m.role for m in mem.appended[0]] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_nobody_named_falls_back_to_the_invocation_id():
+    from genfleet.sdk.agent import _turn_id
+
+    assert _turn_id({"message_id": "m1"}, "inv") == "m1"
+    assert _turn_id({"request_id": " "}, "inv") == "inv"
+
+
+def test_a_contact_is_not_copied_into_the_session_metadata():
+    # PII: the party is already named by the opaque ``subject``.
+    from genfleet.sdk.agent import _session_metadata
+
+    assert _session_metadata({"channel": "whatsapp", "contact": "+201234"}) == {"channel": "whatsapp"}
+
+
+def test_a_redis_config_without_a_connection_names_the_missing_key():
+    from genfleet.sdk.memory import memory_for
+
+    with pytest.raises(ValueError, match="connection"):
+        memory_for({"type": "redis"})
+
+
+def test_a_token_without_a_url_runs_stateless_and_says_so(monkeypatch, caplog):
+    monkeypatch.delenv("GENFLEET_MEMORY_URL", raising=False)
+    monkeypatch.setenv("GENFLEET_MEMORY_TOKEN", "spawn-token")
+    with caplog.at_level("WARNING", logger="genfleet.sdk.memory"):
+        assert _make_agent().memory is None
+    assert "GENFLEET_MEMORY_URL" in caplog.text

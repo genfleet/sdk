@@ -24,7 +24,6 @@ class Agent:
         mcps:    list[MCPConfig] = [],
         memory:  MemoryConfig | None = None,
         context: str | None = None,
-        data:    DataConfig | None = None,
         audit:   AuditConfig | None = None,
     ) -> None: ...
 
@@ -101,17 +100,6 @@ MCPConfig = MCPStdioConfig | MCPSseConfig
 ```
 
 Requires `pip install 'genfleet-sdk[mcp]'`.
-
-### DataConfig
-
-```python
-class DataConfig(TypedDict, total=False):
-    type:        str   # e.g. "lightrag"
-    storage_dir: str
-    mode:        str   # "naive" | "local" | "hybrid"
-```
-
-Reserved for native RAG in a future release. The `data=` parameter is accepted by `Agent()` but currently ignored.
 
 ### AuditConfig
 

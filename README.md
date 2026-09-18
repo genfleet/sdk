@@ -90,6 +90,12 @@ turn and appended to after it.
   explicitly and fails fast outside a sandbox. `agent.memory.search(subject, query)`
   and `agent.memory.purge(subject)` are available on it.
 - **Anywhere else** pass your own Redis, or nothing for a stateless agent.
+- Both sandbox variables travel together. With only `GENFLEET_MEMORY_URL` set,
+  the agent raises at construction; with only `GENFLEET_MEMORY_TOKEN`, there is
+  nothing to dial, so it runs stateless and logs a warning.
+- A retried turn is appended twice unless the caller names it: `turn_id`,
+  `request_id` or `message_id` in the request metadata is passed to the store
+  as the turn's idempotency key.
 
 ### With Redis memory
 
@@ -202,7 +208,6 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 | `MemoryConfig` | TypedDict | Memory config — `{"type": "redis", ...}` or `{"type": "platform"}` |
 | `AuditConfig` | TypedDict | Audit backend config |
 | `MCPConfig` | TypedDict | MCP server connection config |
-| `DataConfig` | TypedDict | RAG config (reserved) |
 | `ToolWrapper` | Class | Wraps any callable as a `ToolProtocol` |
 | `@tool` | Decorator | Function → `ToolWrapper` with auto-generated schema |
 

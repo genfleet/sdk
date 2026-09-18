@@ -434,9 +434,8 @@ curl -X POST http://localhost:8000 \
     model:   ModelConfig,                 # provider + credentials dict
     tools:   list[Callable] = [],         # plain functions — auto-wrapped
     mcps:    list[MCPConfig] = [],        # MCP server connections
-    memory:  MemoryConfig | None = None,  # Redis-backed session memory
+    memory:  MemoryConfig | "platform" | None = None,  # episodic memory (platform store or Redis)
     context: str | None = None,           # extra context appended to system prompt
-    data:    DataConfig | None = None,    # RAG config (reserved)
     audit:   AuditConfig | None = None,   # structured audit logging
 )</code></pre>
     </div>
@@ -928,9 +927,8 @@ if __name__ == "__main__":
     AuditEvent,     # Model — structured audit event
     # Config TypedDicts
     ModelConfig,    # Provider + credentials
-    MemoryConfig,   # Redis memory config
+    MemoryConfig,   # Memory config — platform store or Redis
     MCPConfig,      # MCP server connection config
-    DataConfig,     # RAG config (reserved)
     AuditConfig,    # Audit backend config
     # Tools
     ToolWrapper,    # Class — wraps callable as ToolProtocol

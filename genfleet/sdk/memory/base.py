@@ -23,6 +23,13 @@ class Memory(Protocol):
 
 @runtime_checkable
 class AppendableMemory(Protocol):
+    """Add one turn to a thread without rewriting it.
+
+    ``turn_id`` is an idempotency key for that turn: a backend that honours it
+    keeps the first append and drops a replay, so a retried invocation is not
+    stored twice. A backend free to ignore it is free to duplicate.
+    """
+
     async def append(
         self,
         session_id: str,
@@ -30,4 +37,5 @@ class AppendableMemory(Protocol):
         *,
         subject: str | None = None,
         metadata: dict[str, Any] | None = None,
+        turn_id: str | None = None,
     ) -> None: ...

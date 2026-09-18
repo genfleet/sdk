@@ -94,7 +94,9 @@ async def test_save_is_clear_then_append(proxy):
 
 @pytest.mark.asyncio
 async def test_search_and_purge(proxy):
-    _Proxy.responses["/memory/episodic/search"] = (200, [{"session_id": "s", "seq": 3, "message": {"role": "user", "content": "boiler"}}])
+    _Proxy.responses["/memory/episodic/search"] = (200, {
+        "results": [{"session_id": "s", "seq": 3, "message": {"role": "user", "content": "boiler"}}],
+    })
     _Proxy.responses["/memory/episodic/purge"] = (200, {"sessions": 2, "facts": 0})
     mem = PlatformMemory(proxy, "t")
     hits = await mem.search("cust-1", "boiler", limit=5)
@@ -124,3 +126,42 @@ def test_from_env_requires_both_variables(monkeypatch):
     monkeypatch.delenv("GENFLEET_MEMORY_TOKEN", raising=False)
     with pytest.raises(RuntimeError, match="GENFLEET_MEMORY_TOKEN"):
         PlatformMemory.from_env()
+
+
+@pytest.mark.asyncio
+async def test_a_body_that_is_not_json_is_an_error_not_a_crash(proxy):
+    class _Broken(_Proxy):
+        def do_POST(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", "5")
+            self.end_headers()
+            self.wfile.write(b"<html")
+
+    server = HTTPServer(("127.0.0.1", 0), _Broken)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with pytest.raises(PlatformMemoryError, match="undecodable"):
+            await PlatformMemory(f"http://127.0.0.1:{server.server_port}", "t").load("s")
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_response_of_the_wrong_shape_is_an_error_not_an_attributeerror(proxy):
+    _Proxy.responses["/memory/episodic/load"] = (200, ["not", "an", "object"])
+    _Proxy.responses["/memory/episodic/search"] = (200, ["not", "a", "results", "object"])
+    mem = PlatformMemory(proxy, "t")
+    with pytest.raises(PlatformMemoryError, match="expected an object"):
+        await mem.load("s")
+    with pytest.raises(PlatformMemoryError, match="results"):
+        await mem.search("cust-1", "boiler")
+
+
+@pytest.mark.asyncio
+async def test_append_sends_the_turn_id_as_the_idempotency_key(proxy):
+    await PlatformMemory(proxy, "t").append(
+        "s", [Message(role="user", content="hi")], turn_id="turn-7"
+    )
+    (_, body, _), = _Proxy.calls
+    assert body["turn_id"] == "turn-7"

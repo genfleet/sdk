@@ -63,10 +63,15 @@ class PlatformMemory:
     # -- Memory ---------------------------------------------------------
 
     async def load(self, session_id: str, *, limit: int | None = None) -> list[Message]:
+        """The thread, oldest first. ``limit`` bounds it to the newest N turns;
+        the turn loop never passes it, a caller reaching the backend through
+        ``Agent.memory`` can."""
         body: dict[str, Any] = {"session_id": session_id}
         if limit:
             body["limit"] = limit
         data = await self._call("episodic/load", body)
+        if not isinstance(data, dict):
+            raise PlatformMemoryError("episodic/load", 200, f"expected an object, got {type(data).__name__}")
         out: list[Message] = []
         for raw in data.get("messages", []):
             try:
@@ -76,9 +81,15 @@ class PlatformMemory:
         return out
 
     async def save(self, session_id: str, history: list[Message]) -> None:
-        # Whole-thread semantics on an append-only store: clear, then append.
-        # The agent never takes this path (it uses ``append``); it exists so
-        # the ``Memory`` contract holds for callers that only know ``save``.
+        """Replace the thread. Prefer :meth:`append` — this path is lossy.
+
+        Whole-thread semantics on an append-only store means clear, then
+        append, and the two are not one transaction: an append that fails
+        after the clear leaves the thread empty. It also sends the thread in
+        one request, so a long one runs into the proxy's body-size cap. The
+        agent never takes this path (it uses ``append``); it exists so the
+        ``Memory`` contract holds for callers that only know ``save``.
+        """
         await self.clear(session_id)
         if history:
             await self.append(session_id, history)
@@ -95,7 +106,19 @@ class PlatformMemory:
         *,
         subject: str | None = None,
         metadata: dict[str, Any] | None = None,
+        turn_id: str | None = None,
     ) -> None:
+        """Add one turn to a thread.
+
+        ``turn_id`` is the idempotency key: the proxy keeps the first append
+        carrying a given ``(session, turn_id)`` and drops a replay of it, so a
+        retried invocation does not store the turn twice. Dedupe is only as
+        good as the id — a caller that mints a fresh one per attempt gets none.
+
+        The turn travels in one request, so a turn whose tool results are large
+        can exceed the proxy's body-size cap and surface as a
+        :class:`PlatformMemoryError`; the SDK does not split it.
+        """
         if not messages:
             return
         body: dict[str, Any] = {
@@ -106,20 +129,33 @@ class PlatformMemory:
             body["subject"] = subject
         if metadata:
             body["metadata"] = metadata
+        if turn_id:
+            body["turn_id"] = turn_id
         await self._call("episodic/append", body)
 
     # -- Beyond the protocol ---------------------------------------------
 
     async def search(self, subject: str, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
-        """Past messages of one party matching ``query``, newest first."""
+        """Past messages of one party matching ``query``, newest first.
+
+        One shape, one casing: the proxy answers ``{"results": [...]}`` and
+        each hit is ``{"session_id", "seq", "message", "created_at"}`` —
+        snake_case, like every other call here. The store's own camelCase is
+        the proxy's to translate; anything else is a proxy bug and raises.
+        """
         data = await self._call(
             "episodic/search", {"subject": subject, "query": query, "limit": limit}
         )
-        return list(data) if isinstance(data, list) else list(data.get("results", []))
+        results = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(results, list):
+            raise PlatformMemoryError("episodic/search", 200, 'expected {"results": [...]}')
+        return results
 
     async def purge(self, subject: str) -> dict[str, int]:
         """Erase everything about one party — every thread and every fact."""
         data = await self._call("episodic/purge", {"subject": subject})
+        if not isinstance(data, dict):
+            raise PlatformMemoryError("episodic/purge", 200, f"expected an object, got {type(data).__name__}")
         return {"sessions": int(data.get("sessions", 0)), "facts": int(data.get("facts", 0))}
 
     # -- transport --------------------------------------------------------
@@ -140,12 +176,20 @@ class PlatformMemory:
         try:
             with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:  # noqa: S310 — URL is platform-provided
                 raw = resp.read()
+                status = resp.status
         except urllib.error.HTTPError as exc:
             detail = _error_detail(exc.read())
             raise PlatformMemoryError(op, exc.code, detail) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise PlatformMemoryError(op, 0, str(exc)) from None
-        return json.loads(raw) if raw else {}
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw)
+        except ValueError:
+            # A 2xx whose body is not JSON is still a failed call, not a crash
+            # in the caller's turn loop.
+            raise PlatformMemoryError(op, status, f"undecodable body: {_error_detail(raw)}") from None
 
 
 def _error_detail(raw: bytes) -> str:

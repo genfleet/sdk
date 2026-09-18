@@ -9,14 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Platform episodic memory** (ADR-0018). `Agent(memory="platform")` — or `memory` omitted, when the sandbox provides `GENFLEET_MEMORY_URL` / `GENFLEET_MEMORY_TOKEN` — selects `PlatformMemory`, an HTTP client for the engine's memory proxy. It never sends a tenant or agent id; the proxy's per-spawn token *is* the scope. Stdlib HTTP, no new dependency.
-- `AppendableMemory`: a backend that can add one turn without rewriting the thread. `Agent.run` appends the turn on such a backend and only falls back to whole-thread `save` on others (Redis). `subject`, `channel` and `contact` from the input metadata are kept with the session.
+- `AppendableMemory`: a backend that can add one turn without rewriting the thread. `Agent.run` appends the turn on such a backend and only falls back to whole-thread `save` on others (Redis). `subject` and `channel` from the input metadata are kept with the session.
+- **Turn idempotency.** `AppendableMemory.append` takes a `turn_id`, and `Agent.run` fills it from the input metadata (`turn_id`, `request_id` or `message_id`), falling back to the invocation id. A store that honours it drops a replayed turn instead of storing it twice.
 - `PlatformMemory.search(subject, query)` and `.purge(subject)`; `Agent.memory` exposes the backend.
 
+### Fixed
+- **A served agent now persists its turn.** `Agent.run` wrote to memory after yielding `AgentOutput(done=True)`, and a consumer that stops reading at `done` — `serve` does — closed the generator first, so nothing was ever written. The turn is written before the `done` yield. Present since Redis memory shipped.
+- **A provider's `done` no longer ends the turn early.** A content chunk that arrived with `done=True` (the non-streaming provider path) was forwarded as-is, so a consumer stopped reading before the agent's own final chunk — and before any tool round still to come. `done` is now set once, by the agent, at the end of the turn.
+
 ### Removed
-- **`Agent(data=...)` and `DataConfig`** — reserved for RAG since 0.1 and never implemented. RAG is the semantic layer of memory and arrives through the same backend. Passing `data=` is now a `TypeError`.
+- **`Agent(data=...)` and `DataConfig`** — reserved for RAG since 0.1 and never implemented. RAG is the semantic layer of memory and arrives through the same backend. Passing `data=` is now a `TypeError`. **No deprecation cycle**, unlike `RawAdapter` in 0.2 → 0.4: the parameter was accepted and silently ignored, so nothing depended on its behaviour, and 0.x allows the break.
 
 ### Changed
-- `MemoryConfig.type` accepts `"platform"`; `connection` is required only for `"redis"`.
+- `MemoryConfig.type` accepts `"platform"`; `connection` is required only for `"redis"`, and a `"redis"` config without it now raises a `ValueError` naming the key instead of a bare `KeyError`.
+- `PlatformMemory` pins one response shape per call: `search` requires `{"results": [...]}` with snake_case keys, and a non-JSON or unexpected body raises `PlatformMemoryError` rather than `JSONDecodeError`/`AttributeError`. `PlatformMemoryError` is exported from `genfleet.sdk.memory`.
+- `memory` is typed `MemoryConfig | Literal["platform"] | None`, so a mistyped backend name is a type error rather than a runtime one.
 
 ## [0.9.1] - 2026-09-17
 
