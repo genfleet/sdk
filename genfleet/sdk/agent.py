@@ -5,18 +5,17 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 from .audit import Auditor, audit_for
 from .audit.schemas import AuditConfig
 from .memory import memory_for
-from .memory.base import Memory
+from .memory.base import AppendableMemory, Memory
 from .providers import provider_for
 from .providers.base import Provider
 from .schemas import (
     AgentInput,
     AgentOutput,
-    DataConfig,
     MCPConfig,
     MemoryConfig,
     Message,
@@ -58,7 +57,7 @@ def _tool_call_to_dict(tc: ToolCall) -> dict:
 class Agent:
     """
     High-level agent that wires together a provider, tools, MCP servers,
-    Redis memory, and optional context into a single AgentProtocol-compatible object.
+    episodic memory, and optional context into a single AgentProtocol-compatible object.
 
     Usage::
 
@@ -66,9 +65,12 @@ class Agent:
             role="You are a helpful assistant.",
             model={"model": "gpt-4o-mini", "api_key": "sk-…"},
             tools=[my_function],
-            memory={"type": "redis", "connection": "redis://localhost:6379"},
+            memory="platform",   # the platform's store when hosted; or {"type": "redis", ...}
         )
         serve(agent, name="my-agent", port=8000)
+
+    ``memory`` may be left out: hosted on the platform the agent then gets
+    the platform store anyway; on a laptop it runs without memory.
     """
 
     def __init__(
@@ -77,9 +79,8 @@ class Agent:
         model: ModelConfig,
         tools: list[Callable] | None = None,
         mcps: list[MCPConfig] | None = None,
-        memory: MemoryConfig | None = None,
+        memory: MemoryConfig | Literal["platform"] | None = None,
         context: str | None = None,
-        data: DataConfig | None = None,
         audit: AuditConfig | None = None,
     ) -> None:
         self._role = role
@@ -87,7 +88,7 @@ class Agent:
         self._model_config = model
 
         self._provider: Provider = provider_for(model)
-        self._memory: Memory | None = memory_for(memory) if memory else None
+        self._memory: Memory | None = memory_for(memory)
         self._auditor: Auditor | None = audit_for(audit)
         self._mcp_configs: list[MCPConfig] = mcps or []
 
@@ -100,8 +101,12 @@ class Agent:
         self._mcp_tools: dict[str, Any] = {}
         self._mcp_ready = False
 
-        if data is not None:
-            log.debug("data= parameter accepted but not yet implemented (reserved for RAG)")
+    @property
+    def memory(self) -> Memory | None:
+        """The episodic backend, for calls beyond the turn loop — a
+        :class:`~genfleet.sdk.memory.PlatformMemory` exposes ``search`` and
+        ``purge``. ``None`` when the agent runs without memory."""
+        return self._memory
 
     # ------------------------------------------------------------------
     # AgentProtocol
@@ -180,7 +185,11 @@ class Agent:
                         tool_calls_batch.extend(chunk.tool_calls)
                     elif chunk.content:
                         response_content_parts.append(chunk.content)
-                        yield chunk
+                        # ``done`` describes the turn, not a provider chunk: the
+                        # loop may still have a tool round to run, and a consumer
+                        # stops reading at the first ``done`` it sees. Only the
+                        # yield at the bottom of the loop ends the turn.
+                        yield chunk.model_copy(update={"done": False}) if chunk.done else chunk
                     if chunk.done:
                         break
 
@@ -212,6 +221,13 @@ class Agent:
                     final_text = "".join(response_content_parts)
                     if final_text:
                         new_messages.append({"role": "assistant", "content": final_text})
+                    # Persist *before* announcing the turn is done. A consumer
+                    # stops reading at ``done`` — ``serve`` breaks out of the
+                    # ``async for`` — which closes this generator at the yield
+                    # below, so anything after it never runs.
+                    await self._persist_turn(
+                        session_id, input, history, new_messages, invocation_id
+                    )
                     yield AgentOutput(content="", done=True)
                     break
 
@@ -258,34 +274,6 @@ class Agent:
                         "content": result,
                     })
 
-            # Persist updated history — keep the full assistant/tool structure so
-            # replayed histories remain valid provider payloads (tool messages must
-            # follow an assistant turn carrying the matching tool_calls ids).
-            if self._memory:
-                updated = list(history) + [Message(role="user", content=input.message)]
-                for m in new_messages:
-                    if m["role"] == "assistant":
-                        updated.append(Message(
-                            role="assistant",
-                            content=m.get("content", "") or "",
-                            tool_calls=[
-                                ToolCall(
-                                    id=t["id"],
-                                    name=t["function"]["name"],
-                                    arguments=json.loads(t["function"]["arguments"] or "{}"),
-                                    thought_signature=t.get("thought_signature"),
-                                )
-                                for t in m.get("tool_calls", [])
-                            ],
-                        ))
-                    elif m["role"] == "tool":
-                        updated.append(Message(
-                            role="tool",
-                            content=m.get("content", "") or "",
-                            tool_call_id=m.get("tool_call_id"),
-                        ))
-                await self._memory.save(session_id, updated)
-
             if auditor:
                 await auditor.emit(
                     "invocation.end",
@@ -310,6 +298,57 @@ class Agent:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    async def _persist_turn(
+        self,
+        session_id: str,
+        input: AgentInput,
+        history: list[Message],
+        new_messages: list[dict],
+        invocation_id: str,
+    ) -> None:
+        """Write this turn to memory — keep the full assistant/tool structure so
+        replayed histories remain valid provider payloads (tool messages must
+        follow an assistant turn carrying the matching tool_calls ids).
+        """
+        if not self._memory:
+            return
+        turn = [Message(role="user", content=input.message)]
+        for m in new_messages:
+            if m["role"] == "assistant":
+                turn.append(Message(
+                    role="assistant",
+                    content=m.get("content", "") or "",
+                    tool_calls=[
+                        ToolCall(
+                            id=t["id"],
+                            name=t["function"]["name"],
+                            arguments=json.loads(t["function"]["arguments"] or "{}"),
+                            thought_signature=t.get("thought_signature"),
+                        )
+                        for t in m.get("tool_calls", [])
+                    ],
+                ))
+            elif m["role"] == "tool":
+                turn.append(Message(
+                    role="tool",
+                    content=m.get("content", "") or "",
+                    tool_call_id=m.get("tool_call_id"),
+                ))
+        if isinstance(self._memory, AppendableMemory):
+            # One turn, not the whole thread: the store already holds
+            # what ``load`` returned. ``subject`` and the session's
+            # metadata ride on the input — a channel ingress sets them
+            # (ADR-0019 §4); a plain caller may leave them out.
+            await self._memory.append(
+                session_id,
+                turn,
+                subject=_optional_str(input.metadata.get("subject")),
+                metadata=_session_metadata(input.metadata),
+                turn_id=_turn_id(input.metadata, invocation_id),
+            )
+        else:
+            await self._memory.save(session_id, list(history) + turn)
 
     async def _dispatch_tool(self, tc: ToolCall) -> str:
         if tc.name in self._local_tools:
@@ -419,3 +458,40 @@ async def _invoke_mcp_tool(config: MCPConfig, name: str, arguments: dict) -> str
                 return str(result.content)
 
     return "Error: unsupported MCP transport"
+
+
+def _optional_str(value: Any) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+#: Input-metadata keys that describe the *session* rather than the turn, and
+#: are worth keeping with it. Everything else in ``metadata`` is per request.
+#: Deliberately one key: ``channel`` says which ingress a thread arrived on
+#: (ADR-0019 §4) and identifies nobody. The party is already named by
+#: ``subject``, an opaque id; ``contact`` — a phone number or an address — is
+#: customer PII and is not copied into the store until a spec asks for it.
+_SESSION_METADATA_KEYS = ("channel",)
+
+#: Input-metadata keys, in order of preference, that an ingress uses to name a
+#: turn. A retry that replays the same id lets an idempotent backend drop the
+#: duplicate; see :class:`~genfleet.sdk.memory.base.AppendableMemory`.
+_TURN_ID_KEYS = ("turn_id", "request_id", "message_id")
+
+
+def _session_metadata(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    kept = {k: metadata[k] for k in _SESSION_METADATA_KEYS if metadata.get(k) is not None}
+    return kept or None
+
+
+def _turn_id(metadata: dict[str, Any], invocation_id: str) -> str:
+    """The idempotency key for this turn.
+
+    A caller's own id is what makes a retry recognisable — the invocation id
+    is fresh on every attempt, so the fallback only dedupes a redelivery of
+    the same in-flight call.
+    """
+    for key in _TURN_ID_KEYS:
+        value = _optional_str(metadata.get(key))
+        if value:
+            return value
+    return invocation_id
