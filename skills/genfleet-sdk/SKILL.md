@@ -58,7 +58,6 @@ from genfleet.sdk import (
     ModelConfig,
     MemoryConfig,
     MCPConfig,
-    DataConfig,
     AuditConfig,    # Audit backend config
 )
 
@@ -87,9 +86,8 @@ Agent(
     model:   ModelConfig,              # provider + credentials (dict)
     tools:   list[Callable] = [],      # plain Python functions, auto-wrapped
     mcps:    list[MCPConfig] = [],     # MCP server connections
-    memory:  MemoryConfig | None = None,  # Redis-backed session memory
+    memory:  MemoryConfig | "platform" | None = None,  # episodic memory: platform store or Redis
     context: str | None = None,        # extra context appended to system prompt
-    data:    DataConfig | None = None, # RAG config (reserved, not yet implemented)
     audit:   AuditConfig | None = None, # structured audit logging
 )
 ```

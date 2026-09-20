@@ -62,8 +62,8 @@ class ModelConfig(TypedDict, total=False):
 
 
 class MemoryConfig(TypedDict, total=False):
-    type: Required[Literal["redis"]]
-    connection: Required[str]  # e.g. "redis://localhost:6379/0"
+    type: Required[Literal["redis", "platform"]]
+    connection: str  # redis only, e.g. "redis://localhost:6379/0"
     user: str
     password: str
 
@@ -82,8 +82,3 @@ class MCPSseConfig(TypedDict):
 MCPConfig = MCPStdioConfig | MCPSseConfig
 
 
-class DataConfig(TypedDict, total=False):
-    """Reserved for native RAG — accepted but not yet implemented."""
-    type: str
-    storage_dir: str
-    mode: str

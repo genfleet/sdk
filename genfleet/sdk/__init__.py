@@ -14,7 +14,6 @@ from .protocol import AgentFactory, AgentProtocol, ToolProtocol
 from .schemas import (
     AgentInput,
     AgentOutput,
-    DataConfig,
     MCPConfig,
     MemoryConfig,
     Message,
@@ -48,7 +47,6 @@ __all__ = [
     "ModelConfig",
     "MemoryConfig",
     "MCPConfig",
-    "DataConfig",
     "AuditConfig",
     # Audit
     "AuditEvent",
