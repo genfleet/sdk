@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import types
 import typing
 from collections.abc import Callable
 from typing import Any, get_args, get_origin
@@ -26,7 +27,9 @@ def _annotation_to_json_schema(annotation: Any) -> dict[str, Any]:
     origin = get_origin(annotation)
     args = get_args(annotation)
 
-    if origin is typing.Union:
+    # `X | None` is a `types.UnionType`, not `typing.Union`; without both, every
+    # optional parameter written in the modern spelling reached the model untyped.
+    if origin is typing.Union or origin is types.UnionType:
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
             return _annotation_to_json_schema(non_none[0])

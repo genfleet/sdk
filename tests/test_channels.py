@@ -88,8 +88,9 @@ async def test_a_refusal_is_a_typed_error_with_the_platforms_words(proxy):
 async def test_outside_a_sandbox_it_says_so_instead_of_pretending(monkeypatch):
     monkeypatch.delenv(CHANNELS_URL_ENV, raising=False)
     monkeypatch.delenv(CHANNELS_TOKEN_ENV, raising=False)
-    with pytest.raises(ChannelSendError, match="platform sandbox"):
+    with pytest.raises(ChannelSendError, match="platform sandbox") as info:
         await send_message("whatsapp:1", "x")
+    assert info.value.code == "not_in_sandbox"
 
 
 @pytest.mark.asyncio
@@ -101,8 +102,76 @@ async def test_the_tool_answers_the_model_rather_than_raising(proxy):
     assert await send_message_tool(to="whatsapp:2010", template="alert") == "sent"
 
 
-def test_the_tool_schema_requires_only_the_recipient():
+def test_the_tool_schema_types_every_parameter_for_the_model():
     schema = send_message_tool.schema()
     assert schema.name == "send_message"
     assert schema.parameters["required"] == ["to"]
-    assert set(schema.parameters["properties"]) == {"to", "text", "template", "params"}
+    assert schema.parameters["properties"] == {
+        "to": {"type": "string"},
+        "text": {"type": "string"},
+        "template": {"type": "string"},
+        "params": {"type": "array", "items": {"type": "string"}},
+        "language": {"type": "string"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_the_tool_passes_the_template_language(proxy):
+    await send_message_tool(to="whatsapp:2010", template="alert", params=["x"], language="ar")
+    ((_, body, _),) = _Proxy.calls
+    assert body["template"]["language"] == "ar"
+
+
+@pytest.mark.asyncio
+async def test_string_params_are_refused_not_split_into_characters(proxy):
+    with pytest.raises(ValueError, match="list of strings"):
+        await send_message("whatsapp:1", template="alert", params="Mona")  # type: ignore[arg-type]
+    assert _Proxy.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_proxy_fault_is_delivery_unknown_not_a_refusal(proxy):
+    _Proxy.response = (502, {"error": "channels backend error"})
+    with pytest.raises(ChannelSendError) as info:
+        await send_message("whatsapp:1", "x")
+    assert (info.value.status, info.value.code, info.value.delivery_unknown) == (502, None, True)
+    out = await send_message_tool(to="whatsapp:1", text="x")
+    assert out.startswith("delivery unknown") and "do not resend" in out
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_proxy_is_delivery_unknown(monkeypatch):
+    monkeypatch.setenv(CHANNELS_URL_ENV, "http://127.0.0.1:9/channels")
+    monkeypatch.setenv(CHANNELS_TOKEN_ENV, "t")
+    with pytest.raises(ChannelSendError) as info:
+        await send_message("whatsapp:1", "x")
+    assert info.value.status == 0 and info.value.delivery_unknown
+
+
+@pytest.mark.asyncio
+async def test_a_non_json_error_body_is_kept_as_text(proxy, monkeypatch):
+    class _Html(_Proxy):
+        def do_POST(self):  # noqa: N802
+            self.rfile.read(int(self.headers.get("content-length", 0)))
+            raw = b"<html>bad gateway</html>"
+            self.send_response(502)
+            self.send_header("content-length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    server = HTTPServer(("127.0.0.1", 0), _Html)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setenv(CHANNELS_URL_ENV, f"http://127.0.0.1:{server.server_port}/channels")
+    try:
+        with pytest.raises(ChannelSendError, match="bad gateway") as info:
+            await send_message("whatsapp:1", "x")
+        assert info.value.code is None
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_a_2xx_that_is_not_an_object_is_an_error(proxy):
+    _Proxy.response = (200, ["unexpected"])
+    with pytest.raises(ChannelSendError, match="expected an object"):
+        await send_message("whatsapp:1", "x")

@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **`send_message`** (ADR-0019 §5). `await send_message("whatsapp:2010…", "text")` or `send_message(to, template="name", params=[...])` sends on one of the agent's channel bindings through the sandbox's channels proxy (`GENFLEET_CHANNELS_URL` / `GENFLEET_CHANNELS_TOKEN`, set by the platform). The agent never holds the channel token; the platform picks the binding, enforces the 24-hour window and cold-send policy, and says which rule refused a send via `ChannelSendError.code` (`outside_window`, `cold_send_disabled`, `no_binding`, `invalid_request`, `send_rejected`). The reply to an inbound message is still sent by the platform — this is for everything else.
-- `send_message_tool`: the same as a model-callable tool, answering `"sent"` or `"not sent: <reason>"` instead of raising, so a refusal is something the model can act on (switch to a template) rather than the end of its turn.
+- `send_message_tool`: the same as a model-callable tool (with `language` for templates), answering `"sent"`, `"not sent: <reason>"` for a refusal, or `"delivery unknown …; do not resend without checking"` when the platform could not confirm the outcome — so a refusal is something the model can act on, and a timeout does not become a duplicate message.
+- `ChannelSendError.delivery_unknown`; `code="not_in_sandbox"` when the channels variables are absent.
+
+### Fixed
+- **Tool schemas typed `X | None` parameters as `{}`.** `@tool` only recognised `typing.Union`, and `str | None` is a `types.UnionType`, so every optional parameter written in the modern spelling reached the model with no type. Both spellings are now read.
 
 ## [0.10.0] - 2026-09-18
 

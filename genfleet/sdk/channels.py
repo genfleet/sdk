@@ -35,14 +35,24 @@ class ChannelSendError(RuntimeError):
     ``code`` names a refusal the agent can act on — ``outside_window`` (the
     contact has not written in 24 hours: send a template), ``cold_send_disabled``
     (the contact never wrote and this binding does not allow first contact),
-    ``no_binding``, ``invalid_request``, ``send_rejected`` — or is None for
+    ``no_binding``, ``invalid_request``, ``send_rejected`` — or
+    ``not_in_sandbox`` when the platform's variables are absent, or None for
     anything else. ``status`` is the HTTP status, 0 when nothing answered.
+
+    A refusal (``code`` set) means nothing was sent. Without a code — a
+    timeout, an unreachable proxy, a 5xx — the message may or may not have
+    gone out; :attr:`delivery_unknown` says so.
     """
 
     def __init__(self, message: str, *, status: int, code: str | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
+
+    @property
+    def delivery_unknown(self) -> bool:
+        """True when the send may have happened: no refusal code, and no 4xx."""
+        return self.code is None and not 400 <= self.status < 500
 
 
 async def send_message(
@@ -66,6 +76,11 @@ async def send_message(
     """
     if (text is None) == (template is None):
         raise ValueError("send_message needs exactly one of text or template")
+    if params is not None and (
+        not isinstance(params, list) or not all(isinstance(p, (str, int, float)) for p in params)
+    ):
+        # A bare string would otherwise be split into one parameter per character.
+        raise ValueError("params must be a list of strings, one per template placeholder")
     body: dict[str, Any] = {"to": to}
     if text is not None:
         body["text"] = text
@@ -80,8 +95,9 @@ async def send_message(
         "Send a WhatsApp message to someone other than the person you are replying to, "
         "or later than the current reply — e.g. alert a staff member. `to` is "
         '"whatsapp:<phone number with country code>". Use `text` for someone who wrote '
-        "in the last 24 hours; otherwise use an approved `template` with `params`. "
-        "Your normal reply is sent automatically; do not use this for it."
+        "in the last 24 hours; otherwise use an approved `template` with `params` (a list "
+        "of strings, one per placeholder) and the template's `language` code (e.g. \"en\", "
+        "\"ar\"). Your normal reply is sent automatically; do not use this for it."
     ),
 )
 async def send_message_tool(
@@ -89,12 +105,19 @@ async def send_message_tool(
     text: str | None = None,
     template: str | None = None,
     params: list[str] | None = None,
+    language: str = "en",
 ) -> str:
     """The model-facing form: a refusal is an answer the model can act on,
-    not an exception that ends its turn."""
+    not an exception that ends its turn. An outcome the platform could not
+    confirm is reported as such, so the model does not resend a message that
+    may already have arrived."""
     try:
-        await send_message(to, text, template=template, params=params)
-    except (ChannelSendError, ValueError) as exc:
+        await send_message(to, text, template=template, params=params, language=language)
+    except ValueError as exc:
+        return f"not sent: {exc}"
+    except ChannelSendError as exc:
+        if exc.delivery_unknown:
+            return f"delivery unknown ({exc}); do not resend without checking"
         return f"not sent: {exc}"
     return "sent"
 
@@ -107,7 +130,7 @@ def _post(body: dict[str, Any]) -> dict[str, Any]:
             "send_message needs a platform sandbox: "
             f"{CHANNELS_URL_ENV} and {CHANNELS_TOKEN_ENV} are not set",
             status=0,
-            code="no_binding",
+            code="not_in_sandbox",
         )
     req = urllib.request.Request(
         f"{url.rstrip('/')}/send",
@@ -127,7 +150,9 @@ def _post(body: dict[str, Any]) -> dict[str, Any]:
         parsed = json.loads(raw) if raw else {}
     except ValueError:
         raise ChannelSendError("send_message got an undecodable answer", status=200) from None
-    return parsed if isinstance(parsed, dict) else {}
+    if not isinstance(parsed, dict):
+        raise ChannelSendError(f"send_message expected an object, got {type(parsed).__name__}", status=200)
+    return parsed
 
 
 def _refusal(raw: bytes) -> tuple[str, str | None]:
