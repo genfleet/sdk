@@ -5,6 +5,12 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-09-22
+
+### Added
+- **`send_message`** (ADR-0019 §5). `await send_message("whatsapp:2010…", "text")` or `send_message(to, template="name", params=[...])` sends on one of the agent's channel bindings through the sandbox's channels proxy (`GENFLEET_CHANNELS_URL` / `GENFLEET_CHANNELS_TOKEN`, set by the platform). The agent never holds the channel token; the platform picks the binding, enforces the 24-hour window and cold-send policy, and says which rule refused a send via `ChannelSendError.code` (`outside_window`, `cold_send_disabled`, `no_binding`, `invalid_request`, `send_rejected`). The reply to an inbound message is still sent by the platform — this is for everything else.
+- `send_message_tool`: the same as a model-callable tool, answering `"sent"` or `"not sent: <reason>"` instead of raising, so a refusal is something the model can act on (switch to a template) rather than the end of its turn.
+
 ## [0.10.0] - 2026-09-18
 
 ### Added
