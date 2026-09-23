@@ -1,4 +1,5 @@
 from .agent import Agent
+from .channels import ChannelSendError, send_message, send_message_tool
 from .audit.schemas import AuditConfig, AuditEvent
 from .manifest import (
     AgentManifest,
@@ -66,4 +67,8 @@ __all__ = [
     "ToolResolutionError",
     "ToolWrapper",
     "tool",
+    # Channels (ADR-0019)
+    "send_message",
+    "send_message_tool",
+    "ChannelSendError",
 ]
