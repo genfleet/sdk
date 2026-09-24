@@ -228,6 +228,17 @@ class Agent:
                     await self._persist_turn(
                         session_id, input, history, new_messages, invocation_id
                     )
+                    # Same reason as the persist: after the ``done`` yield this
+                    # generator may already be closed, and the audit trail
+                    # would have a start with no end for every served turn.
+                    if auditor:
+                        await auditor.emit(
+                            "invocation.end",
+                            invocation_id=invocation_id,
+                            session_id=session_id,
+                            data={"total_token_usage": total_usage.model_dump()},
+                            latency_ms=(time.monotonic() - invocation_start) * 1000,
+                        )
                     yield AgentOutput(content="", done=True)
                     break
 
@@ -273,15 +284,6 @@ class Agent:
                         "tool_call_id": tc.id,
                         "content": result,
                     })
-
-            if auditor:
-                await auditor.emit(
-                    "invocation.end",
-                    invocation_id=invocation_id,
-                    session_id=session_id,
-                    data={"total_token_usage": total_usage.model_dump()},
-                    latency_ms=(time.monotonic() - invocation_start) * 1000,
-                )
 
         except Exception as exc:
             if auditor:

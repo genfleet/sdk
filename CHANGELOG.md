@@ -5,6 +5,11 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] - 2026-09-24
+
+### Fixed
+- **`invocation.end` is emitted for served turns.** It was emitted after the final `done` yield, and a consumer that stops reading at `done` — `serve` does — closed the generator first, so every served turn had an `invocation.start` and no `invocation.end` (and no total token usage in the audit trail). It is now emitted before the `done` chunk, like the memory write fixed in 0.10.0.
+
 ## [0.11.0] - 2026-09-22
 
 ### Added
