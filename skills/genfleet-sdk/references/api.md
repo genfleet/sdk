@@ -62,10 +62,10 @@ Uses explicit `provider/model-name` format:
 
 | Provider prefix | Provider | Install |
 |--------|----------|---------|
-| `openai/` | OpenAI (+ any compatible endpoint) | `pip install 'genfleet-sdk[openai]'` |
-| `anthropic/` | Anthropic | `pip install 'genfleet-sdk[anthropic]'` |
-| `gemini/` | Google Gemini | `pip install 'genfleet-sdk[gemini]'` |
-| `openrouter/<vendor>/<model>` | OpenRouter gateway — any vendor, one key | `pip install 'genfleet-sdk[openai]'` |
+| `openai/` | OpenAI (+ any compatible endpoint) | `pip install 'genfleet-sdk[openai] @ git+https://github.com/genfleet/sdk@dev'` |
+| `anthropic/` | Anthropic | `pip install 'genfleet-sdk[anthropic] @ git+https://github.com/genfleet/sdk@dev'` |
+| `gemini/` | Google Gemini | `pip install 'genfleet-sdk[gemini] @ git+https://github.com/genfleet/sdk@dev'` |
+| `openrouter/<vendor>/<model>` | OpenRouter gateway — any vendor, one key | `pip install 'genfleet-sdk[openai] @ git+https://github.com/genfleet/sdk@dev'` |
 
 ### MemoryConfig
 
@@ -77,7 +77,7 @@ class MemoryConfig(TypedDict, total=False):
     password:   str
 ```
 
-Requires `pip install 'genfleet-sdk[memory]'`.
+Requires `pip install 'genfleet-sdk[memory] @ git+https://github.com/genfleet/sdk@dev'`.
 
 Session key pattern: `genfleet:session:{session_id}:history` (TTL 24h).  
 Session ID from `input.metadata["session_id"]` — falls back to a per-request UUID.
@@ -99,7 +99,7 @@ class MCPSseConfig(TypedDict):
 MCPConfig = MCPStdioConfig | MCPSseConfig
 ```
 
-Requires `pip install 'genfleet-sdk[mcp]'`.
+Requires `pip install 'genfleet-sdk[mcp] @ git+https://github.com/genfleet/sdk@dev'`.
 
 ### AuditConfig
 
@@ -238,7 +238,7 @@ Created by `@tool`. Satisfies `ToolProtocol`. Both `call()` and `__call__()` han
 
 ## Serve Module
 
-Exported from `genfleet.sdk.serve`. Requires `pip install 'genfleet-sdk[serve]'`.
+Exported from `genfleet.sdk.serve`. Requires `pip install 'genfleet-sdk[serve] @ git+https://github.com/genfleet/sdk@dev'`.
 
 ### serve()
 
