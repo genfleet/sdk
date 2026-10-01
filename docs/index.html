@@ -329,8 +329,8 @@
       <h1>Your agent,<br/><span>ready to ship.</span></h1>
       <p class="hero-sub">Any model. Built-in tools, memory, and MCP. Serve locally or publish to the Genfleet marketplace — all from one package.</p>
       <div class="hero-install">
-        <code id="install-cmd">pip install "genfleet-sdk[openai,serve]"</code>
-        <button class="copy-btn" onclick="copyText('pip install &quot;genfleet-sdk[openai,serve]&quot;', this)" aria-label="Copy install command">
+        <code id="install-cmd">pip install "genfleet-sdk[openai,serve] @ git+https://github.com/genfleet/sdk@dev"</code>
+        <button class="copy-btn" onclick="copyText('pip install &quot;genfleet-sdk[openai,serve] @ git+https://github.com/genfleet/sdk@dev&quot;', this)" aria-label="Copy install command">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
         </button>
       </div>
@@ -338,18 +338,18 @@
 
     <div class="section" id="installation">
       <h2>Installation</h2>
-      <p class="section-desc">Install the SDK with pip or uv. Core depends only on Pydantic — extras add provider clients and the A2A server.</p>
+      <p class="section-desc">Install the SDK with pip or uv, from GitHub: it is not on PyPI yet. Core depends only on Pydantic — extras add provider clients and the A2A server. Pin a tag or commit instead of <code>@dev</code> for a fixed version.</p>
       <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash"># Core (pydantic only)
 pip install "genfleet-sdk @ git+https://github.com/genfleet/sdk@dev"
 
 # With OpenAI + A2A server
-pip install "genfleet-sdk[openai,serve]"
+pip install "genfleet-sdk[openai,serve] @ git+https://github.com/genfleet/sdk@dev"
 
 # With Anthropic + A2A server
-pip install "genfleet-sdk[anthropic,serve]"
+pip install "genfleet-sdk[anthropic,serve] @ git+https://github.com/genfleet/sdk@dev"
 
 # Everything
-pip install "genfleet-sdk[all]"</code></pre>
+pip install "genfleet-sdk[all] @ git+https://github.com/genfleet/sdk@dev"</code></pre>
       <div class="table-wrap"><table>
         <thead><tr><th>Extra</th><th>Installs</th><th>Use for</th></tr></thead>
         <tbody>
@@ -467,7 +467,7 @@ curl -X POST http://localhost:8000 \
 
     <div class="section" id="memory-config">
       <h2>MemoryConfig</h2>
-      <p class="section-desc">Redis-backed session memory. History is loaded at the start of each <code>run()</code> and saved at the end. Requires <code>pip install 'genfleet-sdk[memory]'</code>.</p>
+      <p class="section-desc">Redis-backed session memory. History is loaded at the start of each <code>run()</code> and saved at the end. Requires <code>pip install 'genfleet-sdk[memory] @ git+https://github.com/genfleet/sdk@dev'</code>.</p>
       <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">{
     "type":       "redis",
     "connection": "redis://localhost:6379/0",
@@ -482,7 +482,7 @@ curl -X POST http://localhost:8000 \
 
     <div class="section" id="mcp-config">
       <h2>MCPConfig</h2>
-      <p class="section-desc">Connect to MCP servers. Tool schemas are fetched on the first <code>run()</code> call and merged with local tools. Requires <code>pip install 'genfleet-sdk[mcp]'</code>.</p>
+      <p class="section-desc">Connect to MCP servers. Tool schemas are fetched on the first <code>run()</code> call and merged with local tools. Requires <code>pip install 'genfleet-sdk[mcp] @ git+https://github.com/genfleet/sdk@dev'</code>.</p>
       <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python"># stdio — spawns a subprocess
 {
     "type":    "stdio",
