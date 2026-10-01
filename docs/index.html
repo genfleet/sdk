@@ -256,6 +256,7 @@
       <a href="#skill" class="sidebar-link">Agent Skill</a>
       <a href="#quickstart" class="sidebar-link">Quickstart</a>
       <a href="#concepts" class="sidebar-link">Core Concepts</a>
+      <a href="#marketplace" class="sidebar-link">Beta: publish on Genfleet</a>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-section-title">API Reference</div>
@@ -287,7 +288,6 @@
     </div>
     <div class="sidebar-section">
       <div class="sidebar-section-title">More</div>
-      <a href="#marketplace" class="sidebar-link">Ship to Marketplace</a>
       <a href="#exports" class="sidebar-link">All Exports</a>
     </div>
   </div>
@@ -848,64 +848,165 @@ serve(CrewAIAgent(), name="crewai-agent", port=8004)</code></pre>
     </div>
 
     <div class="section" id="marketplace">
-      <h2>Ship to the Marketplace</h2>
-      <p class="section-desc">Once your agent works locally, publish it to the Genfleet marketplace so tenants can discover and deploy it into their own isolated namespaces.</p>
-      <div class="feature-grid">
-        <div class="feature-item"><div class="feature-item-title">1. Build &amp; test locally</div><div class="feature-item-desc">Run <code>serve()</code> and verify your agent responds correctly over A2A before publishing.</div></div>
-        <div class="feature-item"><div class="feature-item-title">2. Add an agent manifest</div><div class="feature-item-desc">Create <code>agent.json</code> in your project with name, description, version, and entry point.</div></div>
-        <div class="feature-item"><div class="feature-item-title">3. Publish via CLI</div><div class="feature-item-desc">Run <code>genfleet publish</code> to bundle and upload your agent to the marketplace registry.</div></div>
-        <div class="feature-item"><div class="feature-item-title">4. Tenants deploy it</div><div class="feature-item-desc">Tenants find your agent in the marketplace and deploy it into their namespace with one click.</div></div>
+      <h2>Publish on Genfleet (private beta)</h2>
+      <p class="section-desc">From an empty directory to chatting with your own agent on the platform: install, write an agent with a tool, test it locally, push it, run it in your workspace, chat. Every command here was checked against the SDK and the <code>gf</code> CLI on 2026-09-30.</p>
+
+      <div class="callout callout-warn">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
+        <span><strong>Before you start, from whoever invited you:</strong> the platform URL (below, <code>$GENFLEET_API</code>), read access to the <code>genfleet/cli</code> repository, and the <strong>developer</strong> role on your account. Without that role <code>gf agents push</code> is refused (403).</span>
       </div>
-      <h3>agent.json manifest</h3>
-      <pre><div class="code-header">agent.json<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-json">{
-  "name":        "my-agent",
-  "version":     "1.0.0",
-  "description": "A helpful assistant with tool support",
-  "entrypoint":  "agent.py",
-  "runtime":     "python3.12",
-  "capabilities": {
-    "streaming": true,
-    "tools":     true,
-    "memory":    false
-  }
-}</code></pre>
-      <h3>Publish</h3>
-      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash"># Login to the Genfleet registry
-gf login
 
-# Publish from your project directory
-genfleet publish
+      <h3>1. Install</h3>
+      <p>Python 3.12 or newer and <a href="https://docs.astral.sh/uv/" target="_blank" rel="noopener">uv</a>. The SDK and the CLI are installed from GitHub; neither is on PyPI yet.</p>
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash"># the gf CLI (log in, push agents)
+uv tool install git+https://github.com/genfleet/cli
+gf --help
 
-# Publish a specific version
-genfleet publish --version 1.2.0
+export GENFLEET_API=https://…   # the platform URL from your invitation</code></pre>
 
-# List your published agents
-gf agents list</code></pre>
-      <h3>Entry point structure</h3>
-      <p>Your <code>entrypoint</code> file must expose a top-level variable named <code>agent</code> that satisfies <code>AgentProtocol</code>.</p>
-      <pre><div class="code-header">agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python"># agent.py — this file is what the platform imports
-import os
-from genfleet.sdk import Agent
+      <h3>2. Write an agent with a tool</h3>
+      <p>An agent is a directory with a Python package inside it. The manifest, <code>genfleet.toml</code>, sits <em>inside the package</em>, next to <code>agent.py</code>:</p>
+      <pre><div class="code-header">layout<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code>hello-agent/
+  pyproject.toml
+  hello_agent/
+    __init__.py
+    genfleet.toml     # manifest: name, kind, entry
+    agent.py          # build_agent() factory + the tool
+    __main__.py       # serve it locally
+  tests/
+    test_agent.py</code></pre>
+      <pre><div class="code-header">hello-agent/pyproject.toml<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-toml">[project]
+name = "hello-agent"
+version = "0.1.0"
+requires-python = "&gt;=3.12"
+dependencies = ["genfleet-sdk[openai,serve] @ git+https://github.com/genfleet/sdk@dev"]
 
-def get_weather(city: str) -> str:
-    """Gets the current weather for a city."""
-    return f"72°F and sunny in {city}"
+[dependency-groups]
+dev = ["pytest"]
 
-# The platform reads this variable — name must be "agent"
-agent = Agent(
-    role="You are a helpful weather assistant.",
-    model={"model": "openai/gpt-4o-mini", "api_key": os.environ["OPENAI_API_KEY"]},
-    tools=[get_weather],
-)
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-# Optional: run locally for testing
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["hello_agent"]</code></pre>
+      <pre><div class="code-header">hello-agent/hello_agent/genfleet.toml<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-toml">[agent]
+name = "hello-agent"
+kind = "code"
+description = "Says hello and counts words."
+entry = "hello_agent.agent:build_agent"</code></pre>
+      <pre><div class="code-header">hello-agent/hello_agent/agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">import os
+
+from genfleet.sdk import Agent, tool
+
+# `openrouter/` is the SDK's OpenRouter prefix: one key, any vendor's model.
+# A `:free` model costs nothing; free ids rotate, so swap in another `:free`
+# model that supports tool calling if this one stops resolving.
+MODEL = "openrouter/nvidia/nemotron-3.5-lightning:free"
+
+
+@tool(description="Counts the words in a piece of text.")
+def count_words(text: str) -&gt; str:
+    return str(len(text.split()))
+
+
+def build_agent(api_key: str | None = None) -&gt; Agent:
+    # A factory, not a module-level Agent(): the package stays importable
+    # without a key, so tests can build it with a dummy one.
+    key = api_key or os.environ.get("OPENROUTER_API_KEY")
+    if not key:
+        raise RuntimeError("Set OPENROUTER_API_KEY (on the platform: a secret, see step 5).")
+    return Agent(
+        role="You are a friendly assistant. Use count_words when asked to count words.",
+        model={"model": MODEL, "api_key": key},
+        tools=[count_words],
+    )</code></pre>
+      <pre><div class="code-header">hello-agent/hello_agent/__init__.py and __main__.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python"># __init__.py
+from .agent import build_agent
+
+__all__ = ["build_agent"]
+
+# __main__.py
+from genfleet.sdk.serve import serve
+
+from .agent import build_agent
+
 if __name__ == "__main__":
-    from genfleet.sdk.serve import serve
-    serve(agent, name="weather-agent", port=8000)</code></pre>
+    serve(build_agent(), name="hello-agent", port=8000)</code></pre>
       <div class="callout callout-info">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-        <span>API keys are never bundled. The platform injects them at runtime from the tenant's secret store. Reference them via <code>os.environ</code> as shown above.</span>
+        <span><strong>On the platform your agent runs in a sandbox that has the SDK (with the <code>openai</code>, <code>anthropic</code>, <code>gemini</code> and <code>serve</code> extras) and the standard library — nothing else.</strong> The dependencies in your <code>pyproject.toml</code> are for running locally; they are not installed on the platform. Keep tools as plain Python in your package, as above.</span>
       </div>
+
+      <h3>3. Test it locally</h3>
+      <p>A test that needs no network and no key:</p>
+      <pre><div class="code-header">hello-agent/tests/test_agent.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">import asyncio
+
+from genfleet.sdk import ToolCall
+from hello_agent.agent import build_agent, count_words
+
+
+def test_builds_without_a_real_key():
+    assert build_agent(api_key="test") is not None
+
+
+def test_count_words():
+    call = ToolCall(id="1", name="count_words", arguments={"text": "one two three"})
+    assert asyncio.run(count_words.call(call)) == "3"</code></pre>
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">cd hello-agent
+uv sync
+uv run pytest -q                       # 2 passed
+
+export OPENROUTER_API_KEY=sk-or-v1-…   # a free OpenRouter key works
+uv run python -m hello_agent           # A2A server on :8000</code></pre>
+      <p>In another shell:</p>
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">curl -s localhost:8000/.well-known/agent.json
+curl -s -X POST localhost:8000 -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"How many words are in: the quick brown fox?"}]}}}'</code></pre>
+
+      <h3>4. Log in and push</h3>
+      <p><code>gf agents push</code> takes the agent directory (the one with <code>pyproject.toml</code>), finds the manifest one level in, archives the directory deterministically and uploads it. It prints the archive's digest; the platform stores the same bytes under the same digest, and the CLI refuses a mismatch.</p>
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">gf login --api "$GENFLEET_API"    # prompts for email and password
+gf whoami                         # role must be developer
+
+gf agents digest hello-agent      # optional: the digest, computed offline
+gf agents push hello-agent        # ... stored sha256:&lt;64 hex&gt;</code></pre>
+      <p>Pushing stores the code; it does not create an agent yet. Keep the <code>sha256:…</code> it printed.</p>
+
+      <h3>5. Run it in your workspace</h3>
+      <p>First the model key. In the web app, open <strong>Secrets</strong> and create a secret named <code>OPENROUTER_API_KEY</code>. The agent only receives it because its spec references it (below); a secret nothing references reaches no agent.</p>
+      <p>Then create the agent from the pushed code. There is no button or <code>gf</code> command for this step in the beta yet, so it is one API call:</p>
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">printf 'Password: '; stty -echo; read -r GF_PASSWORD; stty echo; echo   # works in bash and zsh
+TOKEN=$(curl -s -X POST "$GENFLEET_API/api/v1/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d "{\"email\":\"you@example.com\",\"password\":\"$GF_PASSWORD\"}" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])')
+
+curl -s -X POST "$GENFLEET_API/api/v1/agents" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{
+        "name": "hello-agent",
+        "source": "registry:sha256:&lt;the digest from gf agents push&gt;",
+        "description": "Says hello and counts words.",
+        "spec": {"env": {"OPENROUTER_API_KEY": "$OPENROUTER_API_KEY"}}
+      }'</code></pre>
+      <p>(If your password contains <code>"</code> or <code>\</code>, escape it in the login JSON.) <code>"$OPENROUTER_API_KEY"</code> inside <code>spec.env</code> is a reference, not your key: the platform replaces it with the value of your secret of that name each time the agent starts. The single quotes around the JSON keep your shell from expanding it.</p>
+
+      <h3>6. Chat with it</h3>
+      <p>In the web app, open <strong>Agents</strong>, find <code>hello-agent</code> and choose <strong>Activate</strong> (it starts the agent's sandbox). Then open <strong>Chat</strong>, pick <code>hello-agent</code>, and ask it to count some words; the answer comes from your <code>count_words</code> tool.</p>
+      <p>Changed the code? Push again and create the agent under a new name (or delete the old one first). To offer it to other workspaces, submit it to the marketplace from the agent's page; a Genfleet reviewer approves it before it is listed.</p>
+
+      <h3>When something goes wrong</h3>
+      <ul>
+        <li><strong><code>gf agents push</code> says your role is not allowed</strong> — your account does not have the developer role yet; ask whoever invited you.</li>
+        <li><strong>The agent will not activate</strong> — check that the secret named in <code>spec.env</code> exists, and that your code imports nothing beyond the SDK and the standard library (step 2).</li>
+        <li><strong>An error shows an error id or trace id</strong> — include it when you ask for help; it is how we find the failure in our logs.</li>
+      </ul>
+
+      <h3>Where to get help</h3>
+      <p>Reply to your invitation email, or contact the person who invited you. SDK bugs and questions: <a href="https://github.com/genfleet/sdk/issues" target="_blank" rel="noopener">github.com/genfleet/sdk/issues</a> (public, so never paste keys or private code there).</p>
     </div>
 
     <div class="section" id="exports">
