@@ -18,7 +18,7 @@ For external orchestration frameworks (LangChain, CrewAI) that manage their own 
 
 ## OpenAI
 
-**Install:** `pip install 'genfleet-sdk[openai,serve]'`
+**Install:** `pip install 'genfleet-sdk[openai,serve] @ git+https://github.com/genfleet/sdk@dev'`
 
 ```python
 import os
@@ -61,7 +61,7 @@ curl -X POST http://localhost:8000 \
 
 ## Anthropic
 
-**Install:** `pip install 'genfleet-sdk[anthropic,serve]'`
+**Install:** `pip install 'genfleet-sdk[anthropic,serve] @ git+https://github.com/genfleet/sdk@dev'`
 
 ```python
 import os
@@ -85,7 +85,7 @@ serve(agent, name="anthropic-agent", port=8002)
 
 ## Gemini
 
-**Install:** `pip install 'genfleet-sdk[gemini,serve]'`
+**Install:** `pip install 'genfleet-sdk[gemini,serve] @ git+https://github.com/genfleet/sdk@dev'`
 
 ```python
 import os
@@ -104,7 +104,7 @@ serve(agent, name="gemini-agent", port=8005)
 
 ## OpenRouter
 
-**Install:** `pip install 'genfleet-sdk[openai,serve]'`
+**Install:** `pip install 'genfleet-sdk[openai,serve] @ git+https://github.com/genfleet/sdk@dev'`
 
 `openrouter/<vendor>/<model>` routes through the OpenRouter gateway, so one key reaches every vendor it fronts. The vendor id is passed through intact — no `base_url` needed:
 
@@ -166,7 +166,7 @@ agent = Agent(
 
 For LangChain, implement `AgentProtocol` directly since LangChain manages its own LLM invocations.
 
-**Install:** `pip install langchain-openai langchain-core 'genfleet-sdk[serve]'`
+**Install:** `pip install langchain-openai langchain-core 'genfleet-sdk[serve] @ git+https://github.com/genfleet/sdk@dev'`
 
 ```python
 import os
@@ -225,7 +225,7 @@ serve(LangChainAgent(), name="langchain-agent", port=8003)
 
 For CrewAI, implement `AgentProtocol` directly since CrewAI manages its own orchestration.
 
-**Install:** `pip install crewai 'genfleet-sdk[serve]'`
+**Install:** `pip install crewai 'genfleet-sdk[serve] @ git+https://github.com/genfleet/sdk@dev'`
 
 ```python
 import asyncio
