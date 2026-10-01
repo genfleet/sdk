@@ -55,6 +55,13 @@ curl -X POST http://localhost:8000 \
   -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"What is the weather in Paris?"}]}}}'
 ```
 
+## Publish on Genfleet (private beta)
+
+Invited to the beta? The step-by-step guide — write an agent with a tool,
+test it locally, `gf agents push` it, run it in your workspace and chat with
+it — is the **Publish on Genfleet** section of the docs:
+[`docs/index.html#marketplace`](docs/index.html#marketplace).
+
 ## Agent Constructor
 
 ```python
