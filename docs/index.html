@@ -853,7 +853,7 @@ serve(CrewAIAgent(), name="crewai-agent", port=8004)</code></pre>
 
       <div class="callout callout-warn">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>
-        <span><strong>Before you start, from whoever invited you:</strong> the platform URL (below, <code>$GENFLEET_API</code>), read access to the <code>genfleet/cli</code> repository, and the <strong>developer</strong> role on your account. Without that role <code>gf agents push</code> is refused (403).</span>
+        <span><strong>Before you start, from whoever invited you:</strong> the platform URL (below, <code>$GENFLEET_API</code>), read access to the <code>genfleet/cli</code> repository, and your account from the invitation. Signing up makes you the owner of your own workspace, and that is all <code>gf agents push</code> needs: you need no platform role.</span>
       </div>
 
       <h3>1. Install</h3>
@@ -969,38 +969,37 @@ curl -s -X POST localhost:8000 -H 'Content-Type: application/json' -d '{"jsonrpc
       <h3>4. Log in and push</h3>
       <p><code>gf agents push</code> takes the agent directory (the one with <code>pyproject.toml</code>), finds the manifest one level in, archives the directory deterministically and uploads it. It prints the archive's digest; the platform stores the same bytes under the same digest, and the CLI refuses a mismatch.</p>
       <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">gf login --api "$GENFLEET_API"    # prompts for email and password
-gf whoami                         # role must be developer
+gf whoami                         # the account and workspace you are acting as
 
 gf agents digest hello-agent      # optional: the digest, computed offline
 gf agents push hello-agent        # ... stored sha256:&lt;64 hex&gt;</code></pre>
-      <p>Pushing stores the code; it does not create an agent yet. Keep the <code>sha256:…</code> it printed.</p>
+      <p>Pushing stores the code; it does not create an agent yet. It prints the <code>gf agents create</code> command to run next. You can also do both in one step (next section).</p>
 
       <h3>5. Run it in your workspace</h3>
       <p>First the model key. In the web app, open <strong>Secrets</strong> and create a secret named <code>OPENROUTER_API_KEY</code>. The agent only receives it because its spec references it (below); a secret nothing references reaches no agent.</p>
-      <p>Then create the agent from the pushed code. There is no button or <code>gf</code> command for this step in the beta yet, so it is one API call:</p>
-      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">printf 'Password: '; stty -echo; read -r GF_PASSWORD; stty echo; echo   # works in bash and zsh
-TOKEN=$(curl -s -X POST "$GENFLEET_API/api/v1/auth/login" \
-  -H 'Content-Type: application/json' \
-  -d "{\"email\":\"you@example.com\",\"password\":\"$GF_PASSWORD\"}" \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])')
+      <p>Then create the agent from the pushed code, reading that secret:</p>
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">gf agents create sha256:&lt;the digest from gf agents push&gt; \
+  --name hello-agent --secret OPENROUTER_API_KEY
 
-curl -s -X POST "$GENFLEET_API/api/v1/agents" \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{
-        "name": "hello-agent",
-        "source": "registry:sha256:&lt;the digest from gf agents push&gt;",
-        "description": "Says hello and counts words.",
-        "spec": {"env": {"OPENROUTER_API_KEY": "$OPENROUTER_API_KEY"}}
-      }'</code></pre>
-      <p>(If your password contains <code>"</code> or <code>\</code>, escape it in the login JSON.) <code>"$OPENROUTER_API_KEY"</code> inside <code>spec.env</code> is a reference, not your key: the platform replaces it with the value of your secret of that name each time the agent starts. The single quotes around the JSON keep your shell from expanding it.</p>
+# or push, create and start it in one go:
+gf agents push hello-agent --create --secret OPENROUTER_API_KEY --activate</code></pre>
+      <p><code>--secret OPENROUTER_API_KEY</code> passes a reference, not your key. The agent's spec gets <code>"env": {"OPENROUTER_API_KEY": "$OPENROUTER_API_KEY"}</code>, and the platform replaces it with the value of your secret of that name each time the agent starts. The key never passes through <code>gf</code>. With <code>--create</code>, the name and description come from <code>genfleet.toml</code>. Use <code>--name</code> to override the name.</p>
+      <div class="callout callout-info">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <span><strong>Tools from the marketplace need approval first.</strong> The <code>count_words</code> tool above is plain Python inside your package, so it runs as soon as the agent does. A tool your manifest names under <code>[tools]</code> (for example <code>"@acme/jira" = "1.x"</code>) is different. It is pinned when the agent is submitted, and it is mounted into the sandbox only after a Genfleet reviewer approves the submission. Until then the agent runs without it. For the beta, keep tools in your package.</span>
+      </div>
 
       <h3>6. Chat with it</h3>
-      <p>In the web app, open <strong>Agents</strong>, find <code>hello-agent</code> and choose <strong>Activate</strong> (it starts the agent's sandbox). Then open <strong>Chat</strong>, pick <code>hello-agent</code>, and ask it to count some words; the answer comes from your <code>count_words</code> tool.</p>
+      <p>Start the agent's sandbox (skip this if you passed <code>--activate</code>), then send it a message:</p>
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">gf agents activate hello-agent
+gf agents chat hello-agent "How many words are in: the quick brown fox?"</code></pre>
+      <p>Or use the web app. Open <strong>Agents</strong>, find <code>hello-agent</code> and choose <strong>Activate</strong>. Then open <strong>Chat</strong>, pick <code>hello-agent</code> and ask it to count some words. Either way, the answer comes from your <code>count_words</code> tool.</p>
       <p>Changed the code? Push again and create the agent under a new name (or delete the old one first). To offer it to other workspaces, submit it to the marketplace from the agent's page; a Genfleet reviewer approves it before it is listed.</p>
 
       <h3>When something goes wrong</h3>
       <ul>
-        <li><strong><code>gf agents push</code> says your role is not allowed</strong> — your account does not have the developer role yet; ask whoever invited you.</li>
+        <li><strong><code>gf agents push</code> or <code>create</code> answers 403</strong>: your role in the workspace is <em>member</em>. Pushing and creating agents need <em>owner</em>, <em>admin</em> or <em>developer</em>. Ask the workspace owner.</li>
+        <li><strong><code>gf agents create</code> prints “saved but not loaded”</strong>: the agent row exists, but the engine could not load it. The message says why. Fix the cause, delete the agent in the web app, and create it again.</li>
         <li><strong>The agent will not activate</strong> — check that the secret named in <code>spec.env</code> exists, and that your code imports nothing beyond the SDK and the standard library (step 2).</li>
         <li><strong>An error shows an error id or trace id</strong> — include it when you ask for help; it is how we find the failure in our logs.</li>
       </ul>
