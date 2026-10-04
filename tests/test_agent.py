@@ -319,6 +319,54 @@ async def test_an_unknown_tool_is_reported_as_a_failed_result():
     assert "not found" in result["output"]
 
 
+def _mcp_agent(config: dict) -> Agent:
+    """An agent whose one MCP tool, ``query``, is already discovered on ``config``."""
+    agent = _make_agent()
+    agent._mcp_tools = {"query": {"description": "", "parameters": {}, "config": config}}
+    agent._mcp_ready = True
+    agent._provider = _scripted_provider(
+        [AgentOutput(tool_calls=[ToolCall(id="m1", name="query", arguments={})])],
+        [AgentOutput(content="Sorry", done=True)],
+    )
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_an_mcp_result_flagged_as_an_error_is_reported_as_failed():
+    pytest.importorskip("mcp")
+    from mcp.types import CallToolResult, TextContent
+
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    session.initialize = AsyncMock()
+    session.call_tool = AsyncMock(return_value=CallToolResult(
+        content=[TextContent(type="text", text="connection to postgres://u:pw@db failed")],
+        isError=True,
+    ))
+    transport = MagicMock()
+    transport.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+    transport.__aexit__ = AsyncMock(return_value=False)
+    agent = _mcp_agent({"type": "sse", "url": "http://mcp.test/sse"})
+
+    with patch("mcp.client.sse.sse_client", return_value=transport), \
+            patch("mcp.ClientSession", return_value=session):
+        result = _tool_events([o async for o in agent.run(AgentInput(message="x"))])[-1]
+
+    assert result["type"] == "tool_result"
+    assert result["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_an_unsupported_mcp_transport_is_reported_as_failed():
+    agent = _mcp_agent({"type": "carrier-pigeon"})
+
+    result = _tool_events([o async for o in agent.run(AgentInput(message="x"))])[-1]
+
+    assert result["ok"] is False
+    assert result["output"] == "Error: unsupported MCP transport"
+
+
 @pytest.mark.asyncio
 async def test_a_turn_without_tools_yields_no_tool_events():
     agent = _make_agent()

@@ -403,7 +403,7 @@ class Agent:
         if spec is None:
             return f"Error: MCP tool '{tc.name}' not found", False
         try:
-            return await _invoke_mcp_tool(spec["config"], tc.name, tc.arguments), True
+            return await _invoke_mcp_tool(spec["config"], tc.name, tc.arguments)
         except Exception as exc:
             return f"Error calling MCP tool '{tc.name}': {exc}", False
 
@@ -465,30 +465,31 @@ async def _fetch_mcp_tools(config: MCPConfig) -> dict[str, dict]:
     return tools
 
 
-async def _invoke_mcp_tool(config: MCPConfig, name: str, arguments: dict) -> str:
+async def _invoke_mcp_tool(config: MCPConfig, name: str, arguments: dict) -> tuple[str, bool]:
+    """The MCP tool's result text, and whether the call succeeded.
+
+    A tool that fails on the server's side does not raise: per the MCP spec
+    ``call_tool`` returns a result with ``isError`` set, and that is a failure.
+    """
+    if config["type"] not in ("stdio", "sse"):
+        return "Error: unsupported MCP transport", False
+
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
     from mcp.client.sse import sse_client
 
     if config["type"] == "stdio":
-        server_params = StdioServerParameters(
+        transport = stdio_client(StdioServerParameters(
             command=config["command"],
             args=config.get("args", []),
-        )
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(name, arguments)
-                return str(result.content)
-
-    elif config["type"] == "sse":
-        async with sse_client(config["url"]) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(name, arguments)
-                return str(result.content)
-
-    return "Error: unsupported MCP transport"
+        ))
+    else:
+        transport = sse_client(config["url"])
+    async with transport as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(name, arguments)
+            return str(result.content), not result.isError
 
 
 def _optional_str(value: Any) -> str | None:
