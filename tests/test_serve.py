@@ -10,8 +10,9 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
-from genfleet.sdk import AgentInput, AgentOutput
-from genfleet.sdk.serve import create_app
+from genfleet.sdk import TOOL_EVENT_KEY, AgentInput, AgentOutput
+from genfleet.sdk._redaction import ARGUMENTS_MAX_BYTES, REDACTED
+from genfleet.sdk.serve import TOOL_EVENT_OUTPUT_MAX_CHARS, create_app
 
 
 class RecordingAgent:
@@ -205,18 +206,16 @@ def test_failure_carries_an_id_the_operator_can_correlate(
 # server sends them (genfleet/engine#155)
 # --------------------------------------------------------------------------
 
-from genfleet.sdk import TOOL_EVENT_KEY  # noqa: E402
-from genfleet.sdk.serve import TOOL_EVENT_OUTPUT_MAX_CHARS  # noqa: E402
-
 
 class ToolReportingAgent:
     """Yields what ``Agent.run`` yields for one tool round."""
 
-    def __init__(self, output: str = "12") -> None:
+    def __init__(self, output: str = "12", arguments: dict | None = None) -> None:
         self._output = output
+        self._arguments = {"a": 3} if arguments is None else arguments
 
     async def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
-        call = {"type": "tool_call", "id": "tc1", "name": "multiply", "arguments": {"a": 3}}
+        call = {"type": "tool_call", "id": "tc1", "name": "multiply", "arguments": self._arguments}
         result = {"type": "tool_result", "id": "tc1", "name": "multiply", "ok": True, "output": self._output}
         yield AgentOutput(content="", metadata={TOOL_EVENT_KEY: call})
         yield AgentOutput(content="", metadata={TOOL_EVENT_KEY: result})
@@ -254,7 +253,7 @@ def test_a_huge_tool_output_is_capped_on_the_wire() -> None:
 
 
 def test_a_failed_tool_result_does_not_carry_its_error_text() -> None:
-    class FailingTool:
+    class FailedToolAgent:
         async def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
             yield AgentOutput(content="", metadata={TOOL_EVENT_KEY: {"type": "tool_call", "id": "m1", "name": "mcp", "arguments": {}}})
             yield AgentOutput(content="", metadata={TOOL_EVENT_KEY: {
@@ -263,7 +262,7 @@ def test_a_failed_tool_result_does_not_carry_its_error_text() -> None:
             }})
             yield AgentOutput(content="", done=True)
 
-    resp_events = _stream(FailingTool())
+    resp_events = _stream(FailedToolAgent())
 
     result = next(
         e["metadata"][TOOL_EVENT_KEY] for e in resp_events
@@ -277,3 +276,28 @@ def test_send_returns_only_the_text() -> None:
     body = _send(TestClient(create_app(ToolReportingAgent())), _params())
 
     assert body["result"]["artifacts"] == [{"parts": [{"type": "text", "text": "It is 12"}]}]
+
+
+def _tool_call_on_the_wire(agent) -> dict:
+    return next(
+        e["metadata"][TOOL_EVENT_KEY] for e in _stream(agent)
+        if (e.get("metadata") or {}).get(TOOL_EVENT_KEY, {}).get("type") == "tool_call"
+    )
+
+
+def test_tool_call_arguments_are_redacted_on_the_wire() -> None:
+    call = _tool_call_on_the_wire(ToolReportingAgent(arguments={
+        "query": "select 1", "api_key": "abc123", "headers": [{"name": "Authorization", "value": "xyz"}],
+    }))
+
+    assert call["arguments"] == {
+        "query": "select 1", "api_key": REDACTED, "headers": [{"name": "Authorization", "value": REDACTED}],
+    }
+
+
+def test_huge_tool_call_arguments_are_capped_on_the_wire() -> None:
+    call = _tool_call_on_the_wire(ToolReportingAgent(arguments={"content": "x" * (ARGUMENTS_MAX_BYTES + 1)}))
+
+    assert call["arguments"]["_truncated"] is True
+    assert call["arguments"]["preview"].startswith('{"content":"xxx')
+    assert len(json.dumps(call["arguments"])) < ARGUMENTS_MAX_BYTES

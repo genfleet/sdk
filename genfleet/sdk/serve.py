@@ -5,6 +5,7 @@ import logging
 import uuid
 from typing import Any, AsyncIterator
 
+from ._redaction import safe_arguments
 from .protocol import AgentProtocol
 from .schemas import TOOL_EVENT_KEY, AgentInput, AgentOutput, Message
 
@@ -102,11 +103,19 @@ TOOL_FAILED_OUTPUT = "The tool failed."
 
 
 def _relayable_tool_event(output: AgentOutput) -> dict[str, Any] | None:
-    """The tool event on ``output`` (``TOOL_EVENT_KEY``), bounded for the wire."""
+    """The tool event on ``output`` (``TOOL_EVENT_KEY``), made safe for the wire.
+
+    A call's ``arguments`` are redacted and capped at 8 KB (``_redaction``),
+    a failed result's ``output`` is replaced by ``TOOL_FAILED_OUTPUT``, and a
+    successful result's ``output`` is sent as the tool returned it, cut to
+    ``TOOL_EVENT_OUTPUT_MAX_CHARS``.
+    """
     event = output.metadata.get(TOOL_EVENT_KEY)
     if not isinstance(event, dict) or event.get("type") not in ("tool_call", "tool_result"):
         return None
     relayed = dict(event)
+    if relayed["type"] == "tool_call":
+        relayed["arguments"] = safe_arguments(relayed.get("arguments"))
     if relayed["type"] == "tool_result" and relayed.get("ok") is not True:
         relayed["output"] = TOOL_FAILED_OUTPUT
     text = relayed.get("output")
@@ -197,7 +206,17 @@ def create_app(
     name: str = "agent",
     description: str = "",
 ) -> FastAPI:
-    """Build a FastAPI app that serves an agent over the A2A protocol."""
+    """Build a FastAPI app that serves an agent over the A2A protocol.
+
+    ``tasks/sendSubscribe`` relays each tool call and result the agent reports
+    (``metadata.tool_event``) on a ``working`` status update. Tool calls go out
+    with their arguments redacted and capped at 8 KB, and a failed result says
+    only "The tool failed.". **A successful tool's output is sent raw**, up to
+    4000 characters, to whoever calls this app: a tool that reads a database
+    row, a file or an internal API exposes that data to a direct caller. On the
+    platform the engine scrubs it before a user sees it; when you host ``serve``
+    yourself, nothing does. ``tasks/send`` returns only the agent's text.
+    """
     app = FastAPI(title=name, docs_url=None, redoc_url=None)
 
     card = {
@@ -266,7 +285,11 @@ def serve(
     host: str = "0.0.0.0",
     port: int = 8000,
 ) -> None:
-    """Run an agent as an A2A server (blocking)."""
+    """Run an agent as an A2A server (blocking).
+
+    The app is ``create_app``'s; its docstring says what tool events a caller
+    sees, including that a successful tool's output is sent raw.
+    """
     import uvicorn
 
     app = create_app(agent, name=name, description=description)

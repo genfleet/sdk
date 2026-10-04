@@ -485,11 +485,10 @@ async def _invoke_mcp_tool(config: MCPConfig, name: str, arguments: dict) -> tup
         ))
     else:
         transport = sse_client(config["url"])
-    async with transport as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool(name, arguments)
-            return str(result.content), not result.isError
+    async with transport as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        result = await session.call_tool(name, arguments)
+        return str(result.content), not result.isError
 
 
 def _optional_str(value: Any) -> str | None:
