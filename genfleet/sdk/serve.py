@@ -116,10 +116,9 @@ def _relayable_tool_event(output: AgentOutput) -> dict[str, Any] | None:
     relayed = dict(event)
     if relayed["type"] == "tool_call":
         relayed["arguments"] = safe_arguments(relayed.get("arguments"))
-    if relayed["type"] == "tool_result" and relayed.get("ok") is not True:
+    elif relayed.get("ok") is not True:
         relayed["output"] = TOOL_FAILED_OUTPUT
-    text = relayed.get("output")
-    if isinstance(text, str) and len(text) > TOOL_EVENT_OUTPUT_MAX_CHARS:
+    elif isinstance(text := relayed.get("output"), str):
         relayed["output"] = text[:TOOL_EVENT_OUTPUT_MAX_CHARS]
     return relayed
 

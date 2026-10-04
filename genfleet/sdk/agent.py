@@ -399,9 +399,7 @@ class Agent:
         self._mcp_ready = True
 
     async def _call_mcp_tool(self, tc: ToolCall) -> tuple[str, bool]:
-        spec = self._mcp_tools.get(tc.name)
-        if spec is None:
-            return f"Error: MCP tool '{tc.name}' not found", False
+        spec = self._mcp_tools[tc.name]
         try:
             return await _invoke_mcp_tool(spec["config"], tc.name, tc.arguments)
         except Exception as exc:
