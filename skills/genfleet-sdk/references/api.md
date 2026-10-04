@@ -156,6 +156,11 @@ class AgentOutput(BaseModel):
 - `tool_calls` — Tool calls to dispatch. `Agent` handles dispatch internally.
 - `done` — Final chunk signal. The serve layer stops reading after `done=True`.
 - `token_usage` — Token counts from the provider (input, output, total). Populated on the final chunk of each LLM turn.
+- `metadata["tool_event"]` (`TOOL_EVENT_KEY`) — a *tool event*: `Agent` reports each tool it runs, with `content=""` and `done=False`:
+  - `{"type": "tool_call", "id", "name", "arguments"}` once the call's input is complete;
+  - `{"type": "tool_result", "id", "name", "ok", "output"}` when the tool returns (`ok` is false for an unknown tool or a failed MCP call).
+
+  Values are raw; the platform redacts secret-looking arguments and truncates output before showing them in chat. A consumer that only reads `content` can ignore these outputs. `serve` relays them on `working` status updates under `metadata.tool_event`, `output` capped at 4000 chars.
 
 ### Message
 

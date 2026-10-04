@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from genfleet.sdk import Agent, AgentInput, AgentOutput, AgentProtocol, ToolCall, tool
+from genfleet.sdk import TOOL_EVENT_KEY, Agent, AgentInput, AgentOutput, AgentProtocol, ToolCall, tool
 from genfleet.sdk.agent import _wrap_tool
 from genfleet.sdk.schemas import ToolSchema
 
@@ -235,6 +235,96 @@ async def test_agent_tool_not_found_returns_error_string():
     chunks = [c async for c in agent.run(AgentInput(message="test"))]
     # Should complete without raising even for unknown tools
     assert call_count == 2
+
+
+def _scripted_provider(*rounds: list[AgentOutput]):
+    """A fake model: each completion yields the next round's chunks."""
+    remaining = list(rounds)
+
+    async def _complete(messages, tools, stream=True) -> AsyncIterator[AgentOutput]:
+        for chunk in remaining.pop(0):
+            yield chunk
+
+    provider = MagicMock()
+    provider.complete = _complete
+    return provider
+
+
+def _tool_events(outputs: list[AgentOutput]) -> list[dict]:
+    return [o.metadata[TOOL_EVENT_KEY] for o in outputs if TOOL_EVENT_KEY in o.metadata]
+
+
+@pytest.mark.asyncio
+async def test_agent_reports_each_tool_call_and_its_result():
+    def multiply(a: int, b: int) -> str:
+        return str(a * b)
+
+    agent = _make_agent(tools=[multiply])
+    agent._provider = _scripted_provider(
+        [AgentOutput(tool_calls=[ToolCall(id="tc1", name="multiply", arguments={"a": 3, "b": 4})])],
+        [AgentOutput(content="It is 12"), AgentOutput(content="", done=True)],
+    )
+
+    outputs = [o async for o in agent.run(AgentInput(message="3*4?"))]
+
+    assert _tool_events(outputs) == [
+        {"type": "tool_call", "id": "tc1", "name": "multiply", "arguments": {"a": 3, "b": 4}},
+        {"type": "tool_result", "id": "tc1", "name": "multiply", "ok": True, "output": "12"},
+    ]
+    events = [o for o in outputs if TOOL_EVENT_KEY in o.metadata]
+    assert all(o.content == "" and not o.done and not o.tool_calls for o in events)
+    # A reader that only concatenates content sees the same text as before.
+    assert "".join(o.content or "" for o in outputs) == "It is 12"
+    assert outputs[-1].done is True
+
+
+def add_one(x: int) -> str:
+    return str(x + 1)
+
+
+def negate(x: int) -> str:
+    return str(-x)
+
+
+@pytest.mark.asyncio
+async def test_agent_reports_every_call_of_a_round_before_the_results():
+    agent = _make_agent(tools=[add_one, negate])
+    agent._provider = _scripted_provider(
+        [AgentOutput(tool_calls=[
+            ToolCall(id="a", name="add_one", arguments={"x": 1}),
+            ToolCall(id="b", name="negate", arguments={"x": 1}),
+        ])],
+        [AgentOutput(content="", done=True)],
+    )
+
+    events = _tool_events([o async for o in agent.run(AgentInput(message="go"))])
+
+    assert [(e["type"], e["id"]) for e in events] == [
+        ("tool_call", "a"), ("tool_call", "b"), ("tool_result", "a"), ("tool_result", "b"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_tool_is_reported_as_a_failed_result():
+    agent = _make_agent()
+    agent._provider = _scripted_provider(
+        [AgentOutput(tool_calls=[ToolCall(id="tc1", name="ghost", arguments={})])],
+        [AgentOutput(content="OK", done=True)],
+    )
+
+    result = _tool_events([o async for o in agent.run(AgentInput(message="x"))])[-1]
+
+    assert result["type"] == "tool_result"
+    assert result["ok"] is False
+    assert "not found" in result["output"]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_without_tools_yields_no_tool_events():
+    agent = _make_agent()
+    agent._provider = _scripted_provider([AgentOutput(content="hi", done=True)])
+
+    assert _tool_events([o async for o in agent.run(AgentInput(message="x"))]) == []
 
 
 # ---------------------------------------------------------------------------

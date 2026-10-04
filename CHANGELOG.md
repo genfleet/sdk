@@ -5,6 +5,13 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-10-04
+
+### Added
+- **`Agent.run` reports the tools it runs** (sdk#39), so a hosted agent's tool calls show in chat. Next to the text it yields, per tool round: one `AgentOutput(content="", done=False, metadata={"tool_event": {"type": "tool_call", "id", "name", "arguments"}})` per call once its input is complete, then one `{"type": "tool_result", "id", "name", "ok", "output"}` per call as its tool returns. `ok` is false for an unknown tool or a failed MCP call. The shape is the one the platform runner emits for tools it dispatches (genfleet/engine#155); values are raw, and the platform redacts and truncates them before a user sees them. Text chunks are unchanged, and a consumer that only reads `content` sees the same text as before.
+- `TOOL_EVENT_KEY` (`"tool_event"`), exported from `genfleet.sdk`.
+- `serve` relays tool events on non-final `working` status updates under `metadata.tool_event`, as the platform's A2A server does, with a tool result's `output` capped at 4000 characters.
+
 ## [0.11.1] - 2026-09-24
 
 ### Fixed

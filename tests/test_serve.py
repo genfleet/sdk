@@ -198,3 +198,62 @@ def test_failure_carries_an_id_the_operator_can_correlate(
     assert error_id in caplog.text
     # The operator's own log is where the detail is allowed to be.
     assert "sk-proj-REDACTME" in caplog.text
+
+
+# --------------------------------------------------------------------------
+# Tool events — relayed on working status updates, as the platform's A2A
+# server sends them (genfleet/engine#155)
+# --------------------------------------------------------------------------
+
+from genfleet.sdk import TOOL_EVENT_KEY  # noqa: E402
+from genfleet.sdk.serve import TOOL_EVENT_OUTPUT_MAX_CHARS  # noqa: E402
+
+
+class ToolReportingAgent:
+    """Yields what ``Agent.run`` yields for one tool round."""
+
+    def __init__(self, output: str = "12") -> None:
+        self._output = output
+
+    async def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
+        call = {"type": "tool_call", "id": "tc1", "name": "multiply", "arguments": {"a": 3}}
+        result = {"type": "tool_result", "id": "tc1", "name": "multiply", "ok": True, "output": self._output}
+        yield AgentOutput(content="", metadata={TOOL_EVENT_KEY: call})
+        yield AgentOutput(content="", metadata={TOOL_EVENT_KEY: result})
+        yield AgentOutput(content="It is 12")
+        yield AgentOutput(content="", done=True)
+
+
+def _stream(agent) -> list[dict]:
+    resp = TestClient(create_app(agent)).post("/", json={
+        "jsonrpc": "2.0", "id": 1, "method": "tasks/sendSubscribe", "params": _params(),
+    })
+    return [json.loads(line[6:])["result"] for line in resp.text.splitlines() if line.startswith("data: ")]
+
+
+def test_tool_events_ride_on_working_status_updates() -> None:
+    events = _stream(ToolReportingAgent())
+
+    tool_updates = [e for e in events if TOOL_EVENT_KEY in (e.get("metadata") or {})]
+    assert [e["metadata"][TOOL_EVENT_KEY]["type"] for e in tool_updates] == ["tool_call", "tool_result"]
+    assert all(e["status"] == {"state": "working"} and e["final"] is False for e in tool_updates)
+    assert tool_updates[1]["metadata"][TOOL_EVENT_KEY]["output"] == "12"
+    text = [p["text"] for e in events if "artifact" in e for p in e["artifact"]["parts"]]
+    assert text == ["It is 12"]
+    assert events[-1]["status"]["state"] == "completed"
+
+
+def test_a_huge_tool_output_is_capped_on_the_wire() -> None:
+    events = _stream(ToolReportingAgent(output="x" * 50_000))
+
+    result = next(
+        e["metadata"][TOOL_EVENT_KEY] for e in events
+        if (e.get("metadata") or {}).get(TOOL_EVENT_KEY, {}).get("type") == "tool_result"
+    )
+    assert len(result["output"]) == TOOL_EVENT_OUTPUT_MAX_CHARS
+
+
+def test_send_returns_only_the_text() -> None:
+    body = _send(TestClient(create_app(ToolReportingAgent())), _params())
+
+    assert body["result"]["artifacts"] == [{"parts": [{"type": "text", "text": "It is 12"}]}]

@@ -6,7 +6,7 @@ import uuid
 from typing import Any, AsyncIterator
 
 from .protocol import AgentProtocol
-from .schemas import AgentInput, AgentOutput, Message
+from .schemas import TOOL_EVENT_KEY, AgentInput, AgentOutput, Message
 
 log = logging.getLogger("genfleet.sdk.serve")
 
@@ -89,6 +89,24 @@ def _jsonrpc_result(req_id: Any, result: Any) -> JSONResponse:
     })
 
 
+#: Cap on a relayed tool result's ``output``, matching the platform's A2A
+#: server: enough for the receiver to see a long output was cut and shape its
+#: own preview, while a megabyte result stays off the wire.
+TOOL_EVENT_OUTPUT_MAX_CHARS = 4000
+
+
+def _relayable_tool_event(output: AgentOutput) -> dict[str, Any] | None:
+    """The tool event on ``output`` (``TOOL_EVENT_KEY``), bounded for the wire."""
+    event = output.metadata.get(TOOL_EVENT_KEY)
+    if not isinstance(event, dict) or event.get("type") not in ("tool_call", "tool_result"):
+        return None
+    relayed = dict(event)
+    text = relayed.get("output")
+    if isinstance(text, str) and len(text) > TOOL_EVENT_OUTPUT_MAX_CHARS:
+        relayed["output"] = text[:TOOL_EVENT_OUTPUT_MAX_CHARS]
+    return relayed
+
+
 async def _collect_output(agent: AgentProtocol, agent_input: AgentInput) -> AgentOutput:
     content_parts: list[str] = []
     last_output: AgentOutput | None = None
@@ -118,6 +136,18 @@ async def _stream_output(
 
     try:
         async for output in agent.run(agent_input):
+            # A tool event rides on a non-final ``working`` status update under
+            # ``metadata.tool_event``, as the platform's A2A server sends it;
+            # a reader that does not know the key sees one more progress event.
+            tool_event = _relayable_tool_event(output)
+            if tool_event is not None:
+                yield _event({
+                    "id": task_id,
+                    "status": {"state": "working"},
+                    "final": False,
+                    "metadata": {TOOL_EVENT_KEY: tool_event},
+                })
+                continue
             if output.content:
                 yield _event({
                     "id": task_id,
