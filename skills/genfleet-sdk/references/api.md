@@ -160,7 +160,7 @@ class AgentOutput(BaseModel):
   - `{"type": "tool_call", "id", "name", "arguments"}` once the call's input is complete;
   - `{"type": "tool_result", "id", "name", "ok", "output"}` when the tool returns (`ok` is false for an unknown tool or a failed MCP call).
 
-  Values are raw; the platform redacts secret-looking arguments and truncates output before showing them in chat. A consumer that only reads `content` can ignore these outputs. `serve` relays them on `working` status updates under `metadata.tool_event`, `output` capped at 4000 chars.
+  Values are raw; the platform redacts secret-looking arguments and truncates output before showing them in chat. A consumer that only reads `content` can ignore these outputs. `serve` relays them on `working` status updates under `metadata.tool_event`, `output` capped at 4000 chars (a failed result's `output` is the fixed `"The tool failed."`, since `serve` never sends exception text).
 
 ### Message
 

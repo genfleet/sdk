@@ -95,12 +95,20 @@ def _jsonrpc_result(req_id: Any, result: Any) -> JSONResponse:
 TOOL_EVENT_OUTPUT_MAX_CHARS = 4000
 
 
+#: What a failed tool result says on the wire. A failed call's output is
+#: error text (an MCP failure carries the exception's message), and `serve`
+#: never sends exception text to its caller (sdk#20).
+TOOL_FAILED_OUTPUT = "The tool failed."
+
+
 def _relayable_tool_event(output: AgentOutput) -> dict[str, Any] | None:
     """The tool event on ``output`` (``TOOL_EVENT_KEY``), bounded for the wire."""
     event = output.metadata.get(TOOL_EVENT_KEY)
     if not isinstance(event, dict) or event.get("type") not in ("tool_call", "tool_result"):
         return None
     relayed = dict(event)
+    if relayed["type"] == "tool_result" and relayed.get("ok") is not True:
+        relayed["output"] = TOOL_FAILED_OUTPUT
     text = relayed.get("output")
     if isinstance(text, str) and len(text) > TOOL_EVENT_OUTPUT_MAX_CHARS:
         relayed["output"] = text[:TOOL_EVENT_OUTPUT_MAX_CHARS]

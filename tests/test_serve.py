@@ -253,6 +253,26 @@ def test_a_huge_tool_output_is_capped_on_the_wire() -> None:
     assert len(result["output"]) == TOOL_EVENT_OUTPUT_MAX_CHARS
 
 
+def test_a_failed_tool_result_does_not_carry_its_error_text() -> None:
+    class FailingTool:
+        async def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
+            yield AgentOutput(content="", metadata={TOOL_EVENT_KEY: {"type": "tool_call", "id": "m1", "name": "mcp", "arguments": {}}})
+            yield AgentOutput(content="", metadata={TOOL_EVENT_KEY: {
+                "type": "tool_result", "id": "m1", "name": "mcp", "ok": False,
+                "output": f"Error calling MCP tool 'mcp': {LEAKY_MESSAGE}",
+            }})
+            yield AgentOutput(content="", done=True)
+
+    resp_events = _stream(FailingTool())
+
+    result = next(
+        e["metadata"][TOOL_EVENT_KEY] for e in resp_events
+        if (e.get("metadata") or {}).get(TOOL_EVENT_KEY, {}).get("type") == "tool_result"
+    )
+    assert result["ok"] is False
+    assert "sk-proj-REDACTME" not in json.dumps(resp_events)
+
+
 def test_send_returns_only_the_text() -> None:
     body = _send(TestClient(create_app(ToolReportingAgent())), _params())
 
