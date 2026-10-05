@@ -50,6 +50,23 @@ class AgentOutput(BaseModel):
     token_usage: TokenUsage | None = None
 
 
+#: ``AgentOutput.metadata`` key of a tool event: an output that reports a
+#: tool the agent ran itself, rather than text or a call for the caller to
+#: dispatch. ``Agent.run`` yields one per call and one per result, each as
+#: ``AgentOutput(content="", done=False, metadata={TOOL_EVENT_KEY: {...}})``:
+#:
+#: * ``{"type": "tool_call", "id", "name", "arguments"}`` once the call's
+#:   input is complete, before the tool runs;
+#: * ``{"type": "tool_result", "id", "name", "ok", "output"}`` when it
+#:   returns, always after the matching call.
+#:
+#: The same shape the platform's runner emits for tools it dispatches. Values
+#: are raw (arguments as the model produced them, the tool's full output):
+#: whoever shows them to a user redacts and truncates. A consumer that only
+#: reads ``content`` can ignore these outputs; their content is empty.
+TOOL_EVENT_KEY = "tool_event"
+
+
 # ---------------------------------------------------------------------------
 # Configuration TypedDicts — passed as plain dicts by developers
 # ---------------------------------------------------------------------------

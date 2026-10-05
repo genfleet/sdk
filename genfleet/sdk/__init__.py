@@ -13,6 +13,7 @@ from .manifest import (
 )
 from .protocol import AgentFactory, AgentProtocol, ToolProtocol
 from .schemas import (
+    TOOL_EVENT_KEY,
     AgentInput,
     AgentOutput,
     MCPConfig,
@@ -44,6 +45,7 @@ __all__ = [
     "ToolCall",
     "ToolSchema",
     "TokenUsage",
+    "TOOL_EVENT_KEY",
     # Config
     "ModelConfig",
     "MemoryConfig",

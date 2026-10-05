@@ -5,8 +5,9 @@ import logging
 import uuid
 from typing import Any, AsyncIterator
 
+from ._redaction import safe_arguments
 from .protocol import AgentProtocol
-from .schemas import AgentInput, AgentOutput, Message
+from .schemas import TOOL_EVENT_KEY, AgentInput, AgentOutput, Message
 
 log = logging.getLogger("genfleet.sdk.serve")
 
@@ -89,6 +90,39 @@ def _jsonrpc_result(req_id: Any, result: Any) -> JSONResponse:
     })
 
 
+#: Cap on a relayed tool result's ``output``, matching the platform's A2A
+#: server: enough for the receiver to see a long output was cut and shape its
+#: own preview, while a megabyte result stays off the wire.
+TOOL_EVENT_OUTPUT_MAX_CHARS = 4000
+
+
+#: What a failed tool result says on the wire. A failed call's output is
+#: error text (an MCP failure carries the exception's message), and `serve`
+#: never sends exception text to its caller (sdk#20).
+TOOL_FAILED_OUTPUT = "The tool failed."
+
+
+def _relayable_tool_event(output: AgentOutput) -> dict[str, Any] | None:
+    """The tool event on ``output`` (``TOOL_EVENT_KEY``), made safe for the wire.
+
+    A call's ``arguments`` are redacted and capped at 8 KB (``_redaction``),
+    a failed result's ``output`` is replaced by ``TOOL_FAILED_OUTPUT``, and a
+    successful result's ``output`` is sent as the tool returned it, cut to
+    ``TOOL_EVENT_OUTPUT_MAX_CHARS``.
+    """
+    event = output.metadata.get(TOOL_EVENT_KEY)
+    if not isinstance(event, dict) or event.get("type") not in ("tool_call", "tool_result"):
+        return None
+    relayed = dict(event)
+    if relayed["type"] == "tool_call":
+        relayed["arguments"] = safe_arguments(relayed.get("arguments"))
+    elif relayed.get("ok") is not True:
+        relayed["output"] = TOOL_FAILED_OUTPUT
+    elif isinstance(text := relayed.get("output"), str):
+        relayed["output"] = text[:TOOL_EVENT_OUTPUT_MAX_CHARS]
+    return relayed
+
+
 async def _collect_output(agent: AgentProtocol, agent_input: AgentInput) -> AgentOutput:
     content_parts: list[str] = []
     last_output: AgentOutput | None = None
@@ -118,6 +152,18 @@ async def _stream_output(
 
     try:
         async for output in agent.run(agent_input):
+            # A tool event rides on a non-final ``working`` status update under
+            # ``metadata.tool_event``, as the platform's A2A server sends it;
+            # a reader that does not know the key sees one more progress event.
+            tool_event = _relayable_tool_event(output)
+            if tool_event is not None:
+                yield _event({
+                    "id": task_id,
+                    "status": {"state": "working"},
+                    "final": False,
+                    "metadata": {TOOL_EVENT_KEY: tool_event},
+                })
+                continue
             if output.content:
                 yield _event({
                     "id": task_id,
@@ -159,7 +205,17 @@ def create_app(
     name: str = "agent",
     description: str = "",
 ) -> FastAPI:
-    """Build a FastAPI app that serves an agent over the A2A protocol."""
+    """Build a FastAPI app that serves an agent over the A2A protocol.
+
+    ``tasks/sendSubscribe`` relays each tool call and result the agent reports
+    (``metadata.tool_event``) on a ``working`` status update. Tool calls go out
+    with their arguments redacted and capped at 8 KB, and a failed result says
+    only "The tool failed.". **A successful tool's output is sent raw**, up to
+    4000 characters, to whoever calls this app: a tool that reads a database
+    row, a file or an internal API exposes that data to a direct caller. On the
+    platform the engine scrubs it before a user sees it; when you host ``serve``
+    yourself, nothing does. ``tasks/send`` returns only the agent's text.
+    """
     app = FastAPI(title=name, docs_url=None, redoc_url=None)
 
     card = {
@@ -228,7 +284,11 @@ def serve(
     host: str = "0.0.0.0",
     port: int = 8000,
 ) -> None:
-    """Run an agent as an A2A server (blocking)."""
+    """Run an agent as an A2A server (blocking).
+
+    The app is ``create_app``'s; its docstring says what tool events a caller
+    sees, including that a successful tool's output is sent raw.
+    """
     import uvicorn
 
     app = create_app(agent, name=name, description=description)

@@ -14,6 +14,7 @@ from .memory.base import AppendableMemory, Memory
 from .providers import provider_for
 from .providers.base import Provider
 from .schemas import (
+    TOOL_EVENT_KEY,
     AgentInput,
     AgentOutput,
     MCPConfig,
@@ -52,6 +53,11 @@ def _tool_call_to_dict(tc: ToolCall) -> dict:
     if tc.thought_signature:
         d["thought_signature"] = tc.thought_signature
     return d
+
+
+def _tool_event(payload: dict[str, Any]) -> AgentOutput:
+    """An output reporting one tool event (see ``schemas.TOOL_EVENT_KEY``)."""
+    return AgentOutput(content="", done=False, metadata={TOOL_EVENT_KEY: payload})
 
 
 class Agent:
@@ -250,6 +256,17 @@ class Agent:
                     "tool_calls": [_tool_call_to_dict(tc) for tc in tool_calls_batch],
                 })
 
+                # Report each call once its input is complete, then run them.
+                # Same order as the platform runner: every call of the round
+                # first, then each result as its tool returns.
+                for tc in tool_calls_batch:
+                    yield _tool_event({
+                        "type": "tool_call",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
+                    })
+
                 # Dispatch all tool calls and append results
                 for tc in tool_calls_batch:
                     if auditor:
@@ -264,7 +281,7 @@ class Agent:
                         )
 
                     tool_start = time.monotonic()
-                    result = await self._dispatch_tool(tc)
+                    result, ok = await self._dispatch_tool(tc)
                     tool_latency = (time.monotonic() - tool_start) * 1000
 
                     if auditor:
@@ -283,6 +300,13 @@ class Agent:
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "content": result,
+                    })
+                    yield _tool_event({
+                        "type": "tool_result",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "ok": ok,
+                        "output": result,
                     })
 
         except Exception as exc:
@@ -352,12 +376,18 @@ class Agent:
         else:
             await self._memory.save(session_id, list(history) + turn)
 
-    async def _dispatch_tool(self, tc: ToolCall) -> str:
+    async def _dispatch_tool(self, tc: ToolCall) -> tuple[str, bool]:
+        """The tool's result for the model, and whether the tool ran.
+
+        ``ok`` is false when the tool is unknown or an MCP call failed; the
+        result is then the error text the model sees. A local tool that
+        raises still ends the run, as it always has.
+        """
         if tc.name in self._local_tools:
-            return await self._local_tools[tc.name].call(tc)
+            return await self._local_tools[tc.name].call(tc), True
         if tc.name in self._mcp_tools:
             return await self._call_mcp_tool(tc)
-        return f"Error: tool '{tc.name}' not found"
+        return f"Error: tool '{tc.name}' not found", False
 
     async def _init_mcp(self) -> None:
         for config in self._mcp_configs:
@@ -368,15 +398,12 @@ class Agent:
                 log.exception("Failed to initialise MCP server: %s", config)
         self._mcp_ready = True
 
-    async def _call_mcp_tool(self, tc: ToolCall) -> str:
-        spec = self._mcp_tools.get(tc.name)
-        if spec is None:
-            return f"Error: MCP tool '{tc.name}' not found"
+    async def _call_mcp_tool(self, tc: ToolCall) -> tuple[str, bool]:
+        spec = self._mcp_tools[tc.name]
         try:
-            result = await _invoke_mcp_tool(spec["config"], tc.name, tc.arguments)
-            return result
+            return await _invoke_mcp_tool(spec["config"], tc.name, tc.arguments)
         except Exception as exc:
-            return f"Error calling MCP tool '{tc.name}': {exc}"
+            return f"Error calling MCP tool '{tc.name}': {exc}", False
 
     @staticmethod
     def _message_to_dict(msg: Message) -> dict:
@@ -436,30 +463,30 @@ async def _fetch_mcp_tools(config: MCPConfig) -> dict[str, dict]:
     return tools
 
 
-async def _invoke_mcp_tool(config: MCPConfig, name: str, arguments: dict) -> str:
+async def _invoke_mcp_tool(config: MCPConfig, name: str, arguments: dict) -> tuple[str, bool]:
+    """The MCP tool's result text, and whether the call succeeded.
+
+    A tool that fails on the server's side does not raise: per the MCP spec
+    ``call_tool`` returns a result with ``isError`` set, and that is a failure.
+    """
+    if config["type"] not in ("stdio", "sse"):
+        return "Error: unsupported MCP transport", False
+
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
     from mcp.client.sse import sse_client
 
     if config["type"] == "stdio":
-        server_params = StdioServerParameters(
+        transport = stdio_client(StdioServerParameters(
             command=config["command"],
             args=config.get("args", []),
-        )
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(name, arguments)
-                return str(result.content)
-
-    elif config["type"] == "sse":
-        async with sse_client(config["url"]) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(name, arguments)
-                return str(result.content)
-
-    return "Error: unsupported MCP transport"
+        ))
+    else:
+        transport = sse_client(config["url"])
+    async with transport as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        result = await session.call_tool(name, arguments)
+        return str(result.content), not result.isError
 
 
 def _optional_str(value: Any) -> str | None:
