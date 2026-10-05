@@ -34,3 +34,6 @@ Thumbs.db
 # Agent instruction files — local to each contributor, not shared
 CLAUDE.md
 AGENTS.md
+
+# graphify knowledge-graph output (local, machine-specific paths)
+graphify-out/
