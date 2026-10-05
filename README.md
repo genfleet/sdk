@@ -210,6 +210,7 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 | `ToolCall` | Model | Tool invocation request |
 | `ToolSchema` | Model | Tool JSON Schema description |
 | `TokenUsage` | Model | Token counts (input, output, total) |
+| `TOOL_EVENT_KEY` | Constant | `AgentOutput.metadata` key on the outputs `Agent` yields to report a tool call and its result |
 | `AuditEvent` | Model | Structured audit event |
 | `ModelConfig` | TypedDict | Provider + credentials config |
 | `MemoryConfig` | TypedDict | Memory config — `{"type": "redis", ...}` or `{"type": "platform"}` |
