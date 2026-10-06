@@ -9,9 +9,10 @@ lists, so the syntax is checked here, offline, where the developer writes it:
 
 An entry is a hostname, optionally starting with `*.` (any subdomain, at any
 depth, never the bare domain), optionally ending with `:port` (default 443).
-IP literals and a bare `*` are refused: a list is reviewed by people, and an
-address or a wildcard says nothing they can check. Whether a host *resolves*
-somewhere private is the proxy's decision at request time, not the syntax's.
+IP literals (including shorthands a resolver accepts, such as `127.1`) and a
+bare `*` are refused: a list is reviewed by people, and an address or a
+wildcard says nothing they can check. Whether a host *resolves* somewhere
+private is the proxy's decision at request time, not the syntax's.
 
 The rules are pinned by tests/fixtures/egress-hosts.cases.json, which the
 platform's own validators are tested against.
@@ -31,6 +32,8 @@ MAX_HOST_LENGTH = 253
 
 _LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 _PORT = re.compile(r"^[1-9][0-9]{0,4}$")
+#: A last label a resolver reads as part of an address: `127.1`, `2130706433`.
+_NUMERIC_LABEL = re.compile(r"^([0-9]+|0x[0-9a-f]+)$")
 _WILDCARD = "*."
 
 Reason = Literal["invalid_host", "ip_not_allowed", "limit"]
@@ -74,13 +77,16 @@ class EgressEntry:
 
 def parse_egress_entry(raw: str) -> EgressEntry:
     """Validate and normalise one entry; `EgressEntryError` when it is not one."""
-    if raw != raw.strip() or not raw:
-        raise EgressEntryError(raw, "invalid_host", "empty, or has surrounding whitespace")
-    host, port = _split_port(raw)
+    text = raw.strip()
+    if not text:
+        raise EgressEntryError(raw, "invalid_host", "empty")
+    if text.startswith("[") or text.count(":") > 1:
+        raise EgressEntryError(raw, "ip_not_allowed", "IP addresses are not allowed; name the host")
+    host, port = _split_port(text)
     host = host.lower().removesuffix(".")
     wildcard = host.startswith(_WILDCARD)
     name = host[len(_WILDCARD):] if wildcard else host
-    if _is_ip_literal(name):
+    if _is_ip_literal(name) or _NUMERIC_LABEL.match(name.rsplit(".", 1)[-1]):
         raise EgressEntryError(raw, "ip_not_allowed", "IP addresses are not allowed; name the host")
     labels = name.split(".")
     if "*" in name or len(labels) < 2 or not all(_LABEL.match(label) for label in labels):
@@ -109,9 +115,6 @@ def parse_egress(entries: Iterable[str]) -> list[EgressEntry]:
 
 
 def _split_port(raw: str) -> tuple[str, int]:
-    if raw.startswith("["):
-        # A bracketed IPv6 literal, with or without a port.
-        return raw.split("]", 1)[0] + "]", DEFAULT_PORT
     host, sep, port = raw.rpartition(":")
     if not sep:
         return raw, DEFAULT_PORT
@@ -122,7 +125,7 @@ def _split_port(raw: str) -> tuple[str, int]:
 
 def _is_ip_literal(name: str) -> bool:
     try:
-        ipaddress.ip_address(name.strip("[]"))
+        ipaddress.ip_address(name)
     except ValueError:
         return False
     return True
