@@ -3,11 +3,14 @@
   "keep_in_sync": "Source of truth: genfleet/sdk tests/fixtures/egress-hosts.cases.json. Copied byte-identical into genfleet/backend (DTO validator fixture). Change the SDK first, then re-copy.",
   "notes": [
     "entries: parse(input) is valid iff `valid`; `canonical` is the normalised form (port omitted when 443); `reason` is why an invalid entry is refused: invalid_host or ip_not_allowed.",
+    "review_warning: true for every valid wildcard entry. There is no public-suffix list: `*.github.io` and `*.co.uk` are syntactically valid, and marketplace review decides; the admin review screen highlights entries with a warning. `*.com` is refused by the two-label rule, not by a suffix list.",
     "A host needs at least two labels; a wildcard `*.` needs at least two labels after it, so `*.com` is refused. Labels are LDH (letters, digits, hyphen; no leading or trailing hyphen), 1-63 chars; the host is at most 253 chars. Non-ASCII must be written as punycode.",
-    "IP literals, including shorthands a resolver accepts, are ip_not_allowed: a last label that is all digits or 0x-hex (`127.1`, `2130706433`, `10.0.0x1`), more than one `:` (bare IPv6), or a leading `[`.",
-    "Normalisation: surrounding whitespace trimmed, lowercase, one trailing dot dropped.",
+    "IP literals, including forms a resolver or a WHATWG URL parser reads as IPv4, are ip_not_allowed: a last label that is all digits or `0x` followed by zero or more hex digits (`127.1`, `2130706433`, `10.0.0x1`, `1.2.3.0x`, `10.0.0.0X`), more than one `:` (bare IPv6), or a leading `[`.",
+    "Normalisation: ASCII whitespace trimmed from both ends, lowercase, one trailing dot dropped.",
     "limits: a list may hold at most `max_entries` entries; a longer one is refused with reason `limit`.",
-    "matches: an exact pattern matches that host only; `*.x.y` matches any subdomain of x.y at any depth, never x.y itself. The port must be equal."
+    "matches: an exact pattern matches that host only; `*.x.y` matches any subdomain of x.y at any depth, never x.y itself. The port must be equal.",
+    "A port is written without leading zeros: `:0443` is refused rather than read as 443, because parsers disagree on it (decimal vs octal).",
+    "Order of checks, identical on every side: (1) refuse any character outside TAB, LF, VT, FF, CR and 0x20-0x7E (so U+FEFF, U+0085, U+00A0 and U+212A are refused, never trimmed or folded); (2) strip only ASCII whitespace (space, TAB, LF, VT, FF, CR) from both ends; (3) refuse anything left outside 0x21-0x7E, so internal whitespace and newlines are refused (an entry reaches a line-oriented proxy protocol); (4) lowercase. Patterns match the whole string."
   ],
   "limits": {
     "max_entries": 100,
@@ -18,289 +21,477 @@
       "input": "api.github.com",
       "valid": true,
       "canonical": "api.github.com",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "API.GitHub.com",
       "valid": true,
       "canonical": "api.github.com",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "api.github.com.",
       "valid": true,
       "canonical": "api.github.com",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "api.github.com:443",
       "valid": true,
       "canonical": "api.github.com",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "api.github.com:8443",
       "valid": true,
       "canonical": "api.github.com:8443",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "example.com:80",
       "valid": true,
       "canonical": "example.com:80",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "*.googleapis.com",
       "valid": true,
       "canonical": "*.googleapis.com",
-      "reason": null
+      "reason": null,
+      "review_warning": true
     },
     {
       "input": "*.eu.example.co.uk:8443",
       "valid": true,
       "canonical": "*.eu.example.co.uk:8443",
-      "reason": null
+      "reason": null,
+      "review_warning": true
     },
     {
       "input": "xn--bcher-kva.example",
       "valid": true,
       "canonical": "xn--bcher-kva.example",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "a-b.c-d.example",
       "valid": true,
       "canonical": "a-b.c-d.example",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "*",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "*.com",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "api.*.example.com",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "*example.com",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "**.example.com",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "localhost",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": " api.github.com",
       "valid": true,
       "canonical": "api.github.com",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "https://api.github.com",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "api.github.com/repos",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "-bad.example.com",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "bad-.example.com",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "under_score.example.com",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "bücher.example",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "a..example.com",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "example.com:",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "example.com:0",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "example.com:65536",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "example.com:0443",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "example.com:44a",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "10.0.0.1",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "8.8.8.8:53",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "169.254.169.254",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "[::1]",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "[2001:db8::1]:443",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "*.10.0.0.1",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "api.github.com  ",
       "valid": true,
       "canonical": "api.github.com",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "   ",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "intranet",
       "valid": false,
       "canonical": null,
-      "reason": "invalid_host"
+      "reason": "invalid_host",
+      "review_warning": false
     },
     {
       "input": "127.1",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "2130706433",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "10.0.0x1",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "host.0x7f",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "::1",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "2001:db8::1",
       "valid": false,
       "canonical": null,
-      "reason": "ip_not_allowed"
+      "reason": "ip_not_allowed",
+      "review_warning": false
     },
     {
       "input": "web3.example.com",
       "valid": true,
       "canonical": "web3.example.com",
-      "reason": null
+      "reason": null,
+      "review_warning": false
     },
     {
       "input": "123.example.com",
       "valid": true,
       "canonical": "123.example.com",
-      "reason": null
+      "reason": null,
+      "review_warning": false
+    },
+    {
+      "input": "1.2.3.0x",
+      "valid": false,
+      "canonical": null,
+      "reason": "ip_not_allowed",
+      "review_warning": false
+    },
+    {
+      "input": "10.0.0.0X",
+      "valid": false,
+      "canonical": null,
+      "reason": "ip_not_allowed",
+      "review_warning": false
+    },
+    {
+      "input": "*.github.io",
+      "valid": true,
+      "canonical": "*.github.io",
+      "reason": null,
+      "review_warning": true
+    },
+    {
+      "input": "*.co.uk",
+      "valid": true,
+      "canonical": "*.co.uk",
+      "reason": null,
+      "review_warning": true
+    },
+    {
+      "input": "*.amazonaws.com",
+      "valid": true,
+      "canonical": "*.amazonaws.com",
+      "reason": null,
+      "review_warning": true
+    },
+    {
+      "input": "evil.com\n.good.com",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "api.github.com\n:443",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "api.github.com:44\n3",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "a\t.example.com",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "a.example\r\n.com",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "example.com:443\n1",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "Key.com",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "api.github.com\r\n",
+      "valid": true,
+      "canonical": "api.github.com",
+      "reason": null,
+      "review_warning": false
+    },
+    {
+      "input": "  api.github.com  ",
+      "valid": true,
+      "canonical": "api.github.com",
+      "reason": null,
+      "review_warning": false
+    },
+    {
+      "input": "api.github.com\n",
+      "valid": true,
+      "canonical": "api.github.com",
+      "reason": null,
+      "review_warning": false
+    },
+    {
+      "input": "﻿api.github.com",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "api.github.com",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "api.github.com ",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "evilK.com",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
+    },
+    {
+      "input": "a.com\t:443",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
     }
   ],
   "matches": [
@@ -366,6 +557,12 @@
     },
     {
       "pattern": "example.com:8443",
+      "host": "example.com",
+      "port": 443,
+      "matches": false
+    },
+    {
+      "pattern": "*.example.com",
       "host": "example.com",
       "port": 443,
       "matches": false

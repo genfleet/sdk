@@ -29,7 +29,9 @@ CASES = json.loads(
 @pytest.mark.parametrize("case", CASES["entries"], ids=lambda c: repr(c["input"]))
 def test_entry_syntax(case: dict) -> None:
     if case["valid"]:
-        assert parse_egress_entry(case["input"]).canonical == case["canonical"]
+        entry = parse_egress_entry(case["input"])
+        assert entry.canonical == case["canonical"]
+        assert entry.review_warning is case["review_warning"]
     else:
         with pytest.raises(EgressEntryError) as exc:
             parse_egress_entry(case["input"])

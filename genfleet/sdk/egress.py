@@ -30,10 +30,14 @@ DEFAULT_PORT = 443
 MAX_EGRESS_ENTRIES = 100
 MAX_HOST_LENGTH = 253
 
+_ASCII_WHITESPACE = " \t\n\v\f\r"
+_OUTSIDE_RAW = re.compile(r"[^\t\n\v\f\r\x20-\x7e]")
+_OUTSIDE_TEXT = re.compile(r"[^\x21-\x7e]")
 _LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 _PORT = re.compile(r"^[1-9][0-9]{0,4}$")
-#: A last label a resolver reads as part of an address: `127.1`, `2130706433`.
-_NUMERIC_LABEL = re.compile(r"^([0-9]+|0x[0-9a-f]+)$")
+#: A last label a resolver or a WHATWG URL parser reads as part of an IPv4
+#: address: `127.1`, `2130706433`, and `0x` with or without digits (`1.2.3.0x`).
+_NUMERIC_LABEL = re.compile(r"^([0-9]+|0x[0-9a-f]*)$")
 _WILDCARD = "*."
 
 Reason = Literal["invalid_host", "ip_not_allowed", "limit"]
@@ -60,6 +64,16 @@ class EgressEntry:
         return self.host.startswith(_WILDCARD)
 
     @property
+    def review_warning(self) -> bool:
+        """Whether marketplace review should look twice: every wildcard does.
+
+        There is no public-suffix list here on purpose, so `*.github.io` is
+        valid syntax that covers every GitHub Pages site. Whether that is
+        acceptable is review's call, and this is what flags it.
+        """
+        return self.is_wildcard
+
+    @property
     def canonical(self) -> str:
         return self.host if self.port == DEFAULT_PORT else f"{self.host}:{self.port}"
 
@@ -77,19 +91,27 @@ class EgressEntry:
 
 def parse_egress_entry(raw: str) -> EgressEntry:
     """Validate and normalise one entry; `EgressEntryError` when it is not one."""
-    text = raw.strip()
+    # The order is part of the contract (the cases file): what is refused
+    # first is never trimmed or case-folded into something valid, so a BOM, a
+    # NEL or a KELVIN SIGN cannot become `k` or vanish, on any side.
+    if _OUTSIDE_RAW.search(raw):
+        raise EgressEntryError(raw, "invalid_host", "only printable ASCII is allowed; use punycode")
+    text = raw.strip(_ASCII_WHITESPACE)
     if not text:
         raise EgressEntryError(raw, "invalid_host", "empty")
+    if _OUTSIDE_TEXT.search(text):
+        # An entry reaches the proxy's line protocol: no newline survives.
+        raise EgressEntryError(raw, "invalid_host", "whitespace inside an entry")
     if text.startswith("[") or text.count(":") > 1:
         raise EgressEntryError(raw, "ip_not_allowed", "IP addresses are not allowed; name the host")
     host, port = _split_port(text)
     host = host.lower().removesuffix(".")
     wildcard = host.startswith(_WILDCARD)
     name = host[len(_WILDCARD):] if wildcard else host
-    if _is_ip_literal(name) or _NUMERIC_LABEL.match(name.rsplit(".", 1)[-1]):
+    if _is_ip_literal(name) or _NUMERIC_LABEL.fullmatch(name.rsplit(".", 1)[-1]):
         raise EgressEntryError(raw, "ip_not_allowed", "IP addresses are not allowed; name the host")
     labels = name.split(".")
-    if "*" in name or len(labels) < 2 or not all(_LABEL.match(label) for label in labels):
+    if "*" in name or len(labels) < 2 or not all(_LABEL.fullmatch(label) for label in labels):
         raise EgressEntryError(
             raw,
             "invalid_host",
@@ -118,7 +140,7 @@ def _split_port(raw: str) -> tuple[str, int]:
     host, sep, port = raw.rpartition(":")
     if not sep:
         return raw, DEFAULT_PORT
-    if not _PORT.match(port) or int(port) > 65535:
+    if not _PORT.fullmatch(port) or int(port) > 65535:
         raise EgressEntryError(raw, "invalid_host", "the port must be a number from 1 to 65535")
     return host, int(port)
 
