@@ -14,6 +14,10 @@ bare `*` are refused: a list is reviewed by people, and an address or a
 wildcard says nothing they can check. Whether a host *resolves* somewhere
 private is the proxy's decision at request time, not the syntax's.
 
+There is no public-suffix list: `*.co.uk` and `*.github.io` are valid syntax.
+Marketplace review is the gate for those, and `EgressEntry.review_warning`
+flags every wildcard so the review screen can highlight it.
+
 The rules are pinned by tests/fixtures/egress-hosts.cases.json, which the
 platform's own validators are tested against.
 """
@@ -33,11 +37,13 @@ MAX_HOST_LENGTH = 253
 _ASCII_WHITESPACE = " \t\n\v\f\r"
 _OUTSIDE_RAW = re.compile(r"[^\t\n\v\f\r\x20-\x7e]")
 _OUTSIDE_TEXT = re.compile(r"[^\x21-\x7e]")
-_LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
-_PORT = re.compile(r"^[1-9][0-9]{0,4}$")
+#: Every pattern below is used with `fullmatch`: `$` alone would accept a
+#: trailing newline.
+_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+_PORT = re.compile(r"[1-9][0-9]{0,4}")
 #: A last label a resolver or a WHATWG URL parser reads as part of an IPv4
 #: address: `127.1`, `2130706433`, and `0x` with or without digits (`1.2.3.0x`).
-_NUMERIC_LABEL = re.compile(r"^([0-9]+|0x[0-9a-f]*)$")
+_NUMERIC_LABEL = re.compile(r"[0-9]+|0x[0-9a-f]*")
 _WILDCARD = "*."
 
 Reason = Literal["invalid_host", "ip_not_allowed", "limit"]

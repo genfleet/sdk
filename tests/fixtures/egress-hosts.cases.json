@@ -492,6 +492,13 @@
       "canonical": null,
       "reason": "invalid_host",
       "review_warning": false
+    },
+    {
+      "input": "a .b.com",
+      "valid": false,
+      "canonical": null,
+      "reason": "invalid_host",
+      "review_warning": false
     }
   ],
   "matches": [
