@@ -123,6 +123,12 @@
       "note": "a repeated directory entry is a duplicate too"
     },
     {
+      "file": "dir-file-same-name.tar",
+      "valid": false,
+      "reason": "duplicate",
+      "note": "a directory and a file with one name"
+    },
+    {
       "file": "pax-duplicate.tar",
       "valid": false,
       "reason": "duplicate",
