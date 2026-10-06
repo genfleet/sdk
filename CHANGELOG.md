@@ -5,6 +5,12 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-10-06
+
+### Added
+- **`egress` in `genfleet.toml`** (ADR-0021 §3): the hosts an agent or tool reaches, declared in `[agent]` or `[tool]` as `egress = ["api.github.com", "*.googleapis.com", "hooks.example.com:8443"]`. A hosted sandbox leaves only through the platform's egress proxy, and the hosts a manifest declares are one of the lists the proxy allows. An agent is allowed its own entries plus those of every tool it pins. `AgentManifest.egress` and `ToolManifest.egress` hold the entries validated, lowercased, without a trailing dot or a default `:443`, and deduplicated. A bad entry is a `ManifestError` naming the file.
+- `genfleet.sdk.egress`: `parse_egress_entry` / `parse_egress` (an `EgressEntry` with `canonical` and `matches(host, port)`), raising `EgressEntryError` with a `reason` of `invalid_host`, `ip_not_allowed` or `limit`. An entry is a hostname of at least two labels, optionally starting with `*.` (any subdomain at any depth, never the bare domain) and optionally ending with `:port` (default 443). IP literals (including resolver and URL-parser shorthands such as `127.1` and `1.2.3.0x`), a bare `*`, any non-ASCII or internal whitespace, and more than 100 entries are refused; ASCII whitespace at the ends is trimmed. Every wildcard carries `EgressEntry.review_warning`; there is no public-suffix list, so `*.github.io` is valid and marketplace review decides. `tests/fixtures/egress-hosts.cases.json` pins the rules; the platform tests its own validators against a copy.
+
 ## [0.12.0] - 2026-10-04
 
 ### Added
