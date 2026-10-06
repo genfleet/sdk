@@ -4,7 +4,7 @@
   "notes": [
     "Every reader refuses an archive whose `valid` is false, for the stated `reason`: link | name | duplicate | type.",
     "Member types are an allow-list: regular file (REGTYPE/AREGTYPE) or directory.",
-    "Names: refuse a leading `/`, any `..` segment and a backslash; fold only empty and `.` segments; a name that is only the root (`./`) is skipped.",
+    "Names: refuse a leading `/`, any `..` segment and a backslash; fold only empty and `.` segments; a name that is only the root (`./`) is skipped if it is a directory and refused otherwise.",
     "Duplicates are counted after folding, directories included."
   ],
   "cases": [
@@ -25,6 +25,18 @@
       "valid": true,
       "reason": null,
       "note": "a GNU long name on a regular file (the CLI writes GNU format)"
+    },
+    {
+      "file": "pax-longname.tar",
+      "valid": true,
+      "reason": null,
+      "note": "a long name from a pax `path` header (tarfile's default format)"
+    },
+    {
+      "file": "dot-root-file.tar",
+      "valid": false,
+      "reason": "name",
+      "note": "only a directory may be the root entry; a file named `./` is refused"
     },
     {
       "file": "symlink-inside.tar",

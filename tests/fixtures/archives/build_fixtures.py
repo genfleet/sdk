@@ -8,7 +8,8 @@ submit, CLI build), decided 2026-10-06 after engine#175:
 * member types are an allow-list: regular file or directory only;
 * a name with a leading ``/``, any ``..`` segment or a backslash is refused;
   only empty and ``.`` segments are folded (``./pkg//x`` is ``pkg/x``), and a
-  name that is only the root (``./``) is skipped;
+  name that is only the root (``./``) is skipped when it is a directory and
+  refused otherwise;
 * two members with one name after folding are refused, directories included.
 
 Deterministic (mtime 0, uid/gid 0, fixed order), so re-running it rewrites
@@ -64,6 +65,12 @@ CASES: list[tuple[str, int, list[tuple], bool, str | None, str]] = [
     ("gnu-longname.tar", tarfile.GNU_FORMAT,
      [_file("pkg/" + "a" * 120 + ".py", b"x = 1\n")],
      True, None, "a GNU long name on a regular file (the CLI writes GNU format)"),
+    ("pax-longname.tar", tarfile.PAX_FORMAT,
+     [_pax("pkg/" + "b" * 120 + ".py", b"x = 1\n")],
+     True, None, "a long name from a pax `path` header (tarfile's default format)"),
+    ("dot-root-file.tar", tarfile.GNU_FORMAT,
+     [_file("./", b"x")],
+     False, "name", "only a directory may be the root entry; a file named `./` is refused"),
     ("symlink-inside.tar", tarfile.GNU_FORMAT,
      [_dir("docs"), _special("pkg", tarfile.SYMTYPE, "docs"),
       _file("pkg/genfleet.toml", MANIFEST_A), _file("docs/genfleet.toml", MANIFEST_B)],
@@ -140,7 +147,8 @@ def main() -> None:
             "link | name | duplicate | type.",
             "Member types are an allow-list: regular file (REGTYPE/AREGTYPE) or directory.",
             "Names: refuse a leading `/`, any `..` segment and a backslash; fold only empty and "
-            "`.` segments; a name that is only the root (`./`) is skipped.",
+            "`.` segments; a name that is only the root (`./`) is skipped if it is a "
+            "directory and refused otherwise.",
             "Duplicates are counted after folding, directories included.",
         ],
         "cases": [
