@@ -103,7 +103,8 @@ def test_unknown_prefix_lists_the_supported_ones():
 
 
 def test_a_model_without_a_prefix_is_rejected():
-    with pytest.raises(ValueError, match="Expected 'provider/model-name'"):
+    # Without a model client installed, a plain id has nothing to serve it.
+    with pytest.raises(ValueError, match="no model client is installed"):
         provider_for({"model": "gpt-4o-mini", "api_key": "k"})
 
 

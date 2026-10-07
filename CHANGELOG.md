@@ -5,6 +5,13 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-10-07
+
+### Added
+- **Pluggable model clients** (`genfleet.sdk.models`): an agent's model calls go through a `ModelClient` (the provider protocol, promoted). Packages register a factory `(ModelConfig) -> ModelClient | None` under the entry-point group `genfleet.model_clients`; installed factories are tried in name order and the first active one is used, else the direct `provider/model` provider. `Agent(model_client=...)` overrides both. `FakeModelClient` for tests.
+- `ModelConfig.options`, passed to the model client unchanged (the SDK never reads it); `ModelConfig.api_key` is optional (a direct provider still refuses a missing one with a clear error; an empty string passes through as before).
+- `genfleet.sdk.turn.current_turn()`: the running turn's `AgentInput.metadata`, read-only, visible only while the turn's model client or a tool runs (never to the caller or to another turn).
+
 ## [0.13.0] - 2026-10-06
 
 ### Added

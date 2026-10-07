@@ -86,6 +86,21 @@ Agent(
 {"model": "openai/deepseek-chat",      "api_key": "sk-...", "base_url": "https://api.deepseek.com"}  # any OpenAI-compatible
 ```
 
+### Model clients — `genfleet.model_clients`
+
+An agent's model calls go through a *model client*. The direct providers above
+are the default. A package can register its own under the entry-point group
+`genfleet.model_clients`: a factory `(ModelConfig) -> ModelClient | None` that
+returns `None` when it doesn't apply in the current environment. Installed
+factories are tried in name order and the first active one is used (the SDK
+logs which). An explicit `Agent(model_client=...)` wins over both, which is how
+tests use `genfleet.sdk.models.FakeModelClient`.
+
+With a model client installed, `model` may be a plain id (no provider prefix)
+and `api_key` may be left out. `ModelConfig["options"]` is passed to the client
+unchanged; the SDK never reads it. During a turn,
+`genfleet.sdk.turn.current_turn()` returns the turn's `AgentInput.metadata`.
+
 ### Memory
 
 Memory is episodic: one thread of messages per `session_id`, loaded before a

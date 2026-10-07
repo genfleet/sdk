@@ -25,8 +25,9 @@ def _parse_model(model: str) -> tuple[str, str]:
     """Parse 'provider/model-name' into (provider, model_name)."""
     if "/" not in model:
         raise ValueError(
-            f"Invalid model format: '{model}'. "
-            f"Expected 'provider/model-name', e.g. 'openai/gpt-4o-mini', "
+            f"'{model}' is a plain model id, and no model client is installed to serve it "
+            f"(entry-point group genfleet.model_clients). For a direct provider use "
+            f"'provider/model-name', e.g. 'openai/gpt-4o-mini', "
             f"'anthropic/claude-sonnet-4-6', 'gemini/gemini-1.5-pro', "
             f"'openrouter/google/gemini-2.5-flash'."
         )
@@ -49,6 +50,9 @@ def _parse_model(model: str) -> tuple[str, str]:
 def provider_for(config: ModelConfig) -> Provider:
     """Return the correct Provider instance based on the provider/model format."""
     provider_key, model_name = _parse_model(config["model"])
+    # Only a missing key is refused: "" is valid for a keyless local server.
+    if config.get("api_key") is None:
+        raise ValueError(f"model '{config['model']}' uses the {provider_key} provider directly, which needs an api_key")
     resolved = {**config, "model": model_name}
 
     if provider_key == "anthropic":
