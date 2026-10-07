@@ -5,6 +5,11 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-10-07
+
+### Added
+- **`models` in `genfleet.toml`** (`[agent]`): the platform catalog model ids the agent calls, e.g. `models = ["general-fast"]`. In hosted execution the platform scopes the agent's model credential to these. Entries are lowercased and deduplicated, at most 20; a `provider/model` id or anything but a catalog id (lowercase letters, digits, `.` and `-`) is a `ManifestError`. `AgentManifest.models` holds them.
+
 ## [0.14.0] - 2026-10-07
 
 ### Added

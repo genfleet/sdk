@@ -46,6 +46,11 @@ def _canonical_egress(entries: list[str]) -> list[str]:
         raise ValueError(str(exc)) from exc
 
 
+#: A platform catalog model id, as the gateway defines it.
+_CATALOG_MODEL_ID = re.compile(r"[a-z0-9][a-z0-9.-]{1,63}")
+_MAX_MODELS = 20
+
+
 class ManifestError(ValueError):
     """Raised with the file path attached, because these are hand-authored."""
 
@@ -125,6 +130,28 @@ class AgentManifest(BaseModel):
     @classmethod
     def _egress_is_valid(cls, value: list[str]) -> list[str]:
         return _canonical_egress(value)
+
+    #: Platform catalog model ids the agent calls (``general-fast``). In hosted
+    #: execution the platform scopes the agent's model credential to these.
+    #: A ``provider/model`` id is the agent's own business and isn't listed.
+    models: list[str] = Field(default_factory=list)
+
+    @field_validator("models")
+    @classmethod
+    def _models_are_catalog_ids(cls, value: list[str]) -> list[str]:
+        if len(value) > _MAX_MODELS:
+            raise ValueError(f"models: at most {_MAX_MODELS} entries")
+        out: list[str] = []
+        for entry in value:
+            model = entry.strip().lower()
+            if not _CATALOG_MODEL_ID.fullmatch(model):
+                raise ValueError(
+                    "models: each entry is a platform model id such as 'general-fast' "
+                    "(lowercase letters, digits, '.' and '-'; no 'provider/' prefix)"
+                )
+            if model not in out:
+                out.append(model)
+        return out
 
     @property
     def is_fully_pinned(self) -> bool:

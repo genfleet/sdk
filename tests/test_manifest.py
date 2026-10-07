@@ -131,3 +131,22 @@ def test_malformed_toml_names_the_path(tmp_path):
 def test_manifest_without_its_required_section_is_rejected(tmp_path):
     with pytest.raises(ManifestError, match=r"missing an \[agent\] section"):
         load_agent_manifest(_write(tmp_path, '[tool]\nslug = "@acme/x"\n'))
+
+
+def test_an_agent_declares_the_catalog_models_it_calls(tmp_path):
+    _write(tmp_path, '[agent]\nname = "support"\nmodels = ["general-fast", "General-Fast", "general-smart"]\n')
+    # Platform model ids, deduplicated and lowercased; the platform scopes the
+    # agent's model credential to these (gateway phase 3).
+    assert load_agent_manifest(tmp_path).models == ["general-fast", "general-smart"]
+
+
+def test_an_agent_without_models_declares_none(tmp_path):
+    _write(tmp_path, '[agent]\nname = "support"\n')
+    assert load_agent_manifest(tmp_path).models == []
+
+
+@pytest.mark.parametrize("model", ["openai/gpt-4o", "", "-fast", "a", "x" * 65, "general fast"])
+def test_a_model_entry_must_be_a_plain_catalog_id(tmp_path, model):
+    _write(tmp_path, f'[agent]\nname = "support"\nmodels = ["{model}"]\n')
+    with pytest.raises(ManifestError, match="models"):
+        load_agent_manifest(tmp_path)
