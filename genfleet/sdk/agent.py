@@ -11,8 +11,9 @@ from .audit import Auditor, audit_for
 from .audit.schemas import AuditConfig
 from .memory import memory_for
 from .memory.base import AppendableMemory, Memory
+from . import turn as _turn
+from .models import ModelClient, discover_model_client
 from .providers import provider_for
-from .providers.base import Provider
 from .schemas import (
     TOOL_EVENT_KEY,
     AgentInput,
@@ -60,6 +61,18 @@ def _tool_event(payload: dict[str, Any]) -> AgentOutput:
     return AgentOutput(content="", done=False, metadata={TOOL_EVENT_KEY: payload})
 
 
+def _model_client_for(config: ModelConfig, explicit: ModelClient | None) -> ModelClient:
+    """An explicit client, else an installed one that is active, else the direct provider."""
+    if explicit is not None:
+        return explicit
+    found = discover_model_client(config)
+    if found is not None:
+        name, client = found
+        log.info("model client %s active for %s", name, config["model"])
+        return client
+    return provider_for(config)
+
+
 class Agent:
     """
     High-level agent that wires together a provider, tools, MCP servers,
@@ -88,12 +101,13 @@ class Agent:
         memory: MemoryConfig | Literal["platform"] | None = None,
         context: str | None = None,
         audit: AuditConfig | None = None,
+        model_client: ModelClient | None = None,
     ) -> None:
         self._role = role
         self._context = context
         self._model_config = model
 
-        self._provider: Provider = provider_for(model)
+        self._provider: ModelClient = _model_client_for(model, model_client)
         self._memory: Memory | None = memory_for(memory)
         self._auditor: Auditor | None = audit_for(audit)
         self._mcp_configs: list[MCPConfig] = mcps or []
@@ -119,6 +133,16 @@ class Agent:
     # ------------------------------------------------------------------
 
     async def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
+        # The model client (and anything else the turn calls) can read this
+        # turn's metadata through `genfleet.sdk.turn.current_turn()`.
+        token = _turn._enter(input.metadata)
+        try:
+            async for output in self._run_turn(input):
+                yield output
+        finally:
+            _turn._leave(token)
+
+    async def _run_turn(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         invocation_id = str(uuid.uuid4())
         invocation_start = time.monotonic()
         auditor = self._auditor
