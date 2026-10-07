@@ -11,8 +11,9 @@ from .audit import Auditor, audit_for
 from .audit.schemas import AuditConfig
 from .memory import memory_for
 from .memory.base import AppendableMemory, Memory
+from . import turn as _turn
+from .models import ModelClient, discover_model_client
 from .providers import provider_for
-from .providers.base import Provider
 from .schemas import (
     TOOL_EVENT_KEY,
     AgentInput,
@@ -60,6 +61,18 @@ def _tool_event(payload: dict[str, Any]) -> AgentOutput:
     return AgentOutput(content="", done=False, metadata={TOOL_EVENT_KEY: payload})
 
 
+def _model_client_for(config: ModelConfig, explicit: ModelClient | None) -> ModelClient:
+    """An explicit client, else an installed one that is active, else the direct provider."""
+    if explicit is not None:
+        return explicit
+    found = discover_model_client(config)
+    if found is not None:
+        name, client = found
+        log.info("model client %s active for %s", name, config["model"])
+        return client
+    return provider_for(config)
+
+
 class Agent:
     """
     High-level agent that wires together a provider, tools, MCP servers,
@@ -88,12 +101,13 @@ class Agent:
         memory: MemoryConfig | Literal["platform"] | None = None,
         context: str | None = None,
         audit: AuditConfig | None = None,
+        model_client: ModelClient | None = None,
     ) -> None:
         self._role = role
         self._context = context
         self._model_config = model
 
-        self._provider: Provider = provider_for(model)
+        self._provider: ModelClient = _model_client_for(model, model_client)
         self._memory: Memory | None = memory_for(memory)
         self._auditor: Auditor | None = audit_for(audit)
         self._mcp_configs: list[MCPConfig] = mcps or []
@@ -184,7 +198,11 @@ class Agent:
                 last_token_usage: TokenUsage | None = None
                 response_content_parts: list[str] = []
 
-                async for chunk in self._provider.complete(messages + new_messages, tool_schemas):
+                # The model client reads this turn's metadata through
+                # `current_turn()`, set only while it runs (never across a yield).
+                async for chunk in _turn.within(
+                    input.metadata, self._provider.complete(messages + new_messages, tool_schemas)
+                ):
                     if chunk.token_usage:
                         last_token_usage = chunk.token_usage
                     if chunk.tool_calls:
@@ -281,7 +299,7 @@ class Agent:
                         )
 
                     tool_start = time.monotonic()
-                    result, ok = await self._dispatch_tool(tc)
+                    result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc))
                     tool_latency = (time.monotonic() - tool_start) * 1000
 
                     if auditor:
