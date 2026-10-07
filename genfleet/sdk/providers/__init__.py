@@ -50,7 +50,8 @@ def _parse_model(model: str) -> tuple[str, str]:
 def provider_for(config: ModelConfig) -> Provider:
     """Return the correct Provider instance based on the provider/model format."""
     provider_key, model_name = _parse_model(config["model"])
-    if not config.get("api_key"):
+    # Only a missing key is refused: "" is valid for a keyless local server.
+    if config.get("api_key") is None:
         raise ValueError(f"model '{config['model']}' uses the {provider_key} provider directly, which needs an api_key")
     resolved = {**config, "model": model_name}
 

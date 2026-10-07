@@ -40,8 +40,12 @@ def _entry_points() -> Iterable[EntryPoint]:
 def discover_model_client(config: ModelConfig) -> tuple[str, ModelClient] | None:
     """The first installed client, in entry-point name order, that is active for `config`."""
     for ep in sorted(_entry_points(), key=lambda e: e.name):
-        factory: ModelClientFactory = ep.load()
-        client = factory(config)
+        try:
+            factory: ModelClientFactory = ep.load()
+            client = factory(config)
+        except Exception as exc:
+            # Fail closed, but say which installed plugin failed.
+            raise RuntimeError(f"model client {ep.name!r} ({ep.value}) failed: {exc}") from exc
         if client is not None:
             return ep.name, client
     return None

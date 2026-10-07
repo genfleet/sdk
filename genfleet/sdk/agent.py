@@ -133,16 +133,6 @@ class Agent:
     # ------------------------------------------------------------------
 
     async def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
-        # The model client (and anything else the turn calls) can read this
-        # turn's metadata through `genfleet.sdk.turn.current_turn()`.
-        token = _turn._enter(input.metadata)
-        try:
-            async for output in self._run_turn(input):
-                yield output
-        finally:
-            _turn._leave(token)
-
-    async def _run_turn(self, input: AgentInput) -> AsyncIterator[AgentOutput]:
         invocation_id = str(uuid.uuid4())
         invocation_start = time.monotonic()
         auditor = self._auditor
@@ -208,7 +198,11 @@ class Agent:
                 last_token_usage: TokenUsage | None = None
                 response_content_parts: list[str] = []
 
-                async for chunk in self._provider.complete(messages + new_messages, tool_schemas):
+                # The model client reads this turn's metadata through
+                # `current_turn()`, set only while it runs (never across a yield).
+                async for chunk in _turn.within(
+                    input.metadata, self._provider.complete(messages + new_messages, tool_schemas)
+                ):
                     if chunk.token_usage:
                         last_token_usage = chunk.token_usage
                     if chunk.tool_calls:
@@ -305,7 +299,7 @@ class Agent:
                         )
 
                     tool_start = time.monotonic()
-                    result, ok = await self._dispatch_tool(tc)
+                    result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc))
                     tool_latency = (time.monotonic() - tool_start) * 1000
 
                     if auditor:
