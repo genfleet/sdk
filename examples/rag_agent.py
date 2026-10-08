@@ -22,7 +22,7 @@ Run:
 Test:
     curl -s -X POST http://localhost:8000 \
       -H 'Content-Type: application/json' \
-      -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tasks/send\",\"params\":{\"id\":\"t1\",\"message\":{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"text\":\"What are your business hours?\"}]}}}' \
+      -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"SendMessage\",\"params\":{\"message\":{\"messageId\":\"m1\",\"role\":\"ROLE_USER\",\"parts\":[{\"text\":\"What are your business hours?\"}]}}}' \
       | python -m json.tool
 """
 

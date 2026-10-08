@@ -11,12 +11,12 @@ Run:
 Test:
     curl -s -X POST http://localhost:8002 \
       -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"Explain quantum computing in 2 sentences"}]}}}' | python -m json.tool
+      -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"Explain quantum computing in 2 sentences"}]}}}' | python -m json.tool
 
     # Streaming
     curl -N -X POST http://localhost:8002 \
       -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tasks/sendSubscribe","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"Write a limerick about Python"}]}}}'
+      -d '{"jsonrpc":"2.0","id":1,"method":"SendStreamingMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"Write a limerick about Python"}]}}}'
 """
 
 import os
