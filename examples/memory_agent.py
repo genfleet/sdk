@@ -18,11 +18,10 @@ Test (turn 1 — introduce yourself):
     curl -s -X POST http://localhost:8000 \
       -H "Content-Type: application/json" \
       -d '{
-        "jsonrpc": "2.0", "id": 1, "method": "tasks/send",
+        "jsonrpc": "2.0", "id": 1, "method": "SendMessage",
         "params": {
-          "id": "t1",
-          "metadata": {"session_id": "demo-session"},
-          "message": {"role": "user", "parts": [{"type": "text", "text": "My name is Alice"}]}
+          "message": {"messageId": "m1", "role": "ROLE_USER", "contextId": "demo-session",
+                      "parts": [{"text": "My name is Alice"}]}
         }
       }' | python -m json.tool
 
@@ -30,11 +29,10 @@ Test (turn 2 — verify memory):
     curl -s -X POST http://localhost:8000 \
       -H "Content-Type: application/json" \
       -d '{
-        "jsonrpc": "2.0", "id": 2, "method": "tasks/send",
+        "jsonrpc": "2.0", "id": 2, "method": "SendMessage",
         "params": {
-          "id": "t2",
-          "metadata": {"session_id": "demo-session"},
-          "message": {"role": "user", "parts": [{"type": "text", "text": "What is my name?"}]}
+          "message": {"messageId": "m2", "role": "ROLE_USER", "contextId": "demo-session",
+                      "parts": [{"text": "What is my name?"}]}
         }
       }' | python -m json.tool
 """

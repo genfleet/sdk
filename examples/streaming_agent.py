@@ -8,7 +8,7 @@ Run:
 Test (streaming):
     curl -N -X POST http://localhost:8001 \
       -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tasks/sendSubscribe","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"tell me a story"}]}}}'
+      -d '{"jsonrpc":"2.0","id":1,"method":"SendStreamingMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"tell me a story"}]}}}'
 """
 
 import asyncio

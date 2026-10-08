@@ -5,6 +5,12 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## 0.16.0
+
+- **`serve` speaks A2A v1.0** (JSON-RPC binding, ADR-0027). The card is at `/.well-known/agent-card.json` with `supportedInterfaces`, `capabilities.pushNotifications: false` and `capabilities.extendedAgentCard: false`. `SendMessage` returns a completed task whose reply is artifact `result`; `SendStreamingMessage` streams `TASK_STATE_WORKING`, appended `result` chunks and `TASK_STATE_COMPLETED` (or `TASK_STATE_FAILED`). The message's `contextId` becomes `metadata["session_id"]`; prior turns ride in request `metadata["genfleet.history"]`. `GetTask`, `ListTasks`, `CancelTask` and `SubscribeToTask` answer UnsupportedOperation (`serve` keeps no tasks); push notifications are not supported; an `A2A-Version` other than 0.x or 1.x is refused.
+- **For one minor release** the 0.x card path `/.well-known/agent.json` and the 0.x methods `tasks/send` / `tasks/sendSubscribe` keep working. They will be removed in the next minor.
+
 ## [0.15.0] - 2026-10-07
 
 ### Added
