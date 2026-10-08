@@ -10,6 +10,10 @@ from typing import Any, AsyncIterator, Literal
 from .audit import Auditor, audit_for
 from .audit.schemas import AuditConfig
 from .memory import memory_for
+
+#: ``AgentInput.metadata`` key the platform sets per turn: ``"off"`` means the
+#: Agent neither loads nor writes its session memory for that turn.
+MEMORY_METADATA_KEY = "genfleet.memory"
 from .memory.base import AppendableMemory, Memory
 from . import turn as _turn
 from .models import ModelClient, discover_model_client
@@ -142,6 +146,9 @@ class Agent:
             await self._init_mcp()
 
         session_id = input.metadata.get("session_id") or str(uuid.uuid4())
+        # The platform turns memory off for a turn from its public A2A edge
+        # (ADR-0027 §2c): the session is then neither loaded nor written.
+        use_memory = self._memory is not None and input.metadata.get(MEMORY_METADATA_KEY) != "off"
 
         if auditor:
             await auditor.emit(
@@ -154,7 +161,7 @@ class Agent:
         try:
             # Load history from memory backend (empty list if no memory configured)
             persisted: list[Message] = []
-            if self._memory:
+            if use_memory:
                 persisted = await self._memory.load(session_id)
 
             # Merge caller-supplied history (takes precedence) with persisted history
@@ -355,7 +362,7 @@ class Agent:
         replayed histories remain valid provider payloads (tool messages must
         follow an assistant turn carrying the matching tool_calls ids).
         """
-        if not self._memory:
+        if not self._memory or input.metadata.get(MEMORY_METADATA_KEY) == "off":
             return
         turn = [Message(role="user", content=input.message)]
         for m in new_messages:
