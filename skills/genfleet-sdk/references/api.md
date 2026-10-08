@@ -139,7 +139,8 @@ class AgentInput(BaseModel):
 - `message` — The user's text input.
 - `history` — Previous conversation turns. When `Agent` memory is configured, persisted history is loaded from Redis and merged with this.
 - `tool_schemas` — Caller-supplied tool schemas (used when implementing AgentProtocol directly). `Agent` manages its own tools internally.
-- `metadata` — `session_id` key used by Redis memory backend.
+- `metadata` — `session_id` key used by Redis memory backend. `genfleet.memory` (`MEMORY_METADATA_KEY`) set to `"off"` makes the Agent neither load nor save its session memory for that turn. `genfleet.caller` (`CALLER_METADATA_KEY`) is set by the platform on hosted turns: `{role: "operator"|"customer", id, name, channel, private, legacy_tools}`; `name` is untrusted. Read it with `caller_of(metadata)`. Customers, and operators in non-private chats, are offered only `customer_safe` tools (MCP: `customer_safe_tools` in the config); other tool calls are refused as "not found". No key means every tool.
+- Manifest: `[agent] audiences = ["operator", "customer"]` in `genfleet.toml` says who the agent serves; absent means operators only; empty or unknown values are rejected.
 
 ### AgentOutput
 
@@ -224,13 +225,13 @@ class ToolProtocol(Protocol):
 
 ```python
 class ToolWrapper:
-    def __init__(self, fn: Callable[..., Any], schema: ToolSchema) -> None: ...
+    def __init__(self, fn: Callable[..., Any], schema: ToolSchema, *, customer_safe: bool = False) -> None: ...
     def schema(self) -> ToolSchema: ...
     async def call(self, tool_call: ToolCall) -> str: ...
     async def __call__(self, **kwargs: Any) -> str: ...
 ```
 
-Created by `@tool`. Satisfies `ToolProtocol`. Both `call()` and `__call__()` handle sync and async functions.
+Created by `@tool` (`@tool(customer_safe=True)` offers it to customers; default is operator-only). Satisfies `ToolProtocol`. Both `call()` and `__call__()` handle sync and async functions.
 
 ---
 

@@ -238,6 +238,10 @@ result = await add(a=3, b=4)
 result = await add.call(ToolCall(id="1", name="add", arguments={"a": 3, "b": 4}))
 ```
 
+### Operators and customers
+
+Hosted turns carry `metadata["genfleet.caller"]` (`role` operator or customer, `id`, `channel`, `private`, `legacy_tools`, and `name`, which is untrusted). Mark customer-facing tools with `@tool(customer_safe=True)`. Unmarked tools are operator-only: offered only to an operator in a private chat, and refused as "not found" to customers and in group chats. For MCP use `customer_safe_tools: [...]` in the config. No caller key (local runs) means every tool. Declare `audiences = ["operator", "customer"]` under `[agent]` in `genfleet.toml` (absent: operators only). `metadata["genfleet.memory"] == "off"` makes the Agent skip loading and saving its session memory for that turn.
+
 ## AgentProtocol — Direct Implementation
 
 For framework integrations (LangChain, CrewAI) where you manage the LLM yourself, implement `AgentProtocol` directly instead of using `Agent()`:
