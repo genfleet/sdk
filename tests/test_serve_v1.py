@@ -71,6 +71,32 @@ def test_context_id_is_the_session_and_history_comes_from_metadata() -> None:
     assert [m.content for m in agent.inputs[0].history] == ["earlier"]
 
 
+def test_context_id_beats_a_session_id_in_metadata() -> None:
+    agent = Agent()
+    TestClient(create_app(agent)).post("/", json=_rpc("SendMessage", {
+        "message": _message(contextId="ctx"), "metadata": {"session_id": "someone-elses"},
+    }))
+    assert agent.inputs[0].metadata == {"session_id": "ctx"}
+
+
+def test_without_a_context_id_a_metadata_session_id_is_used() -> None:
+    agent = Agent()
+    TestClient(create_app(agent)).post("/", json=_rpc("SendMessage", {
+        "message": _message(), "metadata": {"session_id": "mine"},
+    }))
+    assert agent.inputs[0].metadata == {"session_id": "mine"}
+
+
+@pytest.mark.parametrize("method", ["SendMessage", "SendStreamingMessage"])
+def test_a_message_without_text_is_content_type_not_supported(method: str) -> None:
+    agent = Agent()
+    body = TestClient(create_app(agent)).post("/", json=_rpc(method, {
+        "message": {"messageId": "m", "role": "ROLE_USER", "parts": [{"url": "https://x/y.png"}]},
+    })).json()
+    assert body["error"]["code"] == -32005
+    assert agent.inputs == []
+
+
 def test_a_malformed_message_is_invalid_params() -> None:
     body = TestClient(create_app(Agent())).post("/", json=_rpc("SendMessage", {"message": "hi"})).json()
     assert body["error"]["code"] == -32602

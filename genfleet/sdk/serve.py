@@ -36,6 +36,7 @@ HISTORY_METADATA_KEY = "genfleet.history"
 _RESULT_ARTIFACT = "result"
 
 _INVALID_PARAMS = -32602
+_CONTENT_TYPE_NOT_SUPPORTED = -32005
 _UNSUPPORTED_OPERATION = -32004
 _PUSH_NOT_SUPPORTED = -32003
 _EXTENDED_CARD_NOT_CONFIGURED = -32007
@@ -63,9 +64,11 @@ def _build_v1_input(params: dict[str, Any]) -> AgentInput | None:
     """A v1.0 ``SendMessageRequest`` as the agent's turn, or ``None`` if malformed.
 
     The message's text parts are the turn's text; request ``metadata`` passes
-    through; the message's ``contextId`` fills ``metadata["session_id"]``
-    unless the caller set it; ``metadata["genfleet.history"]`` is forwarded as
-    the turn's history and removed from the metadata.
+    through; the message's ``contextId`` is ``metadata["session_id"]``, over
+    any ``session_id`` in the metadata (a gateway in front may scope
+    ``contextId`` per caller; metadata must not route around it), which is
+    used only when there is no ``contextId``; ``metadata["genfleet.history"]``
+    is forwarded as the turn's history and removed from the metadata.
     """
     message = params.get("message")
     if not isinstance(message, dict) or not isinstance(message.get("parts"), list):
@@ -75,9 +78,15 @@ def _build_v1_input(params: dict[str, Any]) -> AgentInput | None:
     metadata = dict(metadata) if isinstance(metadata, dict) else {}
     history = _history(metadata.pop(HISTORY_METADATA_KEY, None))
     context_id = message.get("contextId")
-    if isinstance(context_id, str) and context_id and "session_id" not in metadata:
+    if isinstance(context_id, str) and context_id:
         metadata["session_id"] = context_id
     return AgentInput(message=text, history=history, metadata=metadata)
+
+
+def _no_text(params: dict[str, Any]) -> bool:
+    """Parts, but no text part: the agent would run on an empty turn."""
+    parts = params["message"]["parts"]
+    return bool(parts) and not any(isinstance(p, dict) and isinstance(p.get("text"), str) for p in parts)
 
 
 def _v1_ids(params: dict[str, Any]) -> tuple[str, str]:
@@ -378,6 +387,8 @@ def create_app(
             v1_input = _build_v1_input(params)
             if v1_input is None:
                 return _jsonrpc_error(req_id, _INVALID_PARAMS, "Invalid request parameters: check message.")
+            if _no_text(params):
+                return _jsonrpc_error(req_id, _CONTENT_TYPE_NOT_SUPPORTED, "Only text parts are supported.")
             task_id, context_id = _v1_ids(params)
             if method == "SendStreamingMessage":
                 return EventSourceResponse(_v1_stream(agent, v1_input, req_id, task_id, context_id))

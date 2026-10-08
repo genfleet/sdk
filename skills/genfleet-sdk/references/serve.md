@@ -96,8 +96,9 @@ Collects the full agent output and returns a completed task.
 }
 ```
 
-`contextId` becomes `AgentInput.metadata["session_id"]` (unless request
-`metadata` sets it). Request `metadata` passes through to the agent; prior
+`contextId` becomes `AgentInput.metadata["session_id"]`, over any
+`session_id` in request `metadata` (which is used only when there is no
+`contextId`). A message with no text part is refused (`-32005`). Request `metadata` passes through to the agent; prior
 turns may ride in `metadata["genfleet.history"]` as `Message` dicts, and that
 key is removed before the agent sees the metadata.
 
@@ -144,6 +145,7 @@ minor release.
 | -32700 | Parse error (malformed JSON) |
 | -32601 | Method not found |
 | -32602 | Invalid params (e.g. no `message.parts`) |
+| -32005 | Content type not supported (no text part) |
 | -32603 | Internal error (agent raised an exception) |
 | -32004 | Unsupported operation (task methods) |
 | -32003 | Push notifications not supported |
