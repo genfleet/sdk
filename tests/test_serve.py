@@ -82,13 +82,15 @@ def test_non_dict_metadata_ignored(agent: RecordingAgent, client: TestClient) ->
     assert agent.inputs[0].metadata == {"session_id": "s1"}
 
 
-def test_history_forwarded(agent: RecordingAgent, client: TestClient) -> None:
+def test_history_forwarded_only_when_accepted(agent: RecordingAgent, client: TestClient) -> None:
     history = [
         {"role": "user", "content": "earlier question"},
         {"role": "assistant", "content": "earlier answer"},
     ]
     _send(client, _params(history=history))
-    got = agent.inputs[0].history
+    assert agent.inputs[0].history == []  # off by default: a caller can't write the agent's past
+    _send(TestClient(create_app(agent, accept_history=True)), _params(history=history))
+    got = agent.inputs[1].history
     assert [(m.role, m.content) for m in got] == [
         ("user", "earlier question"),
         ("assistant", "earlier answer"),

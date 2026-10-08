@@ -51,7 +51,7 @@ serve(agent, name="my-agent", port=8000)
 
 ```bash
 curl -X POST http://localhost:8000 \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
   -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"What is the weather in Paris?"}]}}}'
 ```
 
@@ -132,10 +132,10 @@ agent = Agent(
 )
 ```
 
-Pass `session_id` in request metadata to persist history across turns:
+Send the same `contextId` on each message to persist history across turns (it becomes the agent's `session_id`):
 
 ```bash
-curl -X POST http://localhost:8000 \
+curl -X POST http://localhost:8000 -H 'A2A-Version: 1.0' \
   -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","contextId":"user-123","parts":[{"text":"My name is Alice"}]}}}'
 ```
 

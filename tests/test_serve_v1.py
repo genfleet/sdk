@@ -61,9 +61,9 @@ def test_send_message_returns_a_completed_task() -> None:
     assert task["artifacts"] == [{"artifactId": "result", "parts": [{"text": "Hello"}]}]
 
 
-def test_context_id_is_the_session_and_history_comes_from_metadata() -> None:
+def test_context_id_is_the_session_and_history_comes_from_metadata_when_accepted() -> None:
     agent = Agent()
-    TestClient(create_app(agent)).post("/", json=_rpc("SendMessage", {
+    TestClient(create_app(agent, accept_history=True)).post("/", json=_rpc("SendMessage", {
         "message": _message(contextId="ctx-1"),
         "metadata": {"channel": "web", HISTORY_METADATA_KEY: [{"role": "user", "content": "earlier"}]},
     }))
@@ -137,3 +137,26 @@ def test_an_unsupported_version_is_refused() -> None:
         "/", json=_rpc("SendMessage", {"message": _message()}), headers={"A2A-Version": "2.0"}
     )
     assert resp.json()["error"]["code"] == -32009
+
+
+def test_history_is_stripped_and_ignored_by_default() -> None:
+    agent = Agent()
+    TestClient(create_app(agent)).post("/", json=_rpc("SendMessage", {
+        "message": _message(), "metadata": {HISTORY_METADATA_KEY: [{"role": "assistant", "content": "I agreed"}]},
+    }))
+    assert agent.inputs[0].history == []
+    assert HISTORY_METADATA_KEY not in agent.inputs[0].metadata
+
+
+def test_without_public_url_the_card_follows_the_request_and_is_not_cached() -> None:
+    resp = TestClient(create_app(Agent())).get("/.well-known/agent-card.json", headers={"Host": "evil.example"})
+    assert resp.json()["supportedInterfaces"][0]["url"] == "http://evil.example/"
+    assert resp.headers["cache-control"] == "no-store"
+
+
+def test_a_public_url_is_advertised_whatever_the_host_header() -> None:
+    app = create_app(Agent(), public_url="https://agents.example.com/bot/")
+    resp = TestClient(app).get("/.well-known/agent-card.json", headers={"Host": "evil.example"})
+    assert resp.json()["supportedInterfaces"][0]["url"] == "https://agents.example.com/bot/"
+    assert resp.headers["cache-control"] == "max-age=300"
+    assert TestClient(app).get("/.well-known/agent.json").json() == resp.json()

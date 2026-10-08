@@ -60,15 +60,16 @@ def _history(raw: Any) -> list[Message]:
         return []
 
 
-def _build_v1_input(params: dict[str, Any]) -> AgentInput | None:
+def _build_v1_input(params: dict[str, Any], *, accept_history: bool = False) -> AgentInput | None:
     """A v1.0 ``SendMessageRequest`` as the agent's turn, or ``None`` if malformed.
 
     The message's text parts are the turn's text; request ``metadata`` passes
     through; the message's ``contextId`` is ``metadata["session_id"]``, over
     any ``session_id`` in the metadata (a gateway in front may scope
     ``contextId`` per caller; metadata must not route around it), which is
-    used only when there is no ``contextId``; ``metadata["genfleet.history"]``
-    is forwarded as the turn's history and removed from the metadata.
+    used only when there is no ``contextId``. ``metadata["genfleet.history"]``
+    is always removed from the metadata, and forwarded as the turn's history
+    only with ``accept_history``.
     """
     message = params.get("message")
     if not isinstance(message, dict) or not isinstance(message.get("parts"), list):
@@ -76,7 +77,8 @@ def _build_v1_input(params: dict[str, Any]) -> AgentInput | None:
     text = "".join(p["text"] for p in message["parts"] if isinstance(p, dict) and isinstance(p.get("text"), str))
     metadata = params.get("metadata")
     metadata = dict(metadata) if isinstance(metadata, dict) else {}
-    history = _history(metadata.pop(HISTORY_METADATA_KEY, None))
+    raw_history = metadata.pop(HISTORY_METADATA_KEY, None)
+    history = _history(raw_history) if accept_history else []
     context_id = message.get("contextId")
     if isinstance(context_id, str) and context_id:
         metadata["session_id"] = context_id
@@ -103,14 +105,15 @@ def _supported_version(value: str | None) -> bool:
     return not value or value.strip().split(".", 1)[0] in ("0", "1")
 
 
-def _build_agent_input(message_text: str, params: dict[str, Any]) -> AgentInput:
+def _build_agent_input(message_text: str, params: dict[str, Any], *, accept_history: bool = False) -> AgentInput:
     """Build an AgentInput from A2A params, forwarding session and state.
 
     - ``params.metadata`` (dict) is passed through as ``AgentInput.metadata``.
     - ``params.sessionId`` (A2A-spec field) populates ``metadata["session_id"]``
       unless the caller already set that key explicitly.
-    - ``params.history`` is forwarded when it validates as Message models;
-      invalid history is ignored rather than failing the request.
+    - ``params.history`` is forwarded, with ``accept_history``, when it
+      validates as Message models; invalid history is ignored rather than
+      failing the request.
     """
     metadata = params.get("metadata")
     metadata = dict(metadata) if isinstance(metadata, dict) else {}
@@ -119,7 +122,8 @@ def _build_agent_input(message_text: str, params: dict[str, Any]) -> AgentInput:
     if session_id and "session_id" not in metadata:
         metadata["session_id"] = session_id
 
-    return AgentInput(message=message_text, history=_history(params.get("history")), metadata=metadata)
+    history = _history(params.get("history")) if accept_history else []
+    return AgentInput(message=message_text, history=history, metadata=metadata)
 
 
 #: What a caller is told when the agent raised. Deliberately fixed text: the
@@ -323,6 +327,8 @@ def create_app(
     *,
     name: str = "agent",
     description: str = "",
+    public_url: str | None = None,
+    accept_history: bool = False,
 ) -> FastAPI:
     """Build a FastAPI app that serves an agent over A2A v1.0 (JSON-RPC binding).
 
@@ -342,6 +348,17 @@ def create_app(
     row, a file or an internal API exposes that data to a direct caller. On the
     platform the engine scrubs it before a user sees it; when you host ``serve``
     yourself, nothing does. ``SendMessage`` returns only the agent's text.
+
+    ``public_url``: the URL the card advertises (``supportedInterfaces[0].url``).
+    Set it when the app is reachable from outside: without it the card names
+    the URL of each request, which is built from the caller's ``Host`` header,
+    so a caller can make the card advertise any host.
+
+    ``accept_history``: forward caller-supplied prior turns
+    (``metadata["genfleet.history"]``, or 0.x ``params.history``) to the agent
+    as its history. Off by default: whoever can call the app could otherwise
+    put words in the agent's earlier turns. Turn it on only for a trusted
+    caller that keeps the conversation itself.
     """
     app = FastAPI(title=name, docs_url=None, redoc_url=None)
 
@@ -360,8 +377,10 @@ def create_app(
         }
 
     @app.get(CARD_PATH)
-    async def agent_card(request: Request) -> dict[str, Any]:
-        return card(str(request.base_url))
+    async def agent_card(request: Request) -> JSONResponse:
+        # A card built from the request's Host must not be cached for others.
+        cache = "max-age=300" if public_url else "no-store"
+        return JSONResponse(card(public_url or str(request.base_url)), headers={"Cache-Control": cache})
 
     # The 0.x path, for one minor release: the same card.
     app.get(LEGACY_CARD_PATH)(agent_card)
@@ -384,7 +403,7 @@ def create_app(
         if not _supported_version(request.headers.get(VERSION_HEADER)):
             return _jsonrpc_error(req_id, _VERSION_NOT_SUPPORTED, "Supported A2A versions: 1.0.")
         if method in ("SendMessage", "SendStreamingMessage"):
-            v1_input = _build_v1_input(params)
+            v1_input = _build_v1_input(params, accept_history=accept_history)
             if v1_input is None:
                 return _jsonrpc_error(req_id, _INVALID_PARAMS, "Invalid request parameters: check message.")
             if _no_text(params):
@@ -420,7 +439,7 @@ def create_app(
         elif isinstance(msg, str):
             message_text = msg
 
-        agent_input = _build_agent_input(message_text, params)
+        agent_input = _build_agent_input(message_text, params, accept_history=accept_history)
         task_id = params.get("id", str(uuid.uuid4()))
 
         if method == "tasks/send":
@@ -452,6 +471,8 @@ def serve(
     description: str = "",
     host: str = "0.0.0.0",
     port: int = 8000,
+    public_url: str | None = None,
+    accept_history: bool = False,
 ) -> None:
     """Run an agent as an A2A server (blocking).
 
@@ -460,5 +481,7 @@ def serve(
     """
     import uvicorn
 
-    app = create_app(agent, name=name, description=description)
+    app = create_app(
+        agent, name=name, description=description, public_url=public_url, accept_history=accept_history
+    )
     uvicorn.run(app, host=host, port=port)
