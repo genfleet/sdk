@@ -555,3 +555,33 @@ def test_a_token_without_a_url_runs_stateless_and_says_so(monkeypatch, caplog):
     with caplog.at_level("WARNING", logger="genfleet.sdk.memory"):
         assert _make_agent().memory is None
     assert "GENFLEET_MEMORY_URL" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_memory_off_turn_neither_loads_nor_writes_the_session():
+    """ADR-0027 §2c: the platform turns memory off for a public A2A turn."""
+    from genfleet.sdk.schemas import Message
+
+    stored: dict[str, list] = {"sess-1": [Message(role="user", content="a secret from before")]}
+    loads: list[str] = []
+
+    class FakeMemory:
+        async def load(self, session_id):
+            loads.append(session_id)
+            return stored.get(session_id, [])
+
+        async def save(self, session_id, history):
+            stored[session_id] = history
+
+        async def clear(self, session_id):
+            stored.pop(session_id, None)
+
+    agent = _make_agent()
+    agent._memory = FakeMemory()
+    agent._provider = _mock_provider([AgentOutput(content="Hi!", done=True)])
+    turn = AgentInput(message="hello", metadata={"session_id": "sess-1", "genfleet.memory": "off"})
+    async for _ in agent.run(turn):
+        pass
+
+    assert loads == []
+    assert [m.content for m in stored["sess-1"]] == ["a secret from before"]
