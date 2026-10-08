@@ -27,15 +27,11 @@ all        = [
 ]
 
 [tool.uv]
-# `cryptography` reaches us transitively (mcp -> pyjwt[crypto]). 48.0.1 is the
-# version that patches the bundled-OpenSSL advisory, and also the last one
-# publishing a macOS x86_64 wheel — 49+ ship none, so an Intel Mac tries to
-# build from source and needs a newer rustc than the toolchain here.
-#
-# The cap is a platform-support decision, not a security one: 48.0.1 is
-# already patched. REVISIT when no one develops on an Intel Mac, or when
-# cryptography resumes x86_64 macOS wheels.
-constraint-dependencies = ["cryptography>=48.0.1,<49"]
+# `cryptography` reaches us transitively (mcp -> pyjwt[crypto]). The floor is
+# 50.0.0, the first release that fixes every published advisory (GHSA-g6cj-pr64-35w5,
+# GHSA-jwv3-5hgf-82ww, GHSA-m2h6-j472-rp4c). 49+ ship no macOS x86_64 wheel, so an
+# Intel Mac builds from source and needs a recent rustc.
+constraint-dependencies = ["cryptography>=50.0.0"]
 
 [build-system]
 requires = ["hatchling"]
