@@ -65,6 +65,9 @@ from genfleet.sdk import (
 from genfleet.sdk.serve import create_app, serve
 ```
 
+`serve(...)` / `create_app(...)` options for an agent you host yourself: `public_url="https://…/"` fixes the URL the agent card advertises (otherwise it follows the request's `Host` and is not cached), and `accept_history=True` lets a trusted caller send prior turns in `metadata["genfleet.history"]` (off by default).
+
+
 ### Minimal Agent (4 lines)
 
 ```python

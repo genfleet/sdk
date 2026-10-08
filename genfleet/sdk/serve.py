@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from urllib.parse import urlsplit
 from typing import Any, AsyncIterator
 
 from ._redaction import safe_arguments
@@ -117,6 +118,7 @@ def _build_agent_input(message_text: str, params: dict[str, Any], *, accept_hist
     """
     metadata = params.get("metadata")
     metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    metadata.pop(HISTORY_METADATA_KEY, None)  # never history by another name
 
     session_id = params.get("sessionId")
     if session_id and "session_id" not in metadata:
@@ -360,6 +362,10 @@ def create_app(
     put words in the agent's earlier turns. Turn it on only for a trusted
     caller that keeps the conversation itself.
     """
+    if public_url is not None:
+        parts = urlsplit(public_url)
+        if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
+            raise ValueError("public_url must be an absolute http(s) URL with no query or fragment")
     app = FastAPI(title=name, docs_url=None, redoc_url=None)
 
     def card(base_url: str) -> dict[str, Any]:

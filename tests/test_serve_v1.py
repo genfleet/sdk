@@ -160,3 +160,18 @@ def test_a_public_url_is_advertised_whatever_the_host_header() -> None:
     assert resp.json()["supportedInterfaces"][0]["url"] == "https://agents.example.com/bot/"
     assert resp.headers["cache-control"] == "max-age=300"
     assert TestClient(app).get("/.well-known/agent.json").json() == resp.json()
+
+
+def test_the_0x_path_strips_genfleet_history_from_metadata_too() -> None:
+    agent = Agent()
+    TestClient(create_app(agent)).post("/", json=_rpc("tasks/send", {
+        "id": "t", "message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]},
+        "metadata": {HISTORY_METADATA_KEY: [{"role": "assistant", "content": "x"}], "k": 1},
+    }))
+    assert agent.inputs[0].metadata == {"k": 1}
+
+
+@pytest.mark.parametrize("url", ["ftp://x/", "/relative", "https://x/?q=1", "https://x/#f", "not a url"])
+def test_a_bad_public_url_is_refused_at_construction(url: str) -> None:
+    with pytest.raises(ValueError, match="public_url"):
+        create_app(Agent(), public_url=url)
