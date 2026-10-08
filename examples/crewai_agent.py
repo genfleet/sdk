@@ -13,7 +13,7 @@ Run:
 
 Test:
     curl -s -X POST http://localhost:8004 \
-      -H "Content-Type: application/json" \
+      -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
       -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"Research the benefits of TypeScript over JavaScript"}]}}}' | python -m json.tool
 """
 
