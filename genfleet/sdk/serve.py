@@ -22,6 +22,87 @@ except ImportError as exc:
     ) from exc
 
 
+#: A2A v1.0 (the JSON-RPC binding, A2A v1.0.1 proto in ProtoJSON form): the
+#: card path, version header and the error codes this server answers with.
+PROTOCOL_VERSION = "1.0"
+VERSION_HEADER = "A2A-Version"
+CARD_PATH = "/.well-known/agent-card.json"
+#: The 0.x card path, served as an alias for one minor release.
+LEGACY_CARD_PATH = "/.well-known/agent.json"
+#: Request ``metadata`` key for the turn's prior messages (``Message`` dicts).
+#: Not an A2A field; a conforming peer ignores it. Removed from the metadata
+#: the agent sees.
+HISTORY_METADATA_KEY = "genfleet.history"
+_RESULT_ARTIFACT = "result"
+
+_INVALID_PARAMS = -32602
+_CONTENT_TYPE_NOT_SUPPORTED = -32005
+_UNSUPPORTED_OPERATION = -32004
+_PUSH_NOT_SUPPORTED = -32003
+_EXTENDED_CARD_NOT_CONFIGURED = -32007
+_VERSION_NOT_SUPPORTED = -32009
+_TASK_STORE_METHODS = frozenset({"GetTask", "ListTasks", "CancelTask", "SubscribeToTask"})
+_PUSH_METHODS = frozenset({
+    "CreateTaskPushNotificationConfig",
+    "GetTaskPushNotificationConfig",
+    "ListTaskPushNotificationConfigs",
+    "DeleteTaskPushNotificationConfig",
+})
+
+
+def _history(raw: Any) -> list[Message]:
+    if not isinstance(raw, list):
+        return []
+    try:
+        return [Message(**m) for m in raw]
+    except Exception:
+        log.warning("Ignoring invalid history in A2A request")
+        return []
+
+
+def _build_v1_input(params: dict[str, Any]) -> AgentInput | None:
+    """A v1.0 ``SendMessageRequest`` as the agent's turn, or ``None`` if malformed.
+
+    The message's text parts are the turn's text; request ``metadata`` passes
+    through; the message's ``contextId`` is ``metadata["session_id"]``, over
+    any ``session_id`` in the metadata (a gateway in front may scope
+    ``contextId`` per caller; metadata must not route around it), which is
+    used only when there is no ``contextId``; ``metadata["genfleet.history"]``
+    is forwarded as the turn's history and removed from the metadata.
+    """
+    message = params.get("message")
+    if not isinstance(message, dict) or not isinstance(message.get("parts"), list):
+        return None
+    text = "".join(p["text"] for p in message["parts"] if isinstance(p, dict) and isinstance(p.get("text"), str))
+    metadata = params.get("metadata")
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    history = _history(metadata.pop(HISTORY_METADATA_KEY, None))
+    context_id = message.get("contextId")
+    if isinstance(context_id, str) and context_id:
+        metadata["session_id"] = context_id
+    return AgentInput(message=text, history=history, metadata=metadata)
+
+
+def _no_text(params: dict[str, Any]) -> bool:
+    """Parts, but no text part: the agent would run on an empty turn."""
+    parts = params["message"]["parts"]
+    return bool(parts) and not any(isinstance(p, dict) and isinstance(p.get("text"), str) for p in parts)
+
+
+def _v1_ids(params: dict[str, Any]) -> tuple[str, str]:
+    message = params.get("message") or {}
+    task_id, context_id = message.get("taskId"), message.get("contextId")
+    return (
+        task_id if isinstance(task_id, str) and task_id else str(uuid.uuid4()),
+        context_id if isinstance(context_id, str) and context_id else str(uuid.uuid4()),
+    )
+
+
+def _supported_version(value: str | None) -> bool:
+    """1.x, or empty/0.x (a 0.3 client sends none; the 0.x methods stay one release)."""
+    return not value or value.strip().split(".", 1)[0] in ("0", "1")
+
+
 def _build_agent_input(message_text: str, params: dict[str, Any]) -> AgentInput:
     """Build an AgentInput from A2A params, forwarding session and state.
 
@@ -38,16 +119,7 @@ def _build_agent_input(message_text: str, params: dict[str, Any]) -> AgentInput:
     if session_id and "session_id" not in metadata:
         metadata["session_id"] = session_id
 
-    history: list[Message] = []
-    raw_history = params.get("history")
-    if isinstance(raw_history, list):
-        try:
-            history = [Message(**m) for m in raw_history]
-        except Exception:
-            log.warning("Ignoring invalid history in A2A request")
-            history = []
-
-    return AgentInput(message=message_text, history=history, metadata=metadata)
+    return AgentInput(message=message_text, history=_history(params.get("history")), metadata=metadata)
 
 
 #: What a caller is told when the agent raised. Deliberately fixed text: the
@@ -199,35 +271,100 @@ async def _stream_output(
         })
 
 
+async def _v1_stream(
+    agent: AgentProtocol, agent_input: AgentInput, req_id: Any, task_id: str, context_id: str
+) -> AsyncIterator[dict[str, str]]:
+    """``SendStreamingMessage``: working, appended ``result`` chunks, then completed or failed."""
+
+    def _event(payload: dict[str, Any]) -> dict[str, str]:
+        return {"data": json.dumps({"jsonrpc": "2.0", "id": req_id, "result": payload})}
+
+    def _status(state: str, *, text: str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, str]:
+        status: dict[str, Any] = {"state": state}
+        if text:
+            status["message"] = {"messageId": str(uuid.uuid4()), "role": "ROLE_AGENT", "parts": [{"text": text}]}
+        update: dict[str, Any] = {"taskId": task_id, "contextId": context_id, "status": status}
+        if metadata:
+            update["metadata"] = metadata
+        return _event({"statusUpdate": update})
+
+    chunks = 0
+
+    def _chunk(text: str, *, last: bool) -> dict[str, str]:
+        nonlocal chunks
+        chunks += 1
+        return _event({"artifactUpdate": {
+            "taskId": task_id,
+            "contextId": context_id,
+            "artifact": {"artifactId": _RESULT_ARTIFACT, "parts": [{"text": text}]},
+            "append": chunks > 1,
+            "lastChunk": last,
+        }})
+
+    yield _status("TASK_STATE_WORKING")
+    try:
+        async for output in agent.run(agent_input):
+            tool_event = _relayable_tool_event(output)
+            if tool_event is not None:
+                yield _status("TASK_STATE_WORKING", metadata={TOOL_EVENT_KEY: tool_event})
+                continue
+            if output.content:
+                yield _chunk(output.content, last=output.done)
+            if output.done:
+                yield _status("TASK_STATE_COMPLETED")
+                return
+        yield _status("TASK_STATE_COMPLETED")
+    except Exception:
+        yield _status("TASK_STATE_FAILED", text=_opaque_failure("streaming failed"))
+
+
 def create_app(
     agent: AgentProtocol,
     *,
     name: str = "agent",
     description: str = "",
 ) -> FastAPI:
-    """Build a FastAPI app that serves an agent over the A2A protocol.
+    """Build a FastAPI app that serves an agent over A2A v1.0 (JSON-RPC binding).
 
-    ``tasks/sendSubscribe`` relays each tool call and result the agent reports
+    The card is at ``/.well-known/agent-card.json`` (and, for one minor
+    release, ``/.well-known/agent.json``). ``SendMessage`` returns a completed
+    task with the reply as artifact ``result``; ``SendStreamingMessage``
+    streams it. The server keeps no tasks, so ``GetTask``, ``ListTasks``,
+    ``CancelTask`` and ``SubscribeToTask`` answer UnsupportedOperation, and
+    push notifications are not supported. The 0.x ``tasks/send`` and
+    ``tasks/sendSubscribe`` still work for one minor release.
+
+    ``SendStreamingMessage`` (and ``tasks/sendSubscribe``) relays each tool call and result the agent reports
     (``metadata.tool_event``) on a ``working`` status update. Tool calls go out
     with their arguments redacted and capped at 8 KB, and a failed result says
     only "The tool failed.". **A successful tool's output is sent raw**, up to
     4000 characters, to whoever calls this app: a tool that reads a database
     row, a file or an internal API exposes that data to a direct caller. On the
     platform the engine scrubs it before a user sees it; when you host ``serve``
-    yourself, nothing does. ``tasks/send`` returns only the agent's text.
+    yourself, nothing does. ``SendMessage`` returns only the agent's text.
     """
     app = FastAPI(title=name, docs_url=None, redoc_url=None)
 
-    card = {
-        "name": name,
-        "description": description,
-        "url": "/",
-        "capabilities": {"streaming": True},
-    }
+    def card(base_url: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "description": description,
+            "supportedInterfaces": [
+                {"url": base_url, "protocolBinding": "JSONRPC", "protocolVersion": PROTOCOL_VERSION}
+            ],
+            "version": "1.0.0",
+            "capabilities": {"streaming": True, "pushNotifications": False, "extendedAgentCard": False},
+            "defaultInputModes": ["text/plain"],
+            "defaultOutputModes": ["text/plain"],
+            "skills": [],
+        }
 
-    @app.get("/.well-known/agent.json")
-    async def agent_card() -> dict[str, Any]:
-        return card
+    @app.get(CARD_PATH)
+    async def agent_card(request: Request) -> dict[str, Any]:
+        return card(str(request.base_url))
+
+    # The 0.x path, for one minor release: the same card.
+    app.get(LEGACY_CARD_PATH)(agent_card)
 
     @app.post("/")
     async def jsonrpc(request: Request):  # type: ignore[return]
@@ -243,6 +380,38 @@ def create_app(
         params = body.get("params", {})
         if not isinstance(params, dict):
             params = {}
+
+        if not _supported_version(request.headers.get(VERSION_HEADER)):
+            return _jsonrpc_error(req_id, _VERSION_NOT_SUPPORTED, "Supported A2A versions: 1.0.")
+        if method in ("SendMessage", "SendStreamingMessage"):
+            v1_input = _build_v1_input(params)
+            if v1_input is None:
+                return _jsonrpc_error(req_id, _INVALID_PARAMS, "Invalid request parameters: check message.")
+            if _no_text(params):
+                return _jsonrpc_error(req_id, _CONTENT_TYPE_NOT_SUPPORTED, "Only text parts are supported.")
+            task_id, context_id = _v1_ids(params)
+            if method == "SendStreamingMessage":
+                return EventSourceResponse(_v1_stream(agent, v1_input, req_id, task_id, context_id))
+            try:
+                output = await _collect_output(agent, v1_input)
+            except Exception:
+                return _jsonrpc_error(req_id, -32603, _opaque_failure("SendMessage failed"))
+            return _jsonrpc_result(req_id, {"task": {
+                "id": task_id,
+                "contextId": context_id,
+                "status": {"state": "TASK_STATE_COMPLETED"},
+                "artifacts": (
+                    [{"artifactId": _RESULT_ARTIFACT, "parts": [{"text": output.content}]}] if output.content else []
+                ),
+            }})
+        if method in _TASK_STORE_METHODS:
+            return _jsonrpc_error(req_id, _UNSUPPORTED_OPERATION, "This agent keeps no tasks.")
+        if method in _PUSH_METHODS:
+            return _jsonrpc_error(req_id, _PUSH_NOT_SUPPORTED, "Push notifications are not supported.")
+        if method == "GetExtendedAgentCard":
+            return _jsonrpc_error(req_id, _EXTENDED_CARD_NOT_CONFIGURED, "No extended agent card.")
+
+        # 0.x, for one minor release.
         message_text = ""
         msg = params.get("message", {})
         if isinstance(msg, dict):

@@ -264,19 +264,19 @@ app = create_app(agent, name="my-agent")
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/.well-known/agent.json` | Agent card |
-| `POST` | `/` | JSON-RPC 2.0 (`tasks/send`, `tasks/sendSubscribe`) |
+| `GET` | `/.well-known/agent-card.json` | Agent card |
+| `POST` | `/` | JSON-RPC 2.0, A2A v1.0 (`SendMessage`, `SendStreamingMessage`; the 0.x `tasks/send`/`tasks/sendSubscribe` work for one minor release) |
 
 ```bash
 # Request/response
 curl -X POST http://localhost:8000 \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"hello"}]}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello"}]}}}'
 
 # Streaming (SSE)
 curl -N -X POST http://localhost:8000 \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tasks/sendSubscribe","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"hello"}]}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"SendStreamingMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello"}]}}}'
 ```
 
 ## Key Rules

@@ -54,7 +54,7 @@ agent = Agent(
 Pass `session_id` in request metadata to enable persistent sessions:
 ```bash
 curl -X POST http://localhost:8000 \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","metadata":{"session_id":"user-123"},"message":{"role":"user","parts":[{"type":"text","text":"remember my name is Alice"}]}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","contextId":"user-123","parts":[{"text":"remember my name is Alice"}]}}}'
 ```
 
 ---
