@@ -98,9 +98,20 @@ Collects the full agent output and returns a completed task.
 
 `contextId` becomes `AgentInput.metadata["session_id"]`, over any
 `session_id` in request `metadata` (which is used only when there is no
-`contextId`). A message with no text part is refused (`-32005`). Request `metadata` passes through to the agent; prior
-turns may ride in `metadata["genfleet.history"]` as `Message` dicts, and that
-key is removed before the agent sees the metadata.
+`contextId`). A message with no text part is refused (`-32005`).
+
+Options on `create_app` / `serve`:
+
+- `public_url="https://agents.example.com/bot/"` — the URL the card
+  advertises. Without it the card names each request's own URL, built from the
+  caller's `Host` header (so any host can be advertised), and is sent with
+  `Cache-Control: no-store`; with it, `max-age=300`.
+- `accept_history=True` — forward caller-supplied prior turns
+  (`metadata["genfleet.history"]`, or 0.x `params.history`) to the agent.
+  Off by default: the key is stripped and ignored, because whoever can call the
+  app could otherwise put words in the agent's earlier turns. Turn it on only
+  for a trusted caller that keeps the conversation itself. Request `metadata` passes through to the agent; the
+`metadata["genfleet.history"]` key is always removed (see `accept_history`).
 
 **Response:**
 ```json

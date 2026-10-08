@@ -7,7 +7,7 @@ Run:
 
 Test (streaming):
     curl -N -X POST http://localhost:8001 \
-      -H "Content-Type: application/json" \
+      -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
       -d '{"jsonrpc":"2.0","id":1,"method":"SendStreamingMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"tell me a story"}]}}}'
 """
 

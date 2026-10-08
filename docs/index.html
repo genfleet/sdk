@@ -403,7 +403,7 @@ python quickstart.py
 
 # Call it
 curl -X POST http://localhost:8000 \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
   -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"What is the weather in Paris?"}]}}}'</code></pre>
     </div>
 
@@ -476,7 +476,7 @@ curl -X POST http://localhost:8000 \
 }</code></pre>
       <p>Session ID from <code>input.metadata["session_id"]</code>. Falls back to a per-request UUID when absent. History stored with a 24-hour TTL.</p>
       <pre><div class="code-header">shell — passing session_id<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">curl -X POST http://localhost:8000 \
-  -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
   -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","contextId":"user-123","parts":[{"text":"My name is Alice"}]}}}'</code></pre>
     </div>
 
@@ -964,7 +964,7 @@ export OPENROUTER_API_KEY=sk-or-v1-…   # a free OpenRouter key works
 uv run python -m hello_agent           # A2A server on :8000</code></pre>
       <p>In another shell:</p>
       <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">curl -s localhost:8000/.well-known/agent-card.json
-curl -s -X POST localhost:8000 -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"How many words are in: the quick brown fox?"}]}}}'</code></pre>
+curl -s -X POST localhost:8000 -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"How many words are in: the quick brown fox?"}]}}}'</code></pre>
 
       <h3>4. Log in and push</h3>
       <p><code>gf agents push</code> takes the agent directory (the one with <code>pyproject.toml</code>), finds the manifest one level in, archives the directory deterministically and uploads it. It prints the archive's digest; the platform stores the same bytes under the same digest, and the CLI refuses a mismatch.</p>
