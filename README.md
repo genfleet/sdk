@@ -272,6 +272,15 @@ An unmarked tool is `["operator"]`. An operator in a private chat gets the tools
 
 `customer_safe=True` (0.17) still works and means both audiences, but it is deprecated and removed in 1.0, as are `may_use` and `Caller.full_toolset`.
 
+**Sensitive tools.** Mark a tool whose call needs a workspace owner's approval:
+
+```python
+@tool(audiences=["operator", "customer"], sensitive=True)
+def issue_refund(order_id: str, amount: float) -> str: ...
+```
+
+When the model calls it, it doesn't run. The model is told the action awaits approval, and the platform shows the owner or admin the exact call to approve. Once approved, a follow-up turn runs that one call, exactly once, and the model tells the user the outcome. The engine signs the approved call with a key only this sandbox knows (`GENFLEET_APPROVAL_KEY`), so another agent or a direct caller can't forge one. On a call from another agent, a sensitive tool is refused. The owner can mark or unmark any tool in the dashboard, and that setting wins.
+
 An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the caller key gets every tool. In a platform sandbox (`GENFLEET_HOSTED` set; on older engines, `GENFLEET_A2A_TOKEN`) a missing caller gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
 
 Declare who the agent serves in `genfleet.toml`:
