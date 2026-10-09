@@ -43,7 +43,9 @@ from .caller import (
 from .confirmations import (
     _PEER_REFUSAL,
     _PENDING_RESULT,
+    APPROVED_CALL_RESULT_KEY,
     CONFIRMATION_REQUESTS_KEY,
+    ApprovedCallResult,
     _claim_approved_call,
     _is_peer_turn,
     _is_sensitive,
@@ -211,9 +213,11 @@ class Agent:
             peer_turn = _is_peer_turn(input.metadata)
             requests: list[dict[str, Any]] = []
             new_messages: list[dict] = []
+            approved_result: ApprovedCallResult | None = None
             # Verified and claimed in one step: it can't run twice, nor later.
             approved, refused = _claim_approved_call(input.metadata)
             if refused:
+                approved_result = "refused"
                 log.warning("approved call not run: %s", refused)
                 messages[0]["content"] += (
                     "\n\nAn approval arrived with this message but could not be verified, so nothing ran. "
@@ -222,6 +226,7 @@ class Agent:
             elif approved:
                 name = self._tool_by_key(approved.tool)
                 if name is None or name not in offered:
+                    approved_result = "refused"
                     messages[0]["content"] += (
                         "\n\nAn approved action can't run for this caller now, so nothing ran. Tell the user."
                     )
@@ -233,6 +238,7 @@ class Agent:
                     except Exception as exc:  # noqa: BLE001 — the user must still hear the outcome
                         log.exception("approved call %s failed", approved.confirmation_id)
                         result, ok = f"Error: the approved action failed ({type(exc).__name__}).", False
+                    approved_result = "ran" if ok else "failed"
                     new_messages.append({"role": "assistant", "content": "", "tool_calls": [_tool_call_to_dict(tc)]})
                     new_messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
                     yield _tool_event({"type": "tool_result", "id": tc.id, "name": tc.name, "ok": ok, "output": result})
@@ -326,13 +332,15 @@ class Agent:
                             data={"total_token_usage": total_usage.model_dump()},
                             latency_ms=(time.monotonic() - invocation_start) * 1000,
                         )
-                    # The requests ride on the final chunk: a non-streaming
-                    # invoke (every channel turn) returns only its metadata.
-                    yield AgentOutput(
-                        content="",
-                        done=True,
-                        metadata={CONFIRMATION_REQUESTS_KEY: requests} if requests else {},
-                    )
+                    # The requests and the approved call's result ride on the
+                    # final chunk: a non-streaming invoke (every channel turn)
+                    # returns only its metadata.
+                    final: dict[str, Any] = {}
+                    if requests:
+                        final[CONFIRMATION_REQUESTS_KEY] = requests
+                    if approved_result:
+                        final[APPROVED_CALL_RESULT_KEY] = approved_result
+                    yield AgentOutput(content="", done=True, metadata=final)
                     break
 
                 # Append assistant tool-call turn (keep any text streamed

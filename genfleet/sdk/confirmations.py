@@ -7,7 +7,10 @@ under :data:`CONFIRMATION_REQUESTS_KEY`. The platform records it, an owner or
 admin approves it in the dashboard (with step-up), and the platform then
 starts a follow-up turn carrying the **approved call**
 (:data:`APPROVED_CALL_KEY`). The ``Agent`` runs that one call first, exactly
-once, before the model takes over again.
+once, before the model takes over again, and says how it went on the turn's
+final chunk, under :data:`APPROVED_CALL_RESULT_KEY`: ``"ran"``, ``"failed"``
+(the tool raised or returned an error) or ``"refused"`` (not verified, or
+not offered to this caller), so the platform can close its record.
 
 Which tools are sensitive:
 
@@ -45,7 +48,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 #: ``AgentInput.metadata``: the platform's per-tool sensitive flags, ``{key: bool}``.
 SENSITIVE_TOOLS_KEY = "genfleet.sensitive_tools"
@@ -55,6 +58,10 @@ APPROVED_CALL_KEY = "genfleet.approved_call"
 PEER_TURN_KEY = "genfleet.peer_turn"
 #: The final ``AgentOutput.metadata``: this turn's requests for approval.
 CONFIRMATION_REQUESTS_KEY = "genfleet.confirmation_requests"
+#: The final ``AgentOutput.metadata``: what became of the turn's approved call.
+APPROVED_CALL_RESULT_KEY = "genfleet.approved_call_result"
+#: The values under :data:`APPROVED_CALL_RESULT_KEY`.
+ApprovedCallResult = Literal["ran", "failed", "refused"]
 #: Set by the engine in each sandbox: the per-spawn key approved calls are signed with.
 APPROVAL_KEY_ENV = "GENFLEET_APPROVAL_KEY"
 

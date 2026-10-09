@@ -3,6 +3,7 @@ from .audit.schemas import AuditConfig, AuditEvent
 from .confirmations import (
     APPROVAL_KEY_ENV,
     APPROVED_CALL_KEY,
+    APPROVED_CALL_RESULT_KEY,
     CONFIRMATION_REQUESTS_KEY,
     PEER_TURN_KEY,
     SENSITIVE_TOOLS_KEY,
@@ -75,6 +76,7 @@ __all__ = [
     # Sensitive tools (ADR-0028 §8a)
     "APPROVAL_KEY_ENV",
     "APPROVED_CALL_KEY",
+    "APPROVED_CALL_RESULT_KEY",
     "CONFIRMATION_REQUESTS_KEY",
     "PEER_TURN_KEY",
     "SENSITIVE_TOOLS_KEY",

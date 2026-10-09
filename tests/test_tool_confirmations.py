@@ -13,6 +13,7 @@ import pytest
 
 from genfleet.sdk import (
     APPROVED_CALL_KEY,
+    APPROVED_CALL_RESULT_KEY,
     CONFIRMATION_REQUESTS_KEY,
     SENSITIVE_TOOLS_KEY,
     Agent,
@@ -322,6 +323,7 @@ def test_keys_and_exports():
     assert APPROVED_CALL_KEY == "genfleet.approved_call"
     assert PEER_TURN_KEY == "genfleet.peer_turn"
     assert CONFIRMATION_REQUESTS_KEY == "genfleet.confirmation_requests"
+    assert APPROVED_CALL_RESULT_KEY == "genfleet.approved_call_result"
     assert APPROVAL_KEY_ENV == "GENFLEET_APPROVAL_KEY"
     from genfleet import sdk
 
@@ -332,7 +334,8 @@ def test_keys_and_exports():
     assert sdk.SENSITIVE_TOOLS_KEY is SENSITIVE_TOOLS_KEY
     assert sdk.CONFIRMATION_REQUESTS_KEY is CONFIRMATION_REQUESTS_KEY
     assert sdk.sign_approved_call is sign_approved_call
-    for name in ("APPROVAL_KEY_ENV", "PEER_TURN_KEY", "canonical_json"):
+    assert sdk.APPROVED_CALL_RESULT_KEY is APPROVED_CALL_RESULT_KEY
+    for name in ("APPROVAL_KEY_ENV", "APPROVED_CALL_RESULT_KEY", "PEER_TURN_KEY", "canonical_json"):
         assert name in sdk.__all__
 
 
@@ -745,7 +748,7 @@ async def test_an_approved_call_runs_once_before_the_model(key):
     assert tool_msg["tool_call_id"] == "approved-c-1"
     assert tool_msg["content"] == "refunded"
     assert "approved `refund`" in history[0]["content"]
-    assert outputs[-1].metadata == {}
+    assert outputs[-1].metadata == {APPROVED_CALL_RESULT_KEY: "ran"}
 
 
 @pytest.mark.asyncio
@@ -782,6 +785,7 @@ async def test_an_approved_call_is_consumed_even_if_the_tool_raises(key):
     assert ran == [("boom", {})]
     [result] = _events(outputs, "tool_result")
     assert result["ok"] is False and "approved action failed (RuntimeError)" in result["output"]
+    assert outputs[-1].metadata[APPROVED_CALL_RESULT_KEY] == "failed"
     # Recorded as run: a redelivery does not try again.
     await _run(_agent(_Model(_DONE), tools=[boom]), meta)
     assert len(ran) == 1
@@ -813,6 +817,7 @@ async def test_a_bad_signature_does_not_run(key):
     assert ran == []
     assert _events(outputs, "tool_call") == []
     assert "could not be verified" in model.seen[0][0]["content"]
+    assert outputs[-1].metadata[APPROVED_CALL_RESULT_KEY] == "refused"
 
 
 @pytest.mark.asyncio
@@ -826,8 +831,9 @@ async def test_an_expired_call_does_not_run(key):
 @pytest.mark.asyncio
 async def test_no_key_in_the_environment_means_nothing_runs():
     model = _Model(_DONE)
-    await _run(_agent(model, tools=[refund]), _approved_meta())
+    outputs = await _run(_agent(model, tools=[refund]), _approved_meta())
     assert ran == []
+    assert outputs[-1].metadata[APPROVED_CALL_RESULT_KEY] == "refused"
     assert "could not be verified" in model.seen[0][0]["content"]
 
 
@@ -846,6 +852,7 @@ async def test_an_unknown_tool_does_not_run_and_is_still_consumed(key):
     assert ran == []
     assert _events(outputs, "tool_call") == []
     assert "can't run for this caller" in model.seen[0][0]["content"]
+    assert outputs[-1].metadata[APPROVED_CALL_RESULT_KEY] == "refused"
     # Used once: it can't run later either.
     assert "c-1" in confirmations._RUN
 
@@ -859,6 +866,7 @@ async def test_a_tool_not_offered_to_this_caller_does_not_run(key):
     assert ran == []
     assert _events(outputs, "tool_call") == []
     assert "can't run for this caller" in model.seen[0][0]["content"]
+    assert outputs[-1].metadata[APPROVED_CALL_RESULT_KEY] == "refused"
     assert "c-1" in confirmations._RUN
 
 
@@ -911,3 +919,19 @@ async def test_a_pending_sensitive_call_is_not_audited_as_a_tool_run():
     await _run(_agent(model, tools=[refund], audit={"backend": "callback", "callback": received.append}), {})
     assert ran == []
     assert "tool.result" not in [e.event_type for e in received]
+
+
+@pytest.mark.asyncio
+async def test_a_redelivered_call_is_reported_refused(key):
+    await _run(_agent(_Model(_DONE), tools=[refund]), _approved_meta())
+    outputs = await _run(_agent(_Model(_DONE), tools=[refund]), _approved_meta())
+    assert ran == [("refund", {"order": "A1", "amount": 5})]
+    assert outputs[-1].metadata[APPROVED_CALL_RESULT_KEY] == "refused"
+
+
+@pytest.mark.asyncio
+async def test_the_result_rides_with_the_turns_new_requests(key):
+    model = _Model(_call_round("refund", order="B2", amount=1), _DONE)
+    outputs = await _run(_agent(model, tools=[refund]), {**_approved_meta(), SENSITIVE_TOOLS_KEY: {"refund": True}})
+    assert outputs[-1].metadata[APPROVED_CALL_RESULT_KEY] == "ran"
+    assert [r["arguments"] for r in outputs[-1].metadata[CONFIRMATION_REQUESTS_KEY]] == [{"order": "B2", "amount": 1}]

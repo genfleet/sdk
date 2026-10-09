@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - the tool is offered to the caller.
 
   Otherwise nothing runs and the model is told so. A verified call is used up even when it can't run (unknown tool, not offered now), so it can never run later. A tool that raises becomes a failed result the model reports, instead of ending the turn. The key sits in the agent's own environment, so the signature stops other agents and direct callers, not the agent's code. For code that doesn't use `Agent`, this is advisory.
+  - The turn's final chunk says what became of it, under `metadata["genfleet.approved_call_result"]` (`APPROVED_CALL_RESULT_KEY`): `"ran"`, `"failed"` (the tool raised or returned an error) or `"refused"` (not verified, already run, or not offered to the caller). The platform closes its record by it. A turn without an approved call has no such key.
 - An approved call is verified **and claimed in one step**. A signature that isn't 64 lowercase hex characters, and arguments with NaN, infinities or lone surrogates (`canonical_json` uses `allow_nan=False`), are malformed and refused without an error. It runs through the same audited dispatch as any tool call (`tool.call` / `tool.result`).
 - Exported for the engine: `APPROVAL_KEY_ENV`, `PEER_TURN_KEY`, `canonical_json`, `sign_approved_call` and the metadata keys. The agent-side helpers in `genfleet.sdk.confirmations` are private.
 - MCP tools whose names start with `@` are skipped: that's a slug key's form.
