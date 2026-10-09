@@ -30,6 +30,7 @@ from .schemas import (
     ToolCall,
     ToolSchema,
 )
+from .caller import Caller, caller_of, may_use
 from .tool import ToolWrapper, _build_schema
 
 log = logging.getLogger("genfleet.sdk.agent")
@@ -177,11 +178,16 @@ class Agent:
                 messages.append(self._message_to_dict(msg))
             messages.append({"role": "user", "content": input.message})
 
-            # Collect all tool schemas
-            tool_schemas = [w.schema() for w in self._local_tools.values()]
+            # The tools this caller may use (ADR-0028): only customer-safe ones
+            # on a customer's turn or in a group chat. A tool left out here is
+            # also refused at dispatch, whatever the model asks for.
+            caller = caller_of(input.metadata)
+            offered = self._offered_tools(caller)
+            tool_schemas = [w.schema() for name, w in self._local_tools.items() if name in offered]
             tool_schemas += [
                 ToolSchema(name=name, description=spec["description"], parameters=spec["parameters"])
                 for name, spec in self._mcp_tools.items()
+                if name in offered
             ]
 
             # Agentic loop
@@ -306,7 +312,7 @@ class Agent:
                         )
 
                     tool_start = time.monotonic()
-                    result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc))
+                    result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
                     tool_latency = (time.monotonic() - tool_start) * 1000
 
                     if auditor:
@@ -401,13 +407,26 @@ class Agent:
         else:
             await self._memory.save(session_id, list(history) + turn)
 
-    async def _dispatch_tool(self, tc: ToolCall) -> tuple[str, bool]:
+    def _offered_tools(self, caller: Caller | None) -> set[str]:
+        """Names of the tools offered on this caller's turn."""
+        names = {n for n, w in self._local_tools.items() if may_use(caller, customer_safe=w.customer_safe)}
+        names |= {
+            n for n, spec in self._mcp_tools.items()
+            if may_use(caller, customer_safe=n in spec["config"].get("customer_safe_tools", []))
+        }
+        return names
+
+    async def _dispatch_tool(self, tc: ToolCall, offered: set[str] | None = None) -> tuple[str, bool]:
         """The tool's result for the model, and whether the tool ran.
 
-        ``ok`` is false when the tool is unknown or an MCP call failed; the
-        result is then the error text the model sees. A local tool that
-        raises still ends the run, as it always has.
+        ``ok`` is false when the tool is unknown, not offered on this turn, or
+        an MCP call failed; the result is then the error text the model sees.
+        A local tool that raises still ends the run, as it always has.
         """
+        if offered is not None and tc.name not in offered:
+            # Same answer as an unknown tool: a customer's turn learns nothing
+            # about the operator-only tools it cannot see.
+            return f"Error: tool '{tc.name}' not found", False
         if tc.name in self._local_tools:
             return await self._local_tools[tc.name].call(tc), True
         if tc.name in self._mcp_tools:
@@ -418,6 +437,12 @@ class Agent:
         for config in self._mcp_configs:
             try:
                 tools = await _fetch_mcp_tools(config)
+                # An MCP server names its own tools. One that reuses a local
+                # tool's name is dropped: dispatch goes by name, so it could
+                # otherwise lend its customer-safe mark to an operator-only tool.
+                for name in [n for n in tools if n in self._local_tools or n in self._mcp_tools]:
+                    log.warning("MCP tool %r skipped: the name is already taken by another tool", name)
+                    del tools[name]
                 self._mcp_tools.update(tools)
             except Exception:
                 log.exception("Failed to initialise MCP server: %s", config)

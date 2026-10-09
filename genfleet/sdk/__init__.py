@@ -1,4 +1,5 @@
 from .agent import Agent
+from .caller import CALLER_METADATA_KEY, Caller, caller_of, may_use
 from .channels import ChannelSendError, send_message, send_message_tool
 from .audit.schemas import AuditConfig, AuditEvent
 from .manifest import (
@@ -46,6 +47,11 @@ __all__ = [
     "ToolSchema",
     "TokenUsage",
     "TOOL_EVENT_KEY",
+    # Caller roles (ADR-0028)
+    "CALLER_METADATA_KEY",
+    "Caller",
+    "caller_of",
+    "may_use",
     # Config
     "ModelConfig",
     "MemoryConfig",

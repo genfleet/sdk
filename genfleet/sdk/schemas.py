@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Required, TypedDict
+from typing import Any, Literal, NotRequired, Required, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -90,11 +90,15 @@ class MCPStdioConfig(TypedDict):
     type: Literal["stdio"]
     command: str
     args: list[str]
+    #: Names of this server's tools offered on a customer's turn (ADR-0028).
+    #: Every other tool of the server is operator-only.
+    customer_safe_tools: NotRequired[list[str]]
 
 
 class MCPSseConfig(TypedDict):
     type: Literal["sse"]
     url: str
+    customer_safe_tools: NotRequired[list[str]]
 
 
 MCPConfig = MCPStdioConfig | MCPSseConfig

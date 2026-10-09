@@ -70,9 +70,11 @@ def _build_schema(fn: Callable[..., Any], name: str, description: str) -> ToolSc
 class ToolWrapper:
     """Wraps any sync or async callable as a ToolProtocol."""
 
-    def __init__(self, fn: Callable[..., Any], schema: ToolSchema) -> None:
+    def __init__(self, fn: Callable[..., Any], schema: ToolSchema, *, customer_safe: bool = False) -> None:
         self._fn = fn
         self._schema = schema
+        #: Offered on a customer's turn (ADR-0028). Unmarked tools are operator-only.
+        self.customer_safe = customer_safe
 
     def schema(self) -> ToolSchema:
         return self._schema
@@ -90,7 +92,7 @@ class ToolWrapper:
         return str(result)
 
     def __repr__(self) -> str:
-        return f"ToolWrapper(name={self._schema.name!r})"
+        return f"ToolWrapper(name={self._schema.name!r}, customer_safe={self.customer_safe})"
 
 
 def tool(
@@ -98,6 +100,7 @@ def tool(
     *,
     name: str | None = None,
     description: str = "",
+    customer_safe: bool = False,
 ) -> ToolWrapper | Callable[[Callable[..., Any]], ToolWrapper]:
     """
     Decorator that turns any function into a ToolProtocol.
@@ -108,13 +111,21 @@ def tool(
 
         @tool(description="adds two numbers")
         async def add(a: float, b: float) -> str: ...
+
+        @tool(customer_safe=True)
+        async def order_status(order_id: str) -> str: ...
+
+    A tool is operator-only unless ``customer_safe=True`` (ADR-0028): on a
+    hosted turn from a customer, or from anyone in a group chat, only
+    customer-safe tools are offered. Mark a tool customer-safe only when any
+    customer may see what it returns and trigger what it does.
     """
 
     def _wrap(f: Callable[..., Any]) -> ToolWrapper:
         resolved_name = name or f.__name__
         resolved_desc = description or (inspect.getdoc(f) or "")
         schema = _build_schema(f, name=resolved_name, description=resolved_desc)
-        return ToolWrapper(fn=f, schema=schema)
+        return ToolWrapper(fn=f, schema=schema, customer_safe=customer_safe)
 
     if fn is not None:
         return _wrap(fn)

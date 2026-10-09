@@ -131,6 +131,20 @@ class AgentManifest(BaseModel):
     def _egress_is_valid(cls, value: list[str]) -> list[str]:
         return _canonical_egress(value)
 
+    #: Who the agent serves on channels (ADR-0028): ``operator`` (tenant staff),
+    #: ``customer`` (the tenant's customers), or both. ``None`` when the
+    #: manifest does not say; the platform then serves operators only.
+    audiences: list[Literal["operator", "customer"]] | None = None
+
+    @field_validator("audiences")
+    @classmethod
+    def _audiences_are_distinct(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        if not value:
+            raise ValueError("audiences: list at least one of 'operator', 'customer', or leave it out")
+        return list(dict.fromkeys(value))
+
     #: Platform catalog model ids the agent calls (``general-fast``). In hosted
     #: execution the platform scopes the agent's model credential to these.
     #: A ``provider/model`` id is the agent's own business and isn't listed.
