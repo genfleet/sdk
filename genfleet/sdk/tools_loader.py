@@ -48,7 +48,7 @@ from .manifest import (
     load_agent_manifest,
     load_tool_manifest,
 )
-from .tool import TOOL_SLUG_ATTR, ToolWrapper
+from .tool import TOOL_SLUG_ATTR, ToolWrapper, wrap_tool
 
 # Set by whatever unpacked the agent — the engine, a sandbox, a test harness.
 # Exists because an agent's own idea of where it lives is computed when the
@@ -451,6 +451,10 @@ def _with_slug(fn: Callable, slug: str) -> Callable:
     """
     if isinstance(fn, ToolWrapper):
         return fn.with_slug(slug)
+    if not (inspect.isfunction(fn) or inspect.ismethod(fn)):
+        # A builtin, a partial, an `itemgetter`, a callable instance: no
+        # signature to copy faithfully onto a proxy, so a ToolWrapper instead.
+        return wrap_tool(fn, slug=slug)
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)

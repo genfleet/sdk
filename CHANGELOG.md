@@ -17,13 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - It covers every tool an `Agent` holds: its own functions, `load_tools()` tools, remote tools passed in as `tools=`, and MCP tools (by name). Tools the engine keeps itself, such as runner-held peers and `remember`, are filtered by the engine.
   - **Fail closed:** an entry whose value can't be read is offered to no one. A value that isn't a mapping is ignored.
   - **Deploy gate:** the engine must replace or strip this key on every turn before a runtime image ships 0.18. An engine that passes request metadata through would let an invoke set audiences. See the engine PR for backend#248.
-- **`load_tools()` tools carry their manifest slug.** Each plain callable comes back as a fresh `functools.wraps` proxy that behaves exactly like it: sync stays sync and the result is unchanged. The slug is on the proxy, and `ToolWrapper`s come back as copies (`with_slug`). The loaded objects are never modified.
+- **`load_tools()` tools carry their manifest slug.** A function or method comes back as a fresh `functools.wraps` proxy that behaves exactly like it: sync stays sync and the result is unchanged. Any other callable (a builtin, a partial, an `itemgetter`, a callable instance) comes back as a `ToolWrapper`, named by its slug if it has no `__name__`. `ToolWrapper`s come back as copies (`with_slug`). The loaded objects are never modified. Schemas for callables without type hints no longer fail; their parameters are left untyped.
 - New in `genfleet.sdk`: `may_offer`, `tool_audiences_of`, `Audience`, `EVERYONE`, `OPERATOR_ONLY` and `TOOL_AUDIENCES_METADATA_KEY`, plus `ToolWrapper.with_slug` and `genfleet.sdk.tool.wrap_tool`.
 - **Deprecated, removed in 1.0 (backend#252), each with a `DeprecationWarning`:**
   - `customer_safe=` on `@tool` / `ToolWrapper` (it means both audiences);
   - `may_use(caller, customer_safe=…)` (use `may_offer`);
   - `Caller.full_toolset` (use `may_offer(caller, OPERATOR_ONLY)`).
-  - `ToolWrapper.customer_safe` is read-only, and is true only for both audiences.
+  - `ToolWrapper.customer_safe` reads true only for both audiences. Assigning to it still works for this release, with a warning.
+  - Deprecation warnings point at the caller's code.
   - MCP configs' `customer_safe_tools` stays, as the legacy marking for both audiences.
 
 ## 0.17.1

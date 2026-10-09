@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import operator
 from collections.abc import AsyncIterator
 
 import pytest
@@ -226,14 +227,29 @@ def test_bad_audiences_are_rejected(bad):
             return ""
 
 
-def test_customer_safe_is_read_only():
+def test_assigning_customer_safe_still_works_for_one_release_but_warns():
     @tool(audiences=["operator", "customer"])
     def a() -> str:
         return ""
 
     assert a.customer_safe is True
-    with pytest.raises(AttributeError):
+    with pytest.warns(DeprecationWarning, match="customer_safe"):
         a.customer_safe = False
+    assert a.audiences == OP
+
+
+def test_customer_safe_warnings_point_at_the_callers_code():
+    with pytest.warns(DeprecationWarning) as direct:
+        ToolWrapper(fn=lambda: "", schema=ToolSchema(name="t", description="", parameters={}), customer_safe=True)
+    assert direct[0].filename == __file__
+
+    with pytest.warns(DeprecationWarning) as decorated:
+
+        @tool(customer_safe=True)
+        def b() -> str:
+            return ""
+
+    assert decorated[0].filename == __file__
 
 
 def test_repr_lists_sorted_audiences():
@@ -523,6 +539,15 @@ class _Resolver:
         return self.by_slug[ref.slug]
 
 
+class _CallableTool:
+    """Look a thing up."""
+
+    __name__ = "lookup"
+
+    def __call__(self, q: str) -> str:
+        return q
+
+
 def _load(by_slug: dict) -> list:
     manifest = AgentManifest(name="x", tools=[ToolRef(slug=s, version="1.0.0", digest="sha256:ab") for s in by_slug])
     return load_tools(manifest=manifest, resolver=_Resolver(by_slug))
@@ -631,3 +656,27 @@ def test_full_toolset_is_deprecated_but_unchanged():
         assert Caller(role="operator", private=False).full_toolset is False
     with pytest.warns(DeprecationWarning):
         assert Caller(role="customer", legacy_tools=True).full_toolset is True
+
+
+@pytest.mark.parametrize(
+    "fn, name",
+    [
+        (len, "len"),
+        (operator.itemgetter("a"), "getter"),
+        (_CallableTool(), "lookup"),
+    ],
+)
+def test_load_tools_wraps_a_callable_it_cannot_proxy(fn, name):
+    """Builtins, itemgetters and callable instances have no signature to copy:
+    they come back as ToolWrappers with the slug, named by slug when nameless."""
+    [loaded] = _load({f"@acme/{name}": fn})
+    assert isinstance(loaded, ToolWrapper)
+    assert loaded.slug == f"@acme/{name}"
+    assert loaded.schema().name == name
+    agent = Agent(role="r", model={"model": "openai/gpt-4o-mini", "api_key": "k"}, tools=[loaded])
+    assert agent._offered_tools(Caller(role="customer"), {f"@acme/{name}": CU}) == {name}
+
+
+def test_two_nameless_callables_keep_distinct_names():
+    first, second = _load({"@acme/one": operator.itemgetter("a"), "@acme/two": operator.itemgetter("b")})
+    assert {first.schema().name, second.schema().name} == {"one", "two"}

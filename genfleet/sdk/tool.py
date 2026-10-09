@@ -45,9 +45,25 @@ def _annotation_to_json_schema(annotation: Any) -> dict[str, Any]:
     return _SIMPLE.get(annotation, {})
 
 
+def _type_hints(fn: Callable[..., Any]) -> dict[str, Any]:
+    """``fn``'s resolved hints; a callable instance's from its ``__call__``.
+
+    A builtin or an ``operator.itemgetter`` has none, and an unresolvable one
+    is left untyped rather than failing the whole tool.
+    """
+    for target in (fn, getattr(type(fn), "__call__", None)):
+        if target is None:
+            continue
+        try:
+            return typing.get_type_hints(target)
+        except (TypeError, NameError):
+            continue
+    return {}
+
+
 def _build_schema(fn: Callable[..., Any], name: str, description: str) -> ToolSchema:
     sig = inspect.signature(fn)
-    hints = typing.get_type_hints(fn)
+    hints = _type_hints(fn)
 
     properties: dict[str, Any] = {}
     required: list[str] = []
@@ -84,7 +100,7 @@ class ToolWrapper:
         self._schema = schema
         #: Who the author offers the tool to (ADR-0028): the default the
         #: platform's per-tool setting replaces. ``[operator]`` unless marked.
-        self.audiences: frozenset[Audience] = _resolve_audiences(audiences, customer_safe)
+        self.audiences: frozenset[Audience] = _resolve_audiences(audiences, customer_safe, stacklevel=2)
         #: The manifest slug a mounted tool came from (``load_tools``), so the
         #: platform's setting can name it before its function name is known.
         self.slug = slug
@@ -96,6 +112,12 @@ class ToolWrapper:
         False for a ``["customer"]``-only tool, which operators don't get.
         """
         return self.audiences == EVERYONE
+
+    @customer_safe.setter
+    def customer_safe(self, value: bool) -> None:
+        """Deprecated (0.18), removed in 1.0: assign ``audiences`` instead."""
+        _warn_customer_safe(stacklevel=2)
+        self.audiences = marked(value)
 
     def with_slug(self, slug: str) -> ToolWrapper:
         """A copy carrying ``slug``; the original is left untouched."""
@@ -131,19 +153,27 @@ def wrap_tool(fn: Callable[..., Any], *, slug: str | None = None) -> ToolWrapper
     as is, or copied to carry ``slug``."""
     if isinstance(fn, ToolWrapper):
         return fn.with_slug(slug) if slug else fn
-    schema = _build_schema(fn, name=fn.__name__, description=fn.__doc__ or "")
+    name = getattr(fn, "__name__", None) or (slug.rsplit("/", 1)[-1] if slug else type(fn).__name__)
+    schema = _build_schema(fn, name=name, description=getattr(fn, "__doc__", None) or "")
     return ToolWrapper(fn=fn, schema=schema, slug=slug or getattr(fn, TOOL_SLUG_ATTR, None))
 
 
-def _resolve_audiences(audiences: Iterable[Audience] | None, customer_safe: bool | None) -> frozenset[Audience]:
+def _warn_customer_safe(*, stacklevel: int) -> None:
+    warnings.warn(
+        'customer_safe is deprecated since 0.18 and removed in 1.0; use audiences=["operator", "customer"]',
+        DeprecationWarning,
+        stacklevel=stacklevel + 1,
+    )
+
+
+def _resolve_audiences(
+    audiences: Iterable[Audience] | None, customer_safe: bool | None, *, stacklevel: int
+) -> frozenset[Audience]:
+    """``stacklevel``: how far up the caller who wrote ``customer_safe=`` is."""
     if customer_safe is not None:
         if audiences is not None:
             raise ValueError("pass audiences= or customer_safe=, not both")
-        warnings.warn(
-            'customer_safe= is deprecated since 0.18 and removed in 1.0; use audiences=["operator", "customer"]',
-            DeprecationWarning,
-            stacklevel=4,
-        )
+        _warn_customer_safe(stacklevel=stacklevel + 1)
         return marked(customer_safe)
     if audiences is None:
         return OPERATOR_ONLY
@@ -195,7 +225,10 @@ def tool(
         resolved_name = name or f.__name__
         resolved_desc = description or (inspect.getdoc(f) or "")
         schema = _build_schema(f, name=resolved_name, description=resolved_desc)
-        return ToolWrapper(fn=f, schema=schema, customer_safe=customer_safe, audiences=audiences)
+        # Resolved here, so a deprecation warning points at the decorated
+        # definition (two frames up), not at this module.
+        resolved = _resolve_audiences(audiences, customer_safe, stacklevel=2)
+        return ToolWrapper(fn=f, schema=schema, audiences=resolved)
 
     if fn is not None:
         return _wrap(fn)
