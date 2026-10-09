@@ -36,8 +36,18 @@ from .caller import (
     caller_of,
     effective_audiences,
     marked,
+    slug_key,
     may_offer,
     tool_audiences_of,
+)
+from .confirmations import (
+    CONFIRMATION_REQUESTS_KEY,
+    PEER_REFUSAL,
+    PENDING_RESULT,
+    approved_call_of,
+    is_peer_turn,
+    mark_run,
+    sensitive_flags_of,
 )
 from .tool import ToolWrapper, wrap_tool
 
@@ -195,8 +205,45 @@ class Agent:
                 if name in offered
             ]
 
-            # Agentic loop
+            # ADR-0028 §8a: sensitive tools wait for an owner's approval; an
+            # approved call (signed by the engine) runs first, exactly once.
+            sensitive = self._sensitive_tools(sensitive_flags_of(input.metadata))
+            peer_turn = is_peer_turn(input.metadata)
+            requests: list[dict[str, Any]] = []
             new_messages: list[dict] = []
+            approved, refused = approved_call_of(input.metadata)
+            if refused:
+                log.warning("approved call not run: %s", refused)
+                messages[0]["content"] += (
+                    "\n\nAn approval arrived with this message but could not be verified, so nothing ran. "
+                    "Tell the user the action did not run."
+                )
+            elif approved:
+                # Consumed whether or not it can run now: an approval is used
+                # once, so it can't run later when circumstances change.
+                mark_run(approved)
+                name = self._tool_by_key(approved.tool)
+                if name is None or name not in offered:
+                    messages[0]["content"] += (
+                        "\n\nAn approved action can't run for this caller now, so nothing ran. Tell the user."
+                    )
+                else:
+                    tc = ToolCall(id=f"approved-{approved.confirmation_id}", name=name, arguments=approved.arguments)
+                    yield _tool_event({"type": "tool_call", "id": tc.id, "name": tc.name, "arguments": tc.arguments})
+                    try:
+                        result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
+                    except Exception as exc:  # noqa: BLE001 — the user must still hear the outcome
+                        log.exception("approved call %s failed", approved.confirmation_id)
+                        result, ok = f"Error: the approved action failed ({type(exc).__name__}).", False
+                    new_messages.append({"role": "assistant", "content": "", "tool_calls": [_tool_call_to_dict(tc)]})
+                    new_messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+                    yield _tool_event({"type": "tool_result", "id": tc.id, "name": tc.name, "ok": ok, "output": result})
+                    messages[0]["content"] += (
+                        f"\n\nA workspace owner or admin approved `{name}`, and it has run (its result follows). "
+                        "Tell the user the outcome."
+                    )
+
+            # Agentic loop
             while True:
                 tool_calls_batch: list[ToolCall] = []
 
@@ -281,7 +328,13 @@ class Agent:
                             data={"total_token_usage": total_usage.model_dump()},
                             latency_ms=(time.monotonic() - invocation_start) * 1000,
                         )
-                    yield AgentOutput(content="", done=True)
+                    # The requests ride on the final chunk: a non-streaming
+                    # invoke (every channel turn) returns only its metadata.
+                    yield AgentOutput(
+                        content="",
+                        done=True,
+                        metadata={CONFIRMATION_REQUESTS_KEY: requests} if requests else {},
+                    )
                     break
 
                 # Append assistant tool-call turn (keep any text streamed
@@ -317,7 +370,15 @@ class Agent:
                         )
 
                     tool_start = time.monotonic()
-                    result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
+                    if tc.name in offered and tc.name in sensitive:
+                        # Not run: a peer can't be approved for; anyone else waits for an owner.
+                        if peer_turn:
+                            result, ok = PEER_REFUSAL, False
+                        else:
+                            requests.append({"tool": self._key_of(tc.name), "arguments": tc.arguments})
+                            result, ok = PENDING_RESULT, True
+                    else:
+                        result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
                     tool_latency = (time.monotonic() - tool_start) * 1000
 
                     if auditor:
@@ -428,6 +489,27 @@ class Agent:
         }
         return names
 
+    def _key_of(self, name: str) -> str:
+        """The platform's key for a tool: a manifest tool's slug key, else its name."""
+        wrapper = self._local_tools.get(name)
+        return slug_key(wrapper.slug) if wrapper is not None and wrapper.slug else name
+
+    def _tool_by_key(self, key: str) -> str | None:
+        """The tool a platform key names, by the same rule as audiences (§5)."""
+        for name in [*self._local_tools, *self._mcp_tools]:
+            if self._key_of(name) == key:
+                return name
+        return None
+
+    def _sensitive_tools(self, flags: dict[str, bool]) -> set[str]:
+        """Names of the sensitive tools: the platform's flag by key, else the author's marking."""
+        names = {n for n, w in self._local_tools.items() if flags.get(self._key_of(n), w.sensitive)}
+        names |= {
+            n for n, spec in self._mcp_tools.items()
+            if flags.get(n, n in spec["config"].get("sensitive_tools", []))
+        }
+        return names
+
     async def _dispatch_tool(self, tc: ToolCall, offered: set[str] | None = None) -> tuple[str, bool]:
         """The tool's result for the model, and whether the tool ran.
 
@@ -454,6 +536,11 @@ class Agent:
                 # otherwise lend its customer-safe mark to an operator-only tool.
                 for name in [n for n in tools if n in self._local_tools or n in self._mcp_tools]:
                     log.warning("MCP tool %r skipped: the name is already taken by another tool", name)
+                    del tools[name]
+                # A name starting with `@` is a slug key's form (ADR-0028 §5):
+                # an MCP tool can't take one and borrow a manifest tool's settings.
+                for name in [n for n in tools if n.startswith("@")]:
+                    log.warning("MCP tool %r skipped: a tool name can't start with '@'", name)
                     del tools[name]
                 self._mcp_tools.update(tools)
             except Exception:

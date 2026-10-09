@@ -1,5 +1,11 @@
 from .agent import Agent
 from .audit.schemas import AuditConfig, AuditEvent
+from .confirmations import (
+    APPROVED_CALL_KEY,
+    CONFIRMATION_REQUESTS_KEY,
+    SENSITIVE_TOOLS_KEY,
+    sign_approved_call,
+)
 from .caller import (
     CALLER_METADATA_KEY,
     EVERYONE,
@@ -63,6 +69,11 @@ __all__ = [
     "Caller",
     "caller_of",
     "may_use",
+    # Sensitive tools (ADR-0028 §8a)
+    "APPROVED_CALL_KEY",
+    "CONFIRMATION_REQUESTS_KEY",
+    "SENSITIVE_TOOLS_KEY",
+    "sign_approved_call",
     "may_offer",
     "tool_audiences_of",
     "TOOL_AUDIENCES_METADATA_KEY",
