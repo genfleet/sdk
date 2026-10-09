@@ -9,8 +9,11 @@ starts a follow-up turn carrying the **approved call**
 (:data:`APPROVED_CALL_KEY`). The ``Agent`` runs that one call first, exactly
 once, before the model takes over again, and says how it went on the turn's
 final chunk, under :data:`APPROVED_CALL_RESULT_KEY`: ``"ran"``, ``"failed"``
-(the tool raised or returned an error) or ``"refused"`` (not verified, or
-not offered to this caller), so the platform can close its record.
+(the tool raised, or an MCP call failed) or ``"refused"`` (no key, malformed,
+a bad signature, expired, already run, an unknown tool, or not offered to
+this caller). It is the agent's own report, so the platform treats it as
+advisory: the ``tool.call`` / ``tool.result`` audit events back it up, and a
+turn that ends without it leaves the outcome unconfirmed, not "did not run".
 
 Which tools are sensitive:
 

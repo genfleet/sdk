@@ -233,11 +233,11 @@ class Agent:
                 else:
                     tc = ToolCall(id=f"approved-{approved.confirmation_id}", name=name, arguments=approved.arguments)
                     yield _tool_event({"type": "tool_call", "id": tc.id, "name": tc.name, "arguments": tc.arguments})
-                    try:
-                        result, ok = await self._audited_dispatch(tc, offered, input, invocation_id, session_id)
-                    except Exception as exc:  # noqa: BLE001 — the user must still hear the outcome
-                        log.exception("approved call %s failed", approved.confirmation_id)
-                        result, ok = f"Error: the approved action failed ({type(exc).__name__}).", False
+                    # Only the tool's own exception is contained: one from the
+                    # audit sink after the tool ran must not report "failed".
+                    result, ok = await self._audited_dispatch(
+                        tc, offered, input, invocation_id, session_id, contain_tool_errors=True
+                    )
                     approved_result = "ran" if ok else "failed"
                     new_messages.append({"role": "assistant", "content": "", "tool_calls": [_tool_call_to_dict(tc)]})
                     new_messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
@@ -494,9 +494,20 @@ class Agent:
         return names
 
     async def _audited_dispatch(
-        self, tc: ToolCall, offered: set[str], input: AgentInput, invocation_id: str, session_id: str
+        self,
+        tc: ToolCall,
+        offered: set[str],
+        input: AgentInput,
+        invocation_id: str,
+        session_id: str,
+        *,
+        contain_tool_errors: bool = False,
     ) -> tuple[str, bool]:
-        """One tool call, inside the turn, with its ``tool.call`` / ``tool.result`` audit events."""
+        """One tool call, inside the turn, with its ``tool.call`` / ``tool.result`` audit events.
+
+        With ``contain_tool_errors`` (an approved call), a tool that raises
+        becomes a failed result the model reports, instead of ending the turn.
+        """
         auditor = self._auditor
         if auditor:
             await auditor.emit(
@@ -506,7 +517,13 @@ class Agent:
                 data={"tool_name": tc.name, "arguments": auditor.truncate(str(tc.arguments))},
             )
         tool_start = time.monotonic()
-        result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
+        try:
+            result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
+        except Exception as exc:
+            if not contain_tool_errors:
+                raise
+            log.exception("tool %s failed", tc.name)
+            result, ok = f"Error: the approved action failed ({type(exc).__name__}).", False
         if auditor:
             await auditor.emit(
                 "tool.result",

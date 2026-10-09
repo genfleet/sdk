@@ -935,3 +935,22 @@ async def test_the_result_rides_with_the_turns_new_requests(key):
     outputs = await _run(_agent(model, tools=[refund]), {**_approved_meta(), SENSITIVE_TOOLS_KEY: {"refund": True}})
     assert outputs[-1].metadata[APPROVED_CALL_RESULT_KEY] == "ran"
     assert [r["arguments"] for r in outputs[-1].metadata[CONFIRMATION_REQUESTS_KEY]] == [{"order": "B2", "amount": 1}]
+
+
+@pytest.mark.asyncio
+async def test_an_audit_failure_after_the_tool_ran_is_not_reported_as_failed(key, monkeypatch):
+    agent = _agent(_Model(_DONE), tools=[refund])
+
+    class _Auditor:
+        def truncate(self, value):
+            return value
+
+        async def emit(self, kind, **kw):
+            if kind == "tool.result":
+                raise RuntimeError("audit sink down")
+
+    monkeypatch.setattr(agent, "_auditor", _Auditor())
+    with pytest.raises(RuntimeError, match="audit sink down"):
+        await _run(agent, _approved_meta())
+    # It ran; the turn errors, so no result is reported (the platform reads that as unconfirmed).
+    assert ran == [("refund", {"order": "A1", "amount": 5})]
