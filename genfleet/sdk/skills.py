@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import ast
+import os
 import re
 import subprocess
 import tempfile
@@ -17,8 +17,12 @@ from pydantic import BaseModel, Field, field_validator
 
 _NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
 _GITHUB_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
+_PINNED_REPO = re.compile(r"(.+)@([0-9a-f]{40})\Z")
 _MAX_INSTRUCTIONS = 32_000
 _MAX_REFERENCES = 100
+_MAX_SKILLS = 100
+_MAX_DESCRIPTION = 300
+_MAX_VERSION = 40
 _SKILL_ROOTS = ("skills", ".agents/skills", ".claude/skills", ".cursor/skills", "agent/skills")
 
 
@@ -49,7 +53,10 @@ def _frontmatter(source: str) -> tuple[dict[str, str], str]:
         if not value or value in {">", ">-", "|", "|-"}:
             value = _block_scalar(lines, index + 1, not value or value.startswith(">"))
         elif value.startswith(("'", '"')):
-            value = ast.literal_eval(value)
+            quote = value[0]
+            if len(value) < 2 or value[-1] != quote:
+                raise ValueError(f"invalid quoted skill field: {key}")
+            value = value[1:-1].replace("''", "'") if quote == "'" else value[1:-1].replace('\\"', '"')
         fields[key] = str(value)
     return fields, body.strip()
 
@@ -59,6 +66,8 @@ def _reference_files(directory: Path) -> dict[str, str]:
     reference_root = directory / "references"
     if not reference_root.is_dir():
         return references
+    if not reference_root.resolve().is_relative_to(directory.resolve()):
+        raise ValueError("skill references escape the skill directory")
     for path in sorted(reference_root.rglob("*")):
         if path.name == "SKILL.md" or path.suffix.lower() not in {".md", ".txt"}:
             continue
@@ -75,7 +84,14 @@ def _reference_files(directory: Path) -> dict[str, str]:
 def _repository_url(source: str | Path) -> str:
     if isinstance(source, Path):
         return source.resolve().as_uri()
-    if _GITHUB_REPO.fullmatch(source):
+    pin = _PINNED_REPO.fullmatch(source)
+    if pin:
+        source = pin.group(1)
+    if Path(source).exists():
+        raise ValueError("local skill repositories must be passed as Path")
+    if source.startswith(("./", "../", "/")):
+        raise ValueError("local skill repositories must be passed as Path")
+    if _GITHUB_REPO.fullmatch(source) and source not in _SKILL_ROOTS:
         return f"https://github.com/{source.removesuffix('.git')}.git"
     parsed = urlsplit(source)
     if parsed.scheme == "https" and parsed.netloc and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment:
@@ -88,11 +104,11 @@ def _skill_paths(root: Path) -> list[Path]:
     paths.extend(
         directory / "SKILL.md"
         for directory in root.iterdir()
-        if directory.is_dir() and (directory / "SKILL.md").is_file()
+        if directory.is_dir() and directory.resolve().is_relative_to(root.resolve()) and (directory / "SKILL.md").is_file()
     )
     for location in _SKILL_ROOTS:
         directory = root / location
-        if directory.is_dir():
+        if directory.is_dir() and directory.resolve().is_relative_to(root.resolve()):
             paths.extend(
                 path for path in directory.rglob("SKILL.md")
                 if len(path.relative_to(directory).parts) <= 4
@@ -115,6 +131,14 @@ class Skill(BaseModel, frozen=True):
     version: str = "1"
     references: dict[str, str] = Field(default_factory=dict)
     source_revision: str | None = None
+    audiences: frozenset[str] = Field(default_factory=lambda: frozenset({"operator"}))
+
+    @field_validator("audiences")
+    @classmethod
+    def valid_audiences(cls, value: frozenset[str]) -> frozenset[str]:
+        if not value or not value <= {"operator", "customer"}:
+            raise ValueError("skill audiences must contain operator and/or customer")
+        return value
 
     @field_validator("name")
     @classmethod
@@ -137,10 +161,26 @@ class Skill(BaseModel, frozen=True):
             raise ValueError(f"skill instructions exceed {_MAX_INSTRUCTIONS} characters")
         return value
 
+    @field_validator("description")
+    @classmethod
+    def bounded_description(cls, value: str) -> str:
+        if len(value) > _MAX_DESCRIPTION:
+            raise ValueError("skill description is too long")
+        return value
+
+    @field_validator("version")
+    @classmethod
+    def bounded_version(cls, value: str) -> str:
+        if len(value) > _MAX_VERSION:
+            raise ValueError("skill version is too long")
+        return value
+
     @classmethod
     def from_file(cls, path: str | Path) -> Skill:
         """Snapshot one SKILL.md and its text references."""
         file = Path(path)
+        if file.stat().st_size > _MAX_INSTRUCTIONS:
+            raise ValueError("skill file is too large")
         fields, instructions = _frontmatter(file.read_text(encoding="utf-8"))
         return cls(**fields, instructions=instructions, references=_reference_files(file.parent))
 
@@ -148,13 +188,21 @@ class Skill(BaseModel, frozen=True):
 @contextmanager
 def _checkout(source: str | Path) -> Iterator[tuple[Path, str]]:
     url = _repository_url(source)
+    pinned_revision = _PINNED_REPO.fullmatch(source).group(2) if isinstance(source, str) and _PINNED_REPO.fullmatch(source) else None
     with tempfile.TemporaryDirectory(prefix="genfleet-skills-") as scratch:
         checkout = Path(scratch) / "repo"
         try:
             subprocess.run(
-                ["git", "clone", "--quiet", "--depth", "1", url, str(checkout)],
+                ["git", "clone", "--quiet", *([] if pinned_revision else ["--depth", "1"]), url, str(checkout)],
                 capture_output=True, check=True, timeout=120,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             )
+            if pinned_revision:
+                subprocess.run(
+                    ["git", "-C", str(checkout), "checkout", "--quiet", "--detach", pinned_revision],
+                    capture_output=True, check=True, timeout=30,
+                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                )
             revision = subprocess.run(
                 ["git", "-C", str(checkout), "rev-parse", "HEAD"],
                 capture_output=True, check=True, text=True, timeout=10,
@@ -164,20 +212,24 @@ def _checkout(source: str | Path) -> Iterator[tuple[Path, str]]:
         yield checkout, revision
 
 
-def _catalog(checkout: Path, revision: str) -> dict[str, tuple[Path, SkillOption]]:
+def _catalog(checkout: Path, revision: str) -> dict[str, tuple[Path, Skill, SkillOption]]:
     paths = _skill_paths(checkout)
     if not paths:
         raise ValueError("skill repository has no discoverable SKILL.md")
-    catalog: dict[str, tuple[Path, SkillOption]] = {}
+    if len(paths) > _MAX_SKILLS:
+        raise ValueError("skill repository has too many skills")
+    catalog: dict[str, tuple[Path, Skill, SkillOption]] = {}
     for path in paths:
         if not path.resolve().is_relative_to(checkout.resolve()):
             raise ValueError("skill file escapes the repository")
+        if path.stat().st_size > _MAX_INSTRUCTIONS:
+            raise ValueError("skill file is too large")
         fields, instructions = _frontmatter(path.read_text(encoding="utf-8"))
         preview = Skill(**fields, instructions=instructions)
         if preview.name in catalog:
             raise ValueError(f"skill repository contains duplicate name: {preview.name}")
         catalog[preview.name] = (
-            path, SkillOption(preview.name, preview.description, preview.version, revision)
+            path, preview, SkillOption(preview.name, preview.description, preview.version, revision)
         )
     return catalog
 
@@ -193,15 +245,15 @@ def load_skills(source: str | Path, *, names: list[str] | None = None) -> list[S
         if missing:
             raise ValueError(f"unknown skills: {', '.join(sorted(missing))}; available: {', '.join(sorted(catalog))}")
         return [
-            Skill.from_file(path).model_copy(update={"source_revision": revision})
-            for name, (path, _) in catalog.items() if name in selected
+            preview.model_copy(update={"references": _reference_files(path.parent), "source_revision": revision})
+            for name, (path, preview, _) in catalog.items() if name in selected
         ]
 
 
 def discover_skills(source: str | Path) -> list[SkillOption]:
     """List the skills available in a repository for selection."""
     with _checkout(source) as (checkout, revision):
-        return [option for _, option in _catalog(checkout, revision).values()]
+        return [option for _, _, option in _catalog(checkout, revision).values()]
 
 
 __all__ = ["Skill", "SkillOption", "discover_skills", "load_skills"]

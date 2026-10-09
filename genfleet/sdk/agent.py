@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -98,17 +99,17 @@ def _model_client_for(config: ModelConfig, explicit: ModelClient | None) -> Mode
     return provider_for(config)
 
 
-def _resolve_skills(sources: list[Skill | str | Path | list[Skill]]) -> list[Skill]:
+def _resolve_skills(sources: list[Skill | str | Path]) -> list[Skill]:
     resolved: list[Skill] = []
     for source in sources:
         if isinstance(source, Skill):
             resolved.append(source)
         elif isinstance(source, (str, Path)):
+            if isinstance(source, str) and not re.search(r"@[0-9a-f]{40}$", source):
+                raise ValueError("Agent requires a pinned skill repository (@40-character commit); use load_skills for interactive discovery")
             resolved.extend(load_skills(source))
-        elif isinstance(source, list) and all(isinstance(skill, Skill) for skill in source):
-            resolved.extend(source)
         else:
-            raise TypeError("skills entries must be Skill, repository source, or a list of Skill")
+            raise TypeError("skills entries must be Skill or repository source")
     return resolved
 
 
@@ -141,7 +142,7 @@ class Agent:
         context: str | None = None,
         audit: AuditConfig | None = None,
         model_client: ModelClient | None = None,
-        skills: list[Skill | str | Path | list[Skill]] | None = None,
+        skills: list[Skill | str | Path] | None = None,
     ) -> None:
         self._role = role
         self._context = context
@@ -217,10 +218,16 @@ class Agent:
             system_parts = [self._role]
             if self._context:
                 system_parts.append(self._context)
-            if self._skills:
+            caller = caller_of(input.metadata)
+            audience_overrides = tool_audiences_of(input.metadata)
+            allowed_skills = {
+                name: skill for name, skill in self._skills.items()
+                if may_offer(caller, effective_audiences(f"skill:{name}", None, skill.audiences, audience_overrides))
+            }
+            if allowed_skills:
                 index = "\n".join(
                     f"- {skill.name} (v{skill.version}): {skill.description}"
-                    for skill in self._skills.values()
+                    for skill in allowed_skills.values()
                 )
                 system_parts.append(
                     "Available skills (read a skill before following its instructions):\n"
@@ -235,28 +242,28 @@ class Agent:
             # The tools this caller may use (ADR-0028): by each tool's
             # audience, the platform's per-tool setting first. A tool left out
             # here is also refused at dispatch, whatever the model asks for.
-            caller = caller_of(input.metadata)
-            offered = self._offered_tools(caller, tool_audiences_of(input.metadata))
+            offered = self._offered_tools(caller, audience_overrides)
             tool_schemas = [w.schema() for name, w in self._local_tools.items() if name in offered]
             tool_schemas += [
                 ToolSchema(name=name, description=spec["description"], parameters=spec["parameters"])
                 for name, spec in self._mcp_tools.items()
                 if name in offered
             ]
-            if self._skills:
+            if allowed_skills and may_offer(caller, effective_audiences(SKILL_TOOL_NAME, None, frozenset({"operator", "customer"}), audience_overrides)):
                 tool_schemas.append(ToolSchema(
                     name=SKILL_TOOL_NAME,
                     description="Read the full instructions for an available skill by name.",
                     parameters={
                         "type": "object",
                         "properties": {
-                            "name": {"type": "string", "enum": list(self._skills)},
+                            "name": {"type": "string", "enum": list(allowed_skills)},
                             "path": {"type": "string", "description": "Optional reference path from the skill."},
                         },
                         "required": ["name"],
                     },
                 ))
                 offered.add(SKILL_TOOL_NAME)
+                offered.update(f"skill:{name}" for name in allowed_skills)
 
             # ADR-0028 §8a: sensitive tools wait for an owner's approval; an
             # approved call (signed by the engine) runs first, exactly once.
@@ -292,7 +299,7 @@ class Agent:
                     approved_result = "ran" if ok else "failed"
                     new_messages.append({"role": "assistant", "content": "", "tool_calls": [_tool_call_to_dict(tc)]})
                     new_messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
-                    yield _tool_event({"type": "tool_result", "id": tc.id, "name": tc.name, "ok": ok, "output": result})
+                    yield _tool_event({"type": "tool_result", "id": tc.id, "name": tc.name, "ok": ok, "output": self._public_tool_result(tc.name, result, ok)})
                     messages[0]["content"] += (
                         f"\n\nA workspace owner or admin approved `{name}`, and it has run (its result follows). "
                         "Tell the user the outcome."
@@ -436,7 +443,7 @@ class Agent:
                         "id": tc.id,
                         "name": tc.name,
                         "ok": ok,
-                        "output": "Skill loaded" if tc.name == SKILL_TOOL_NAME and ok else result,
+                        "output": self._public_tool_result(tc.name, result, ok),
                         **({"status": status} if status else {}),
                     })
 
@@ -495,7 +502,7 @@ class Agent:
             elif m["role"] == "tool":
                 turn.append(Message(
                     role="tool",
-                    content="Skill loaded" if m.get("tool_call_id") in skill_call_ids else m.get("content", "") or "",
+                    content="[skill body omitted; call read_skill again to use it]" if m.get("tool_call_id") in skill_call_ids else m.get("content", "") or "",
                     tool_call_id=m.get("tool_call_id"),
                 ))
         if isinstance(self._memory, AppendableMemory):
@@ -586,10 +593,26 @@ class Agent:
                 "tool.result",
                 invocation_id=invocation_id,
                 session_id=session_id,
-                data={"tool_name": tc.name, "result": "Skill loaded" if tc.name == SKILL_TOOL_NAME and ok else auditor.truncate(result)},
+                data={"tool_name": tc.name, "result": auditor.truncate(self._public_tool_result(tc.name, result, ok))},
                 latency_ms=(time.monotonic() - tool_start) * 1000,
             )
         return result, ok
+
+    @staticmethod
+    def _public_tool_result(name: str, result: str, ok: bool) -> str:
+        return "[skill body omitted; call read_skill again to use it]" if name == SKILL_TOOL_NAME and ok else result
+
+    def _read_skill(self, tc: ToolCall, offered: set[str] | None) -> tuple[str, bool]:
+        name = tc.arguments.get("name")
+        skill = self._skills.get(name) if isinstance(name, str) else None
+        if skill is None or (offered is not None and f"skill:{name}" not in offered):
+            return "Error: skill not found", False
+        path = tc.arguments.get("path")
+        if path is not None:
+            content = skill.references.get(path) if isinstance(path, str) else None
+            return (content, True) if content is not None else ("Error: skill reference not found", False)
+        references = "\nReferences: " + ", ".join(skill.references) if skill.references else ""
+        return f"Skill: {skill.name}\nVersion: {skill.version}{references}\n\n{skill.instructions}", True
 
     async def _dispatch_tool(self, tc: ToolCall, offered: set[str] | None = None) -> tuple[str, bool]:
         """The tool's result for the model, and whether the tool ran.
@@ -603,16 +626,7 @@ class Agent:
             # about the operator-only tools it cannot see.
             return f"Error: tool '{tc.name}' not found", False
         if tc.name == SKILL_TOOL_NAME and self._skills:
-            name = tc.arguments.get("name")
-            skill = self._skills.get(name) if isinstance(name, str) else None
-            if skill is None:
-                return "Error: skill not found", False
-            path = tc.arguments.get("path")
-            if path is not None:
-                content = skill.references.get(path) if isinstance(path, str) else None
-                return (content, True) if content is not None else ("Error: skill reference not found", False)
-            references = "\nReferences: " + ", ".join(skill.references) if skill.references else ""
-            return f"Skill: {skill.name}\nVersion: {skill.version}{references}\n\n{skill.instructions}", True
+            return self._read_skill(tc, offered)
         if tc.name in self._local_tools:
             return await self._local_tools[tc.name].call(tc), True
         if tc.name in self._mcp_tools:
