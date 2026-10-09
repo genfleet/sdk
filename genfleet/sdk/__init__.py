@@ -1,7 +1,18 @@
 from .agent import Agent
-from .caller import CALLER_METADATA_KEY, Caller, caller_of, may_use
-from .channels import ChannelSendError, send_message, send_message_tool
 from .audit.schemas import AuditConfig, AuditEvent
+from .caller import (
+    CALLER_METADATA_KEY,
+    EVERYONE,
+    OPERATOR_ONLY,
+    TOOL_AUDIENCES_METADATA_KEY,
+    Audience,
+    Caller,
+    caller_of,
+    may_offer,
+    may_use,
+    tool_audiences_of,
+)
+from .channels import ChannelSendError, send_message, send_message_tool
 from .manifest import (
     AgentManifest,
     ConfigField,
@@ -52,6 +63,12 @@ __all__ = [
     "Caller",
     "caller_of",
     "may_use",
+    "may_offer",
+    "tool_audiences_of",
+    "TOOL_AUDIENCES_METADATA_KEY",
+    "Audience",
+    "EVERYONE",
+    "OPERATOR_ONLY",
     # Config
     "ModelConfig",
     "MemoryConfig",
