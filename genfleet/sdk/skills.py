@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import tempfile
+import logging
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,9 +22,16 @@ _PINNED_REPO = re.compile(r"(.+)@([0-9a-f]{40})\Z")
 _MAX_INSTRUCTIONS = 32_000
 _MAX_REFERENCES = 100
 _MAX_SKILLS = 100
-_MAX_DESCRIPTION = 300
+_MAX_DESCRIPTION = 1024
 _MAX_VERSION = 40
 _SKILL_ROOTS = ("skills", ".agents/skills", ".claude/skills", ".cursor/skills", "agent/skills")
+log = logging.getLogger("genfleet.sdk.skills")
+
+
+def pinned_revision(source: str) -> str | None:
+    """Return the commit suffix of a pinned repository source."""
+    match = _PINNED_REPO.fullmatch(source)
+    return match.group(2) if match else None
 
 
 def _block_scalar(lines: list[str], start: int, folded: bool) -> str:
@@ -36,6 +44,7 @@ def _block_scalar(lines: list[str], start: int, folded: bool) -> str:
 
 
 def _frontmatter(source: str) -> tuple[dict[str, str], str]:
+    source = source.replace("\r\n", "\n").replace("\r", "\n")
     if not source.startswith("---\n"):
         raise ValueError("skill file needs YAML-style frontmatter")
     header, separator, body = source[4:].partition("\n---\n")
@@ -84,9 +93,9 @@ def _reference_files(directory: Path) -> dict[str, str]:
 def _repository_url(source: str | Path) -> str:
     if isinstance(source, Path):
         return source.resolve().as_uri()
-    pin = _PINNED_REPO.fullmatch(source)
-    if pin:
-        source = pin.group(1)
+    revision = pinned_revision(source)
+    if revision:
+        source = source[:-(len(revision) + 1)]
     if Path(source).exists():
         raise ValueError("local skill repositories must be passed as Path")
     if source.startswith(("./", "../", "/")):
@@ -188,20 +197,26 @@ class Skill(BaseModel, frozen=True):
 @contextmanager
 def _checkout(source: str | Path) -> Iterator[tuple[Path, str]]:
     url = _repository_url(source)
-    pinned_revision = _PINNED_REPO.fullmatch(source).group(2) if isinstance(source, str) and _PINNED_REPO.fullmatch(source) else None
+    revision_pin = pinned_revision(source) if isinstance(source, str) else None
     with tempfile.TemporaryDirectory(prefix="genfleet-skills-") as scratch:
         checkout = Path(scratch) / "repo"
         try:
-            subprocess.run(
-                ["git", "clone", "--quiet", *([] if pinned_revision else ["--depth", "1"]), url, str(checkout)],
-                capture_output=True, check=True, timeout=120,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            )
-            if pinned_revision:
+            git_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+            if revision_pin:
+                subprocess.run(["git", "init", "--quiet", str(checkout)], capture_output=True, check=True, timeout=10)
+                subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", url], capture_output=True, check=True, timeout=10)
                 subprocess.run(
-                    ["git", "-C", str(checkout), "checkout", "--quiet", "--detach", pinned_revision],
-                    capture_output=True, check=True, timeout=30,
-                    env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                    ["git", "-C", str(checkout), "fetch", "--quiet", "--depth", "1", "origin", revision_pin],
+                    capture_output=True, check=True, timeout=120, env=git_env,
+                )
+                subprocess.run(
+                    ["git", "-C", str(checkout), "checkout", "--quiet", "--detach", "FETCH_HEAD"],
+                    capture_output=True, check=True, timeout=30, env=git_env,
+                )
+            else:
+                subprocess.run(
+                    ["git", "clone", "--quiet", "--depth", "1", url, str(checkout)],
+                    capture_output=True, check=True, timeout=120, env=git_env,
                 )
             revision = subprocess.run(
                 ["git", "-C", str(checkout), "rev-parse", "HEAD"],
@@ -220,17 +235,23 @@ def _catalog(checkout: Path, revision: str) -> dict[str, tuple[Path, Skill, Skil
         raise ValueError("skill repository has too many skills")
     catalog: dict[str, tuple[Path, Skill, SkillOption]] = {}
     for path in paths:
-        if not path.resolve().is_relative_to(checkout.resolve()):
-            raise ValueError("skill file escapes the repository")
-        if path.stat().st_size > _MAX_INSTRUCTIONS:
-            raise ValueError("skill file is too large")
-        fields, instructions = _frontmatter(path.read_text(encoding="utf-8"))
-        preview = Skill(**fields, instructions=instructions)
+        try:
+            if not path.resolve().is_relative_to(checkout.resolve()):
+                raise ValueError("skill file escapes the repository")
+            if path.stat().st_size > _MAX_INSTRUCTIONS:
+                raise ValueError("skill file is too large")
+            fields, instructions = _frontmatter(path.read_text(encoding="utf-8"))
+            preview = Skill(**fields, instructions=instructions)
+        except (ValueError, UnicodeError) as exc:
+            log.warning("skipping invalid skill %s: %s", path.relative_to(checkout), exc)
+            continue
         if preview.name in catalog:
             raise ValueError(f"skill repository contains duplicate name: {preview.name}")
         catalog[preview.name] = (
             path, preview, SkillOption(preview.name, preview.description, preview.version, revision)
         )
+    if not catalog:
+        raise ValueError("skill repository has no valid discoverable SKILL.md")
     return catalog
 
 

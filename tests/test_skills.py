@@ -5,8 +5,8 @@ import subprocess
 
 import pytest
 
-from genfleet.sdk import Agent, AgentInput, AgentOutput, Message, Skill, ToolCall, discover_skills, load_skills
-from genfleet.sdk.skills import _frontmatter, _repository_url, _skill_paths
+from genfleet.sdk import Agent, AgentInput, AgentOutput, Message, Skill, ToolCall, discover_skills, load_skills, tool
+from genfleet.sdk.skills import _frontmatter, _repository_url, _skill_paths, pinned_revision
 
 
 class RecordingModel:
@@ -185,6 +185,23 @@ def test_yaml_single_quote_and_invalid_quote():
         _frontmatter("---\nname: 'unfinished\n---\nDo it.\n")
 
 
+def test_crlf_skill_frontmatter(tmp_path):
+    path = tmp_path / "SKILL.md"
+    path.write_bytes(b"---\r\nname: brief\r\ndescription: Short\r\n---\r\nDo it.\r\n")
+    assert Skill.from_file(path).instructions == "Do it."
+
+
+@pytest.mark.asyncio
+async def test_skill_pseudoname_cannot_authorize_a_local_tool():
+    @tool(name="skill:brief")
+    def secret_tool() -> str:
+        return "secret result"
+
+    with pytest.raises(ValueError, match="reserved"):
+        Agent(role="a", model={"model": "fake"}, model_client=RecordingModel(),
+              tools=[secret_tool], skills=[Skill(name="brief", description="Public", instructions="Do it.", audiences={"customer"})])
+
+
 def test_symlinked_skill_root_is_not_walked(tmp_path):
     root = tmp_path / "repo"
     outside = tmp_path / "outside"
@@ -232,6 +249,29 @@ def test_repository_selection_loads_named_skills(skill_repository):
     assert [skill.name for skill in load_skills(skill_repository, names=["handoff"])] == ["handoff"]
     with pytest.raises(ValueError, match="unknown skills: missing"):
         load_skills(skill_repository, names=["missing"])
+
+
+def test_discovery_skips_invalid_skill_and_accepts_long_valid_description(skill_repository):
+    (skill_repository / "skills" / "invalid").mkdir()
+    (skill_repository / "skills" / "invalid" / "SKILL.md").write_text(
+        "---\nname: invalid\ndescription: " + "x" * 1025 + "\n---\nDo it.\n"
+    )
+    (skill_repository / "skills" / "formal" / "SKILL.md").write_text(
+        "---\nname: formal\ndescription: " + "x" * 1024 + "\n---\nDo it.\n"
+    )
+    subprocess.run(["git", "-C", str(skill_repository), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(skill_repository), "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "more skills"], check=True)
+    assert {option.name for option in discover_skills(skill_repository)} == {"brief", "formal", "handoff"}
+    assert {skill.name for skill in load_skills(skill_repository)} == {"brief", "formal", "handoff"}
+
+
+def test_pinned_repository_fetches_requested_commit(skill_repository, monkeypatch):
+    revision = subprocess.run(["git", "-C", str(skill_repository), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+    source = f"acme/skills@{revision}"
+    monkeypatch.setattr("genfleet.sdk.skills._repository_url", lambda _: skill_repository.as_uri())
+    assert pinned_revision(source) == revision
+    assert {skill.source_revision for skill in load_skills(source)} == {revision}
 
 
 @pytest.mark.asyncio

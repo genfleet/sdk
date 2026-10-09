@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import time
 import uuid
 from collections.abc import Callable
@@ -35,6 +34,7 @@ from .schemas import (
 from .caller import (
     Audience,
     Caller,
+    EVERYONE,
     caller_of,
     effective_audiences,
     marked,
@@ -54,10 +54,11 @@ from .confirmations import (
     _sensitive_flags_of,
 )
 from .tool import ToolWrapper, wrap_tool
-from .skills import Skill, load_skills
+from .skills import Skill, load_skills, pinned_revision
 
 log = logging.getLogger("genfleet.sdk.agent")
 SKILL_TOOL_NAME = "read_skill"
+SKILL_MEMORY_MARKER = "[skill body omitted; call read_skill again to use it]"
 
 
 def _wrap_tool(fn: Callable) -> ToolWrapper:
@@ -105,7 +106,7 @@ def _resolve_skills(sources: list[Skill | str | Path]) -> list[Skill]:
         if isinstance(source, Skill):
             resolved.append(source)
         elif isinstance(source, (str, Path)):
-            if isinstance(source, str) and not re.search(r"@[0-9a-f]{40}$", source):
+            if isinstance(source, str) and not pinned_revision(source):
                 raise ValueError("Agent requires a pinned skill repository (@40-character commit); use load_skills for interactive discovery")
             resolved.extend(load_skills(source))
         else:
@@ -157,6 +158,8 @@ class Agent:
         self._local_tools: dict[str, ToolWrapper] = {
             w.schema().name: w for w in (_wrap_tool(t) for t in (tools or []))
         }
+        if any(name.startswith("skill:") for name in self._local_tools):
+            raise ValueError("tool names starting with 'skill:' are reserved")
         resolved_skills = _resolve_skills(skills or [])
         self._skills = {skill.name: skill for skill in resolved_skills}
         if len(self._skills) != len(resolved_skills):
@@ -249,7 +252,7 @@ class Agent:
                 for name, spec in self._mcp_tools.items()
                 if name in offered
             ]
-            if allowed_skills and may_offer(caller, effective_audiences(SKILL_TOOL_NAME, None, frozenset({"operator", "customer"}), audience_overrides)):
+            if allowed_skills and may_offer(caller, effective_audiences(SKILL_TOOL_NAME, None, EVERYONE, audience_overrides)):
                 tool_schemas.append(ToolSchema(
                     name=SKILL_TOOL_NAME,
                     description="Read the full instructions for an available skill by name.",
@@ -263,7 +266,6 @@ class Agent:
                     },
                 ))
                 offered.add(SKILL_TOOL_NAME)
-                offered.update(f"skill:{name}" for name in allowed_skills)
 
             # ADR-0028 §8a: sensitive tools wait for an owner's approval; an
             # approved call (signed by the engine) runs first, exactly once.
@@ -431,7 +433,7 @@ class Agent:
                             requests.append({"tool": self._key_of(tc.name), "arguments": tc.arguments})
                             result, ok, status = _PENDING_RESULT, False, "pending"
                     else:
-                        result, ok = await self._audited_dispatch(tc, offered, input, invocation_id, session_id)
+                        result, ok = await self._audited_dispatch(tc, offered, input, invocation_id, session_id, allowed_skills=set(allowed_skills))
 
                     new_messages.append({
                         "role": "tool",
@@ -502,7 +504,7 @@ class Agent:
             elif m["role"] == "tool":
                 turn.append(Message(
                     role="tool",
-                    content="[skill body omitted; call read_skill again to use it]" if m.get("tool_call_id") in skill_call_ids else m.get("content", "") or "",
+                    content=SKILL_MEMORY_MARKER if m.get("tool_call_id") in skill_call_ids else m.get("content", "") or "",
                     tool_call_id=m.get("tool_call_id"),
                 ))
         if isinstance(self._memory, AppendableMemory):
@@ -566,6 +568,7 @@ class Agent:
         session_id: str,
         *,
         contain_tool_errors: bool = False,
+        allowed_skills: set[str] | None = None,
     ) -> tuple[str, bool]:
         """One tool call, inside the turn, with its ``tool.call`` / ``tool.result`` audit events.
 
@@ -582,7 +585,7 @@ class Agent:
             )
         tool_start = time.monotonic()
         try:
-            result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
+            result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered, allowed_skills))
         except Exception as exc:
             if not contain_tool_errors:
                 raise
@@ -600,12 +603,12 @@ class Agent:
 
     @staticmethod
     def _public_tool_result(name: str, result: str, ok: bool) -> str:
-        return "[skill body omitted; call read_skill again to use it]" if name == SKILL_TOOL_NAME and ok else result
+        return SKILL_MEMORY_MARKER if name == SKILL_TOOL_NAME and ok else result
 
-    def _read_skill(self, tc: ToolCall, offered: set[str] | None) -> tuple[str, bool]:
+    def _read_skill(self, tc: ToolCall, allowed_skills: set[str] | None) -> tuple[str, bool]:
         name = tc.arguments.get("name")
         skill = self._skills.get(name) if isinstance(name, str) else None
-        if skill is None or (offered is not None and f"skill:{name}" not in offered):
+        if skill is None or (allowed_skills is not None and name not in allowed_skills):
             return "Error: skill not found", False
         path = tc.arguments.get("path")
         if path is not None:
@@ -614,7 +617,7 @@ class Agent:
         references = "\nReferences: " + ", ".join(skill.references) if skill.references else ""
         return f"Skill: {skill.name}\nVersion: {skill.version}{references}\n\n{skill.instructions}", True
 
-    async def _dispatch_tool(self, tc: ToolCall, offered: set[str] | None = None) -> tuple[str, bool]:
+    async def _dispatch_tool(self, tc: ToolCall, offered: set[str] | None = None, allowed_skills: set[str] | None = None) -> tuple[str, bool]:
         """The tool's result for the model, and whether the tool ran.
 
         ``ok`` is false when the tool is unknown, not offered on this turn, or
@@ -626,7 +629,7 @@ class Agent:
             # about the operator-only tools it cannot see.
             return f"Error: tool '{tc.name}' not found", False
         if tc.name == SKILL_TOOL_NAME and self._skills:
-            return self._read_skill(tc, offered)
+            return self._read_skill(tc, allowed_skills)
         if tc.name in self._local_tools:
             return await self._local_tools[tc.name].call(tc), True
         if tc.name in self._mcp_tools:
@@ -645,7 +648,7 @@ class Agent:
                     del tools[name]
                 # A name starting with `@` is a slug key's form (ADR-0028 §5):
                 # an MCP tool can't take one and borrow a manifest tool's settings.
-                for name in [n for n in tools if n.startswith("@")]:
+                for name in [n for n in tools if n.startswith(("@", "skill:"))]:
                     log.warning("MCP tool %r skipped: a tool name can't start with '@'", name)
                     del tools[name]
                 self._mcp_tools.update(tools)
