@@ -33,6 +33,7 @@ from .manifest import (
     load_agent_manifest,
     load_tool_manifest,
 )
+from .memory import Memory
 from .protocol import AgentFactory, AgentProtocol, ToolProtocol
 from .schemas import (
     TOOL_EVENT_KEY,
@@ -47,6 +48,7 @@ from .schemas import (
     ToolSchema,
 )
 from .tool import ToolWrapper, tool
+from .skills import Skill, SkillOption, discover_skills, load_skills
 from .tools_loader import (
     LocalToolResolver,
     ToolResolutionError,
@@ -57,6 +59,10 @@ from .tools_loader import (
 __all__ = [
     # Core
     "Agent",
+    "Skill",
+    "SkillOption",
+    "discover_skills",
+    "load_skills",
     "AgentProtocol",
     "ToolProtocol",
     "AgentFactory",
@@ -91,6 +97,7 @@ __all__ = [
     # Config
     "ModelConfig",
     "MemoryConfig",
+    "Memory",
     "MCPConfig",
     "AuditConfig",
     # Audit

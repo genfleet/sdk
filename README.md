@@ -70,7 +70,8 @@ Agent(
     model:   ModelConfig,              # provider + credentials
     tools:   list[Callable] = [],      # plain Python functions — auto-wrapped
     mcps:    list[MCPConfig] = [],     # MCP server connections
-    memory:  MemoryConfig | "platform" | None = None,  # episodic memory (see below)
+    memory:  MemoryConfig | Memory | "platform" | None = None,  # episodic memory (see below)
+    skills:  list[Skill | str] | None = None,  # Skill objects or Git repositories
     context: str | None = None,        # extra context appended to system prompt
     audit:   AuditConfig | None = None, # structured audit logging
 )
@@ -138,6 +139,61 @@ Send the same `contextId` on each message to persist history across turns (it be
 curl -X POST http://localhost:8000 -H 'A2A-Version: 1.0' \
   -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","contextId":"user-123","parts":[{"text":"My name is Alice"}]}}}'
 ```
+
+### Runtime skills
+
+`Skill` holds versioned instructions. The model sees each skill's name and description, then can call `read_skill` to load its full instructions for that turn. Skill bodies are not copied into audit results, tool events, or saved conversation memory. Skills never grant access to tools; the existing tool audience rules still apply. Do not put secrets in skill instructions.
+
+```python
+from genfleet.sdk import Agent, Skill
+
+agent = Agent(
+    role="You are a helpful assistant.",
+    model={"model": "openai/gpt-4o-mini", "api_key": "..."},
+    skills=[Skill(
+        name="concise",
+        version="1",
+        description="Give short answers",
+        instructions="Answer in one sentence unless the user asks for detail.",
+    )],
+)
+```
+
+`Skill.from_file("SKILL.md")` reads `name`, `description`, and optional `version` from simple frontmatter, followed by the Markdown instructions. The version is author-defined; file contents are captured when the agent is constructed. For a local, credential-free walkthrough of skills, tools, and memory, use [`examples/skills_memory.ipynb`](examples/skills_memory.ipynb).
+
+To load all skills from a repository, pass its GitHub handle or HTTPS Git URL. The SDK discovers `SKILL.md` in root skill folders and under `skills/`, `.agents/skills/`, `.claude/skills/`, `.cursor/skills/`, and `agent/skills/` (up to three nested directories), plus text files under each skill's `references/`. It clones once when `Agent` is constructed and records the source commit on each `Skill.source_revision`.
+
+```python
+from genfleet.sdk import Agent
+
+agent = Agent(
+    role="You are a helpful assistant.",
+    model={"model": "openai/gpt-4o-mini", "api_key": "..."},
+    skills=["vercel-labs/agent-skills@<40-character-commit>"],
+)
+```
+
+To see the choices first and select a subset:
+
+```python
+from genfleet.sdk import Agent, discover_skills, load_skills
+
+repo = "mmedhat1910/skills"
+for option in discover_skills(repo):
+    print(option.name, "—", option.description)
+
+selected = load_skills(repo, names=["handoff", "handoff-proceed"])
+agent = Agent(
+    role="You are a helpful assistant.",
+    model={"model": "openai/gpt-4o-mini", "api_key": "..."},
+    skills=selected,
+)
+# Omit names to load every skill: load_skills(repo)
+```
+
+Pass a selected list as `skills=selected`; combine it with other sources using `skills=[*selected, other]`. Direct repository sources in `Agent(skills=...)` must end in `@<40-character-commit>` so published agents use a fixed revision. For deployment, load and package the selected `Skill` objects during the build to avoid a Git fetch at agent startup. Use `discover_skills` and `load_skills` for interactive selection; pass a `Path` for a local repository. Discovery logs and skips invalid skill files, then returns valid skills in the repository.
+
+The model uses `read_skill(name)` for instructions and `read_skill(name, path="references/guide.md")` for a text reference. Skills default to the `operator` audience; set `Skill(audiences={"operator", "customer"}, ...)` to offer one to customers. The platform can override each skill through the `skill:<name>` audience key and can disable the `read_skill` tool. Git authentication uses your configured Git credentials. Repository code and scripts are not executed by the loader; a skill can only use tools already offered to the agent.
 
 ### With MCP server
 
@@ -220,6 +276,11 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 | Export | Type | Description |
 |--------|------|-------------|
 | `Agent` | Class | Main developer-facing class — wires provider, tools, memory, MCP, audit |
+| `Skill` | Class | Versioned instructions loaded by the agent on demand |
+| `SkillOption` | Class | Name, description, version, and source commit returned by discovery |
+| `discover_skills` | Function | List skills available in a Git repository |
+| `load_skills` | Function | Discover and snapshot skills from a Git repository |
+| `Memory` | Protocol | Contract for a caller-provided episodic memory backend |
 | `AgentProtocol` | Protocol | Universal agent contract — implement `run()` |
 | `ToolProtocol` | Protocol | Tool contract — implement `schema()` + `call()` |
 | `AgentInput` | Model | Input to every agent invocation |

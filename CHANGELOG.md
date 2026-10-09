@@ -5,6 +5,12 @@ All notable changes to `withfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- Add repository skill discovery and selection, including pinned `owner/repo@commit` sources for `Agent`. Skill instructions are read on demand, filtered by caller audience, and omitted from audit events and persisted memory.
+- Accept caller-provided `Memory` implementations for local development and custom stores.
+- Add a notebook covering skills, tools, memory, and an optional free OpenRouter model.
+
 
 ## 0.19.0
 
