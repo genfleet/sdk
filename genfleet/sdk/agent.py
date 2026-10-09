@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 
 from .audit import Auditor, audit_for
@@ -52,8 +53,10 @@ from .confirmations import (
     _sensitive_flags_of,
 )
 from .tool import ToolWrapper, wrap_tool
+from .skills import Skill, load_skills
 
 log = logging.getLogger("genfleet.sdk.agent")
+SKILL_TOOL_NAME = "read_skill"
 
 
 def _wrap_tool(fn: Callable) -> ToolWrapper:
@@ -95,6 +98,20 @@ def _model_client_for(config: ModelConfig, explicit: ModelClient | None) -> Mode
     return provider_for(config)
 
 
+def _resolve_skills(sources: list[Skill | str | Path | list[Skill]]) -> list[Skill]:
+    resolved: list[Skill] = []
+    for source in sources:
+        if isinstance(source, Skill):
+            resolved.append(source)
+        elif isinstance(source, (str, Path)):
+            resolved.extend(load_skills(source))
+        elif isinstance(source, list) and all(isinstance(skill, Skill) for skill in source):
+            resolved.extend(source)
+        else:
+            raise TypeError("skills entries must be Skill, repository source, or a list of Skill")
+    return resolved
+
+
 class Agent:
     """
     High-level agent that wires together a provider, tools, MCP servers,
@@ -120,10 +137,11 @@ class Agent:
         model: ModelConfig,
         tools: list[Callable] | None = None,
         mcps: list[MCPConfig] | None = None,
-        memory: MemoryConfig | Literal["platform"] | None = None,
+        memory: MemoryConfig | Literal["platform"] | Memory | None = None,
         context: str | None = None,
         audit: AuditConfig | None = None,
         model_client: ModelClient | None = None,
+        skills: list[Skill | str | Path | list[Skill]] | None = None,
     ) -> None:
         self._role = role
         self._context = context
@@ -138,6 +156,12 @@ class Agent:
         self._local_tools: dict[str, ToolWrapper] = {
             w.schema().name: w for w in (_wrap_tool(t) for t in (tools or []))
         }
+        resolved_skills = _resolve_skills(skills or [])
+        self._skills = {skill.name: skill for skill in resolved_skills}
+        if len(self._skills) != len(resolved_skills):
+            raise ValueError("skill names must be unique")
+        if self._skills and SKILL_TOOL_NAME in self._local_tools:
+            raise ValueError(f"tool name {SKILL_TOOL_NAME!r} is reserved when skills are configured")
 
         # MCP tool registry — populated on first run()
         self._mcp_tools: dict[str, Any] = {}
@@ -149,6 +173,10 @@ class Agent:
         :class:`~genfleet.sdk.memory.PlatformMemory` exposes ``search`` and
         ``purge``. ``None`` when the agent runs without memory."""
         return self._memory
+
+    @property
+    def skills(self) -> tuple[Skill, ...]:
+        return tuple(self._skills.values())
 
     # ------------------------------------------------------------------
     # AgentProtocol
@@ -189,6 +217,15 @@ class Agent:
             system_parts = [self._role]
             if self._context:
                 system_parts.append(self._context)
+            if self._skills:
+                index = "\n".join(
+                    f"- {skill.name} (v{skill.version}): {skill.description}"
+                    for skill in self._skills.values()
+                )
+                system_parts.append(
+                    "Available skills (read a skill before following its instructions):\n"
+                    + index + "\nUse read_skill(name) to load one. Skills do not grant tool access."
+                )
 
             messages: list[dict] = [{"role": "system", "content": "\n\n".join(system_parts)}]
             for msg in history:
@@ -206,6 +243,20 @@ class Agent:
                 for name, spec in self._mcp_tools.items()
                 if name in offered
             ]
+            if self._skills:
+                tool_schemas.append(ToolSchema(
+                    name=SKILL_TOOL_NAME,
+                    description="Read the full instructions for an available skill by name.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "enum": list(self._skills)},
+                            "path": {"type": "string", "description": "Optional reference path from the skill."},
+                        },
+                        "required": ["name"],
+                    },
+                ))
+                offered.add(SKILL_TOOL_NAME)
 
             # ADR-0028 §8a: sensitive tools wait for an owner's approval; an
             # approved call (signed by the engine) runs first, exactly once.
@@ -385,7 +436,7 @@ class Agent:
                         "id": tc.id,
                         "name": tc.name,
                         "ok": ok,
-                        "output": result,
+                        "output": "Skill loaded" if tc.name == SKILL_TOOL_NAME and ok else result,
                         **({"status": status} if status else {}),
                     })
 
@@ -420,6 +471,12 @@ class Agent:
         if not self._memory or input.metadata.get(MEMORY_METADATA_KEY) == "off":
             return
         turn = [Message(role="user", content=input.message)]
+        skill_call_ids = {
+            tool_call["id"]
+            for message in new_messages if message["role"] == "assistant"
+            for tool_call in message.get("tool_calls", [])
+            if tool_call["function"]["name"] == SKILL_TOOL_NAME
+        }
         for m in new_messages:
             if m["role"] == "assistant":
                 turn.append(Message(
@@ -438,7 +495,7 @@ class Agent:
             elif m["role"] == "tool":
                 turn.append(Message(
                     role="tool",
-                    content=m.get("content", "") or "",
+                    content="Skill loaded" if m.get("tool_call_id") in skill_call_ids else m.get("content", "") or "",
                     tool_call_id=m.get("tool_call_id"),
                 ))
         if isinstance(self._memory, AppendableMemory):
@@ -529,7 +586,7 @@ class Agent:
                 "tool.result",
                 invocation_id=invocation_id,
                 session_id=session_id,
-                data={"tool_name": tc.name, "result": auditor.truncate(result)},
+                data={"tool_name": tc.name, "result": "Skill loaded" if tc.name == SKILL_TOOL_NAME and ok else auditor.truncate(result)},
                 latency_ms=(time.monotonic() - tool_start) * 1000,
             )
         return result, ok
@@ -545,6 +602,17 @@ class Agent:
             # Same answer as an unknown tool: a customer's turn learns nothing
             # about the operator-only tools it cannot see.
             return f"Error: tool '{tc.name}' not found", False
+        if tc.name == SKILL_TOOL_NAME and self._skills:
+            name = tc.arguments.get("name")
+            skill = self._skills.get(name) if isinstance(name, str) else None
+            if skill is None:
+                return "Error: skill not found", False
+            path = tc.arguments.get("path")
+            if path is not None:
+                content = skill.references.get(path) if isinstance(path, str) else None
+                return (content, True) if content is not None else ("Error: skill reference not found", False)
+            references = "\nReferences: " + ", ".join(skill.references) if skill.references else ""
+            return f"Skill: {skill.name}\nVersion: {skill.version}{references}\n\n{skill.instructions}", True
         if tc.name in self._local_tools:
             return await self._local_tools[tc.name].call(tc), True
         if tc.name in self._mcp_tools:
@@ -558,7 +626,7 @@ class Agent:
                 # An MCP server names its own tools. One that reuses a local
                 # tool's name is dropped: dispatch goes by name, so it could
                 # otherwise lend its customer-safe mark to an operator-only tool.
-                for name in [n for n in tools if n in self._local_tools or n in self._mcp_tools]:
+                for name in [n for n in tools if n in self._local_tools or n in self._mcp_tools or (self._skills and n == SKILL_TOOL_NAME)]:
                     log.warning("MCP tool %r skipped: the name is already taken by another tool", name)
                     del tools[name]
                 # A name starting with `@` is a slug key's form (ADR-0028 §5):
