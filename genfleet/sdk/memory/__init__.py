@@ -11,10 +11,12 @@ from .platform import MEMORY_TOKEN_ENV, MEMORY_URL_ENV, PlatformMemory, Platform
 log = logging.getLogger("genfleet.sdk.memory")
 
 
-def memory_for(config: MemoryConfig | Literal["platform"] | None) -> Memory | None:
+def memory_for(config: MemoryConfig | Literal["platform"] | Memory | None) -> Memory | None:
     """Pick a backend from what the author wrote and where the agent runs.
 
     * ``{"type": "redis", ...}`` — the author's own Redis; unchanged.
+    * A ``Memory`` implementation — caller-managed storage, useful for local
+      development and integration with an existing store.
     * ``"platform"`` / ``{"type": "platform"}`` — the platform's episodic
       store, reached through the sandbox's memory proxy. Outside a sandbox
       this raises, and the message says which variable is missing.
@@ -39,6 +41,8 @@ def memory_for(config: MemoryConfig | Literal["platform"] | None) -> Memory | No
                 MEMORY_TOKEN_ENV, MEMORY_URL_ENV,
             )
         return None
+    if isinstance(config, Memory):
+        return config
     if isinstance(config, str):
         config = MemoryConfig(type=config)
     kind = config["type"]

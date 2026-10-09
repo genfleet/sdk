@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 
 from .audit import Auditor, audit_for
@@ -33,6 +34,7 @@ from .schemas import (
 from .caller import (
     Audience,
     Caller,
+    EVERYONE,
     caller_of,
     effective_audiences,
     marked,
@@ -52,8 +54,11 @@ from .confirmations import (
     _sensitive_flags_of,
 )
 from .tool import ToolWrapper, wrap_tool
+from .skills import Skill, load_skills, pinned_revision
 
 log = logging.getLogger("genfleet.sdk.agent")
+SKILL_TOOL_NAME = "read_skill"
+SKILL_MEMORY_MARKER = "[skill body omitted; call read_skill again to use it]"
 
 
 def _wrap_tool(fn: Callable) -> ToolWrapper:
@@ -95,6 +100,20 @@ def _model_client_for(config: ModelConfig, explicit: ModelClient | None) -> Mode
     return provider_for(config)
 
 
+def _resolve_skills(sources: list[Skill | str | Path]) -> list[Skill]:
+    resolved: list[Skill] = []
+    for source in sources:
+        if isinstance(source, Skill):
+            resolved.append(source)
+        elif isinstance(source, (str, Path)):
+            if isinstance(source, str) and not pinned_revision(source):
+                raise ValueError("Agent requires a pinned skill repository (@40-character commit); use load_skills for interactive discovery")
+            resolved.extend(load_skills(source))
+        else:
+            raise TypeError("skills entries must be Skill or repository source")
+    return resolved
+
+
 class Agent:
     """
     High-level agent that wires together a provider, tools, MCP servers,
@@ -120,10 +139,11 @@ class Agent:
         model: ModelConfig,
         tools: list[Callable] | None = None,
         mcps: list[MCPConfig] | None = None,
-        memory: MemoryConfig | Literal["platform"] | None = None,
+        memory: MemoryConfig | Literal["platform"] | Memory | None = None,
         context: str | None = None,
         audit: AuditConfig | None = None,
         model_client: ModelClient | None = None,
+        skills: list[Skill | str | Path] | None = None,
     ) -> None:
         self._role = role
         self._context = context
@@ -138,6 +158,14 @@ class Agent:
         self._local_tools: dict[str, ToolWrapper] = {
             w.schema().name: w for w in (_wrap_tool(t) for t in (tools or []))
         }
+        if any(name.startswith("skill:") for name in self._local_tools):
+            raise ValueError("tool names starting with 'skill:' are reserved")
+        resolved_skills = _resolve_skills(skills or [])
+        self._skills = {skill.name: skill for skill in resolved_skills}
+        if len(self._skills) != len(resolved_skills):
+            raise ValueError("skill names must be unique")
+        if self._skills and SKILL_TOOL_NAME in self._local_tools:
+            raise ValueError(f"tool name {SKILL_TOOL_NAME!r} is reserved when skills are configured")
 
         # MCP tool registry — populated on first run()
         self._mcp_tools: dict[str, Any] = {}
@@ -149,6 +177,10 @@ class Agent:
         :class:`~genfleet.sdk.memory.PlatformMemory` exposes ``search`` and
         ``purge``. ``None`` when the agent runs without memory."""
         return self._memory
+
+    @property
+    def skills(self) -> tuple[Skill, ...]:
+        return tuple(self._skills.values())
 
     # ------------------------------------------------------------------
     # AgentProtocol
@@ -189,6 +221,21 @@ class Agent:
             system_parts = [self._role]
             if self._context:
                 system_parts.append(self._context)
+            caller = caller_of(input.metadata)
+            audience_overrides = tool_audiences_of(input.metadata)
+            allowed_skills = {
+                name: skill for name, skill in self._skills.items()
+                if may_offer(caller, effective_audiences(f"skill:{name}", None, skill.audiences, audience_overrides))
+            }
+            if allowed_skills:
+                index = "\n".join(
+                    f"- {skill.name} (v{skill.version}): {skill.description}"
+                    for skill in allowed_skills.values()
+                )
+                system_parts.append(
+                    "Available skills (read a skill before following its instructions):\n"
+                    + index + "\nUse read_skill(name) to load one. Skills do not grant tool access."
+                )
 
             messages: list[dict] = [{"role": "system", "content": "\n\n".join(system_parts)}]
             for msg in history:
@@ -198,14 +245,27 @@ class Agent:
             # The tools this caller may use (ADR-0028): by each tool's
             # audience, the platform's per-tool setting first. A tool left out
             # here is also refused at dispatch, whatever the model asks for.
-            caller = caller_of(input.metadata)
-            offered = self._offered_tools(caller, tool_audiences_of(input.metadata))
+            offered = self._offered_tools(caller, audience_overrides)
             tool_schemas = [w.schema() for name, w in self._local_tools.items() if name in offered]
             tool_schemas += [
                 ToolSchema(name=name, description=spec["description"], parameters=spec["parameters"])
                 for name, spec in self._mcp_tools.items()
                 if name in offered
             ]
+            if allowed_skills and may_offer(caller, effective_audiences(SKILL_TOOL_NAME, None, EVERYONE, audience_overrides)):
+                tool_schemas.append(ToolSchema(
+                    name=SKILL_TOOL_NAME,
+                    description="Read the full instructions for an available skill by name.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "enum": list(allowed_skills)},
+                            "path": {"type": "string", "description": "Optional reference path from the skill."},
+                        },
+                        "required": ["name"],
+                    },
+                ))
+                offered.add(SKILL_TOOL_NAME)
 
             # ADR-0028 §8a: sensitive tools wait for an owner's approval; an
             # approved call (signed by the engine) runs first, exactly once.
@@ -241,7 +301,7 @@ class Agent:
                     approved_result = "ran" if ok else "failed"
                     new_messages.append({"role": "assistant", "content": "", "tool_calls": [_tool_call_to_dict(tc)]})
                     new_messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
-                    yield _tool_event({"type": "tool_result", "id": tc.id, "name": tc.name, "ok": ok, "output": result})
+                    yield _tool_event({"type": "tool_result", "id": tc.id, "name": tc.name, "ok": ok, "output": self._public_tool_result(tc.name, result, ok)})
                     messages[0]["content"] += (
                         f"\n\nA workspace owner or admin approved `{name}`, and it has run (its result follows). "
                         "Tell the user the outcome."
@@ -373,7 +433,7 @@ class Agent:
                             requests.append({"tool": self._key_of(tc.name), "arguments": tc.arguments})
                             result, ok, status = _PENDING_RESULT, False, "pending"
                     else:
-                        result, ok = await self._audited_dispatch(tc, offered, input, invocation_id, session_id)
+                        result, ok = await self._audited_dispatch(tc, offered, input, invocation_id, session_id, allowed_skills=set(allowed_skills))
 
                     new_messages.append({
                         "role": "tool",
@@ -385,7 +445,7 @@ class Agent:
                         "id": tc.id,
                         "name": tc.name,
                         "ok": ok,
-                        "output": result,
+                        "output": self._public_tool_result(tc.name, result, ok),
                         **({"status": status} if status else {}),
                     })
 
@@ -420,6 +480,12 @@ class Agent:
         if not self._memory or input.metadata.get(MEMORY_METADATA_KEY) == "off":
             return
         turn = [Message(role="user", content=input.message)]
+        skill_call_ids = {
+            tool_call["id"]
+            for message in new_messages if message["role"] == "assistant"
+            for tool_call in message.get("tool_calls", [])
+            if tool_call["function"]["name"] == SKILL_TOOL_NAME
+        }
         for m in new_messages:
             if m["role"] == "assistant":
                 turn.append(Message(
@@ -438,7 +504,7 @@ class Agent:
             elif m["role"] == "tool":
                 turn.append(Message(
                     role="tool",
-                    content=m.get("content", "") or "",
+                    content=SKILL_MEMORY_MARKER if m.get("tool_call_id") in skill_call_ids else m.get("content", "") or "",
                     tool_call_id=m.get("tool_call_id"),
                 ))
         if isinstance(self._memory, AppendableMemory):
@@ -502,6 +568,7 @@ class Agent:
         session_id: str,
         *,
         contain_tool_errors: bool = False,
+        allowed_skills: set[str] | None = None,
     ) -> tuple[str, bool]:
         """One tool call, inside the turn, with its ``tool.call`` / ``tool.result`` audit events.
 
@@ -518,7 +585,7 @@ class Agent:
             )
         tool_start = time.monotonic()
         try:
-            result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
+            result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered, allowed_skills))
         except Exception as exc:
             if not contain_tool_errors:
                 raise
@@ -529,12 +596,28 @@ class Agent:
                 "tool.result",
                 invocation_id=invocation_id,
                 session_id=session_id,
-                data={"tool_name": tc.name, "result": auditor.truncate(result)},
+                data={"tool_name": tc.name, "result": auditor.truncate(self._public_tool_result(tc.name, result, ok))},
                 latency_ms=(time.monotonic() - tool_start) * 1000,
             )
         return result, ok
 
-    async def _dispatch_tool(self, tc: ToolCall, offered: set[str] | None = None) -> tuple[str, bool]:
+    @staticmethod
+    def _public_tool_result(name: str, result: str, ok: bool) -> str:
+        return SKILL_MEMORY_MARKER if name == SKILL_TOOL_NAME and ok else result
+
+    def _read_skill(self, tc: ToolCall, allowed_skills: set[str] | None) -> tuple[str, bool]:
+        name = tc.arguments.get("name")
+        skill = self._skills.get(name) if isinstance(name, str) else None
+        if skill is None or (allowed_skills is not None and name not in allowed_skills):
+            return "Error: skill not found", False
+        path = tc.arguments.get("path")
+        if path is not None:
+            content = skill.references.get(path) if isinstance(path, str) else None
+            return (content, True) if content is not None else ("Error: skill reference not found", False)
+        references = "\nReferences: " + ", ".join(skill.references) if skill.references else ""
+        return f"Skill: {skill.name}\nVersion: {skill.version}{references}\n\n{skill.instructions}", True
+
+    async def _dispatch_tool(self, tc: ToolCall, offered: set[str] | None = None, allowed_skills: set[str] | None = None) -> tuple[str, bool]:
         """The tool's result for the model, and whether the tool ran.
 
         ``ok`` is false when the tool is unknown, not offered on this turn, or
@@ -545,6 +628,8 @@ class Agent:
             # Same answer as an unknown tool: a customer's turn learns nothing
             # about the operator-only tools it cannot see.
             return f"Error: tool '{tc.name}' not found", False
+        if tc.name == SKILL_TOOL_NAME and self._skills:
+            return self._read_skill(tc, allowed_skills)
         if tc.name in self._local_tools:
             return await self._local_tools[tc.name].call(tc), True
         if tc.name in self._mcp_tools:
@@ -558,12 +643,12 @@ class Agent:
                 # An MCP server names its own tools. One that reuses a local
                 # tool's name is dropped: dispatch goes by name, so it could
                 # otherwise lend its customer-safe mark to an operator-only tool.
-                for name in [n for n in tools if n in self._local_tools or n in self._mcp_tools]:
+                for name in [n for n in tools if n in self._local_tools or n in self._mcp_tools or (self._skills and n == SKILL_TOOL_NAME)]:
                     log.warning("MCP tool %r skipped: the name is already taken by another tool", name)
                     del tools[name]
                 # A name starting with `@` is a slug key's form (ADR-0028 §5):
                 # an MCP tool can't take one and borrow a manifest tool's settings.
-                for name in [n for n in tools if n.startswith("@")]:
+                for name in [n for n in tools if n.startswith(("@", "skill:"))]:
                     log.warning("MCP tool %r skipped: a tool name can't start with '@'", name)
                     del tools[name]
                 self._mcp_tools.update(tools)
