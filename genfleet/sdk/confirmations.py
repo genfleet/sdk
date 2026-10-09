@@ -12,10 +12,13 @@ once, before the model takes over again.
 Which tools are sensitive:
 
 - the author's marking, ``@tool(sensitive=True)``;
-- the platform's per-tool setting on a hosted turn
-  (:data:`SENSITIVE_TOOLS_KEY`, ``{key: bool}``), which wins either way. Keys
-  are the same as for audiences: a manifest tool's slug key, any other tool's
-  name (see :func:`genfleet.sdk.caller.effective_audiences`).
+- the platform's per-tool flags on a hosted turn (:data:`SENSITIVE_TOOLS_KEY`,
+  ``{key: bool}``), keyed like audiences: a manifest tool's slug key, any
+  other tool's name. **They are add-only:** a flag can mark a tool sensitive,
+  but ``false`` never unmarks one its author marked. The map is unsigned, so
+  a forged one must not be able to switch an approval off. (Letting an owner
+  waive an author's marking would need a signed map: a possible follow-up.)
+- ``remember`` (the engine's memory tool) is never sensitive.
 
 **The approved call is signed.** At spawn the engine gives each sandbox its
 own key in :data:`APPROVAL_KEY_ENV`. It signs every approved call with it:
@@ -39,6 +42,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -55,23 +59,34 @@ CONFIRMATION_REQUESTS_KEY = "genfleet.confirmation_requests"
 APPROVAL_KEY_ENV = "GENFLEET_APPROVAL_KEY"
 
 #: What the model is told instead of a result.
-PENDING_RESULT = (
+_PENDING_RESULT = (
     "This action needs approval by a workspace owner or admin before it runs. "
     "The request was sent; it runs once approved. Tell the user so."
 )
-PEER_REFUSAL = "Error: this tool needs an owner's approval and can't be used on a call from another agent."
+_PEER_REFUSAL = "Error: this tool needs an owner's approval and can't be used on a call from another agent."
 
 #: The fields an approved call is signed over, in this exact set.
 _SIGNED_FIELDS = ("confirmation_id", "tool", "arguments", "args_hash", "expires_at")
 
-#: ``confirmation_id`` s already run in this process (one spawn): an approved
-#: call is run at most once, however often it is delivered.
+#: Never sensitive, whatever the flags say (ADR-0028 §8a).
+_NEVER_SENSITIVE = frozenset({"remember"})
+
+#: ``confirmation_id`` s already claimed in this process (one spawn): an
+#: approved call is run at most once, however often it is delivered.
 _RUN: set[str] = set()
+
+_SIGNATURE = re.compile(r"[0-9a-f]{64}")
 
 
 def canonical_json(value: Any) -> bytes:
-    """The one byte form both sides sign: sorted keys, compact separators, UTF-8."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    """The one byte form both sides sign: sorted keys, compact separators, UTF-8.
+
+    ``NaN`` and infinities are refused (``ValueError``), and so are lone
+    surrogates (``UnicodeEncodeError``): neither has one agreed byte form.
+    """
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    ).encode("utf-8")
 
 
 def sign_approved_call(call: dict[str, Any], key: str | bytes) -> str:
@@ -89,16 +104,18 @@ class ApprovedCall:
     arguments: dict[str, Any]
 
 
-def approved_call_of(
+def _claim_approved_call(
     metadata: dict[str, Any] | None,
     *,
     now: datetime | None = None,
     key: str | None = None,
 ) -> tuple[ApprovedCall | None, str | None]:
-    """The turn's approved call, verified: ``(call, None)``.
+    """The turn's approved call, verified **and claimed**: ``(call, None)``.
 
-    ``(None, reason)`` when one is present but must not run (no key in this
-    environment, a bad signature, expired, already run, malformed).
+    Verifying and claiming are one step: a call returned here is recorded as
+    run before the caller dispatches it, so it never runs twice in this
+    process. ``(None, reason)`` when one is present but must not run (no key
+    in this environment, malformed, a bad signature, expired, already run).
     ``(None, None)`` when the turn carries none.
     """
     raw = (metadata or {}).get(APPROVED_CALL_KEY)
@@ -110,7 +127,13 @@ def approved_call_of(
     if not secret:
         return None, "no approval key in this environment"
     signature = raw.get("signature")
-    if not isinstance(signature, str) or not hmac.compare_digest(signature, sign_approved_call(raw, secret)):
+    if not isinstance(signature, str) or not _SIGNATURE.fullmatch(signature):
+        return None, "malformed"
+    try:
+        expected = sign_approved_call(raw, secret)
+    except (TypeError, ValueError):  # unserialisable, NaN, a lone surrogate
+        return None, "malformed"
+    if not hmac.compare_digest(signature, expected):
         return None, "bad signature"
     confirmation_id, tool, arguments = raw.get("confirmation_id"), raw.get("tool"), raw.get("arguments")
     if not (isinstance(confirmation_id, str) and confirmation_id and isinstance(tool, str) and tool):
@@ -124,15 +147,18 @@ def approved_call_of(
         return None, "expired"
     if confirmation_id in _RUN:
         return None, "already run"
+    _RUN.add(confirmation_id)
     return ApprovedCall(confirmation_id, tool, arguments), None
 
 
-def mark_run(call: ApprovedCall) -> None:
-    """Record that ``call`` ran, before it runs: a redelivery is refused."""
-    _RUN.add(call.confirmation_id)
+def _is_sensitive(key: str, author: bool, flags: dict[str, bool]) -> bool:
+    """Add-only: the author's marking, or the platform's ``true``; never ``remember``."""
+    if key in _NEVER_SENSITIVE:
+        return False
+    return author or flags.get(key) is True
 
 
-def sensitive_flags_of(metadata: dict[str, Any] | None) -> dict[str, bool]:
+def _sensitive_flags_of(metadata: dict[str, Any] | None) -> dict[str, bool]:
     """The platform's sensitive flags by key. Anything not a ``{str: bool}`` entry is ignored."""
     raw = (metadata or {}).get(SENSITIVE_TOOLS_KEY)
     if not isinstance(raw, dict):
@@ -140,7 +166,7 @@ def sensitive_flags_of(metadata: dict[str, Any] | None) -> dict[str, bool]:
     return {k: v for k, v in raw.items() if isinstance(k, str) and k and isinstance(v, bool)}
 
 
-def is_peer_turn(metadata: dict[str, Any] | None) -> bool:
+def _is_peer_turn(metadata: dict[str, Any] | None) -> bool:
     return (metadata or {}).get(PEER_TURN_KEY) is True
 
 

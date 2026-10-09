@@ -41,13 +41,13 @@ from .caller import (
     tool_audiences_of,
 )
 from .confirmations import (
+    _PEER_REFUSAL,
+    _PENDING_RESULT,
     CONFIRMATION_REQUESTS_KEY,
-    PEER_REFUSAL,
-    PENDING_RESULT,
-    approved_call_of,
-    is_peer_turn,
-    mark_run,
-    sensitive_flags_of,
+    _claim_approved_call,
+    _is_peer_turn,
+    _is_sensitive,
+    _sensitive_flags_of,
 )
 from .tool import ToolWrapper, wrap_tool
 
@@ -207,11 +207,12 @@ class Agent:
 
             # ADR-0028 §8a: sensitive tools wait for an owner's approval; an
             # approved call (signed by the engine) runs first, exactly once.
-            sensitive = self._sensitive_tools(sensitive_flags_of(input.metadata))
-            peer_turn = is_peer_turn(input.metadata)
+            sensitive = self._sensitive_tools(_sensitive_flags_of(input.metadata))
+            peer_turn = _is_peer_turn(input.metadata)
             requests: list[dict[str, Any]] = []
             new_messages: list[dict] = []
-            approved, refused = approved_call_of(input.metadata)
+            # Verified and claimed in one step: it can't run twice, nor later.
+            approved, refused = _claim_approved_call(input.metadata)
             if refused:
                 log.warning("approved call not run: %s", refused)
                 messages[0]["content"] += (
@@ -219,9 +220,6 @@ class Agent:
                     "Tell the user the action did not run."
                 )
             elif approved:
-                # Consumed whether or not it can run now: an approval is used
-                # once, so it can't run later when circumstances change.
-                mark_run(approved)
                 name = self._tool_by_key(approved.tool)
                 if name is None or name not in offered:
                     messages[0]["content"] += (
@@ -231,7 +229,7 @@ class Agent:
                     tc = ToolCall(id=f"approved-{approved.confirmation_id}", name=name, arguments=approved.arguments)
                     yield _tool_event({"type": "tool_call", "id": tc.id, "name": tc.name, "arguments": tc.arguments})
                     try:
-                        result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
+                        result, ok = await self._audited_dispatch(tc, offered, input, invocation_id, session_id)
                     except Exception as exc:  # noqa: BLE001 — the user must still hear the outcome
                         log.exception("approved call %s failed", approved.confirmation_id)
                         result, ok = f"Error: the approved action failed ({type(exc).__name__}).", False
@@ -358,40 +356,16 @@ class Agent:
 
                 # Dispatch all tool calls and append results
                 for tc in tool_calls_batch:
-                    if auditor:
-                        await auditor.emit(
-                            "tool.call",
-                            invocation_id=invocation_id,
-                            session_id=session_id,
-                            data={
-                                "tool_name": tc.name,
-                                "arguments": auditor.truncate(str(tc.arguments)),
-                            },
-                        )
-
-                    tool_start = time.monotonic()
+                    status: str | None = None
                     if tc.name in offered and tc.name in sensitive:
                         # Not run: a peer can't be approved for; anyone else waits for an owner.
                         if peer_turn:
-                            result, ok = PEER_REFUSAL, False
+                            result, ok = _PEER_REFUSAL, False
                         else:
                             requests.append({"tool": self._key_of(tc.name), "arguments": tc.arguments})
-                            result, ok = PENDING_RESULT, True
+                            result, ok, status = _PENDING_RESULT, False, "pending"
                     else:
-                        result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
-                    tool_latency = (time.monotonic() - tool_start) * 1000
-
-                    if auditor:
-                        await auditor.emit(
-                            "tool.result",
-                            invocation_id=invocation_id,
-                            session_id=session_id,
-                            data={
-                                "tool_name": tc.name,
-                                "result": auditor.truncate(result),
-                            },
-                            latency_ms=tool_latency,
-                        )
+                        result, ok = await self._audited_dispatch(tc, offered, input, invocation_id, session_id)
 
                     new_messages.append({
                         "role": "tool",
@@ -404,6 +378,7 @@ class Agent:
                         "name": tc.name,
                         "ok": ok,
                         "output": result,
+                        **({"status": status} if status else {}),
                     })
 
         except Exception as exc:
@@ -502,13 +477,37 @@ class Agent:
         return None
 
     def _sensitive_tools(self, flags: dict[str, bool]) -> set[str]:
-        """Names of the sensitive tools: the platform's flag by key, else the author's marking."""
-        names = {n for n, w in self._local_tools.items() if flags.get(self._key_of(n), w.sensitive)}
+        """Names of the sensitive tools: the author's marking, plus the platform's ``true`` (add-only)."""
+        names = {n for n, w in self._local_tools.items() if _is_sensitive(self._key_of(n), w.sensitive, flags)}
         names |= {
             n for n, spec in self._mcp_tools.items()
-            if flags.get(n, n in spec["config"].get("sensitive_tools", []))
+            if _is_sensitive(n, n in spec["config"].get("sensitive_tools", []), flags)
         }
         return names
+
+    async def _audited_dispatch(
+        self, tc: ToolCall, offered: set[str], input: AgentInput, invocation_id: str, session_id: str
+    ) -> tuple[str, bool]:
+        """One tool call, inside the turn, with its ``tool.call`` / ``tool.result`` audit events."""
+        auditor = self._auditor
+        if auditor:
+            await auditor.emit(
+                "tool.call",
+                invocation_id=invocation_id,
+                session_id=session_id,
+                data={"tool_name": tc.name, "arguments": auditor.truncate(str(tc.arguments))},
+            )
+        tool_start = time.monotonic()
+        result, ok = await _turn.call_within(input.metadata, self._dispatch_tool(tc, offered))
+        if auditor:
+            await auditor.emit(
+                "tool.result",
+                invocation_id=invocation_id,
+                session_id=session_id,
+                data={"tool_name": tc.name, "result": auditor.truncate(result)},
+                latency_ms=(time.monotonic() - tool_start) * 1000,
+            )
+        return result, ok
 
     async def _dispatch_tool(self, tc: ToolCall, offered: set[str] | None = None) -> tuple[str, bool]:
         """The tool's result for the model, and whether the tool ran.

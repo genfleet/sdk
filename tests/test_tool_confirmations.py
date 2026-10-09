@@ -31,16 +31,16 @@ from genfleet.sdk.caller import (
     TOOL_AUDIENCES_METADATA_KEY,
 )
 from genfleet.sdk.confirmations import (
+    _PEER_REFUSAL,
+    _PENDING_RESULT,
     APPROVAL_KEY_ENV,
-    PEER_REFUSAL,
     PEER_TURN_KEY,
-    PENDING_RESULT,
     ApprovedCall,
-    approved_call_of,
+    _claim_approved_call,
+    _is_peer_turn,
+    _is_sensitive,
+    _sensitive_flags_of,
     canonical_json,
-    is_peer_turn,
-    mark_run,
-    sensitive_flags_of,
 )
 from genfleet.sdk.manifest import load_tool_manifest
 from genfleet.sdk.tool import wrap_tool
@@ -98,14 +98,14 @@ def test_signature_golden_vector_pins_the_form_both_sides_use():
     call = {
         "confirmation_id": "c-9",
         "tool": "@acme/crm",
-        "arguments": {"z": "é", "a": [1, True, None]},
+        "arguments": {"z": "é", "a": [1, True, None], "amount": 12.5},
         "args_hash": "deadbeef",
         "expires_at": "2026-10-09T12:30:00Z",
         "signature": "ignored",
         "extra": "ignored",
     }
     expected_bytes = (
-        '{"args_hash":"deadbeef","arguments":{"a":[1,true,null],"z":"é"},"confirmation_id":"c-9",'
+        '{"args_hash":"deadbeef","arguments":{"a":[1,true,null],"amount":12.5,"z":"é"},"confirmation_id":"c-9",'
         '"expires_at":"2026-10-09T12:30:00Z","tool":"@acme/crm"}'
     ).encode()
     expected = hmac.new(b"k", expected_bytes, hashlib.sha256).hexdigest()
@@ -120,48 +120,82 @@ def test_missing_signed_fields_are_signed_as_null():
 
 
 # ---------------------------------------------------------------------------
-# approved_call_of
+# _claim_approved_call
 # ---------------------------------------------------------------------------
 
 def test_a_valid_call_verifies():
-    call, reason = approved_call_of({APPROVED_CALL_KEY: _signed()}, now=NOW, key=KEY)
+    call, reason = _claim_approved_call({APPROVED_CALL_KEY: _signed()}, now=NOW, key=KEY)
     assert reason is None
     assert call == ApprovedCall("c-1", "refund", {"order": "A1", "amount": 5})
 
 
 def test_no_approved_call_is_none_none():
-    assert approved_call_of(None, now=NOW, key=KEY) == (None, None)
-    assert approved_call_of({}, now=NOW, key=KEY) == (None, None)
-    assert approved_call_of({"other": 1}, now=NOW, key=KEY) == (None, None)
+    assert _claim_approved_call(None, now=NOW, key=KEY) == (None, None)
+    assert _claim_approved_call({}, now=NOW, key=KEY) == (None, None)
+    assert _claim_approved_call({"other": 1}, now=NOW, key=KEY) == (None, None)
 
 
 def test_key_comes_from_the_environment(monkeypatch):
     meta = {APPROVED_CALL_KEY: _signed()}
-    assert approved_call_of(meta, now=NOW) == (None, "no approval key in this environment")
+    assert _claim_approved_call(meta, now=NOW) == (None, "no approval key in this environment")
     monkeypatch.setenv(APPROVAL_KEY_ENV, "")
-    assert approved_call_of(meta, now=NOW) == (None, "no approval key in this environment")
+    assert _claim_approved_call(meta, now=NOW) == (None, "no approval key in this environment")
     monkeypatch.setenv(APPROVAL_KEY_ENV, KEY)
-    call, reason = approved_call_of(meta, now=NOW)
+    call, reason = _claim_approved_call(meta, now=NOW)
     assert reason is None and call is not None
 
 
 def test_an_explicit_key_wins_over_the_environment(monkeypatch):
     monkeypatch.setenv(APPROVAL_KEY_ENV, "other")
-    call, reason = approved_call_of({APPROVED_CALL_KEY: _signed()}, now=NOW, key=KEY)
+    call, reason = _claim_approved_call({APPROVED_CALL_KEY: _signed()}, now=NOW, key=KEY)
     assert reason is None and call is not None
 
 
 def test_a_signature_from_another_key_is_refused():
     meta = {APPROVED_CALL_KEY: _signed(key="someone-else")}
-    assert approved_call_of(meta, now=NOW, key=KEY) == (None, "bad signature")
+    assert _claim_approved_call(meta, now=NOW, key=KEY) == (None, "bad signature")
 
 
-@pytest.mark.parametrize("signature", [None, "", "x", "0" * 64, "0" * 65, 5, ["a"]])
-def test_garbage_or_wrong_length_signatures_are_refused(signature):
+@pytest.mark.parametrize(
+    "signature",
+    [None, "", "x", "0" * 63, "0" * 65, 5, ["a"], "é" * 64, "\ud800" * 64, "\ud800", "A" * 64, "G" * 64],
+)
+def test_signatures_not_lowercase_hex_64_are_malformed(signature):
     raw = _call()
     if signature is not None:
         raw["signature"] = signature
-    assert approved_call_of({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "bad signature")
+    assert _claim_approved_call({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "malformed")
+
+
+def test_uppercase_hex_of_a_valid_signature_is_malformed():
+    raw = _signed()
+    raw["signature"] = raw["signature"].upper()
+    assert _claim_approved_call({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "malformed")
+
+
+def test_a_well_formed_but_wrong_signature_is_bad_signature():
+    raw = _call()
+    raw["signature"] = "0" * 64
+    assert _claim_approved_call({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "bad signature")
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), "\ud800", {"k": ["\ud800"]}, {1, 2}])
+def test_arguments_that_cannot_be_canonicalised_are_malformed_not_a_crash(bad):
+    raw = _call(arguments={"v": bad})
+    raw["signature"] = "a" * 64
+    assert _claim_approved_call({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "malformed")
+    assert confirmations._RUN == set()
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_canonical_json_refuses_non_finite_numbers(bad):
+    with pytest.raises(ValueError):
+        canonical_json({"v": bad})
+
+
+def test_canonical_json_refuses_a_lone_surrogate():
+    with pytest.raises(UnicodeEncodeError):
+        canonical_json({"v": "\ud800"})
 
 
 @pytest.mark.parametrize(
@@ -177,7 +211,7 @@ def test_garbage_or_wrong_length_signatures_are_refused(signature):
 def test_tampering_with_any_signed_field_breaks_the_signature(field, value):
     raw = _signed()
     raw[field] = value
-    assert approved_call_of({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "bad signature")
+    assert _claim_approved_call({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "bad signature")
 
 
 def test_the_signature_field_is_not_part_of_the_signed_bytes():
@@ -185,13 +219,13 @@ def test_the_signature_field_is_not_part_of_the_signed_bytes():
     assert sign_approved_call(raw, KEY) == sign_approved_call({**raw, "signature": "other"}, KEY)
     # Unsigned extras don't matter either.
     raw["note"] = "free text"
-    call, reason = approved_call_of({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY)
+    call, reason = _claim_approved_call({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY)
     assert reason is None and call is not None
 
 
 @pytest.mark.parametrize("raw", ["text", ["a"], 5, True])
 def test_a_non_dict_approved_call_is_malformed(raw):
-    assert approved_call_of({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "malformed")
+    assert _claim_approved_call({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "malformed")
 
 
 @pytest.mark.parametrize(
@@ -209,46 +243,51 @@ def test_a_non_dict_approved_call_is_malformed(raw):
     ],
 )
 def test_validly_signed_but_malformed_calls_are_refused(over):
-    assert approved_call_of({APPROVED_CALL_KEY: _signed(**over)}, now=NOW, key=KEY) == (None, "malformed")
+    assert _claim_approved_call({APPROVED_CALL_KEY: _signed(**over)}, now=NOW, key=KEY) == (None, "malformed")
 
 
 def test_expiry_is_exclusive_and_accepts_z():
     z = "2026-10-09T12:30:00Z"
-    call, reason = approved_call_of({APPROVED_CALL_KEY: _signed(expires_at=z)}, now=NOW, key=KEY)
+    call, reason = _claim_approved_call({APPROVED_CALL_KEY: _signed(expires_at=z)}, now=NOW, key=KEY)
     assert reason is None and call is not None
     at = datetime(2026, 10, 9, 12, 30, tzinfo=UTC)
+    confirmations._RUN.clear()
     meta = {APPROVED_CALL_KEY: _signed(expires_at=z)}
-    assert approved_call_of(meta, now=at, key=KEY) == (None, "expired")
-    assert approved_call_of(meta, now=at + timedelta(seconds=1), key=KEY) == (None, "expired")
-    assert approved_call_of(meta, now=at - timedelta(microseconds=1), key=KEY)[1] is None
-    assert approved_call_of({APPROVED_CALL_KEY: _signed(expires_at=EARLIER)}, now=NOW, key=KEY) == (None, "expired")
+    assert _claim_approved_call(meta, now=at, key=KEY) == (None, "expired")
+    assert _claim_approved_call(meta, now=at + timedelta(seconds=1), key=KEY) == (None, "expired")
+    assert _claim_approved_call(meta, now=at - timedelta(microseconds=1), key=KEY)[1] is None
+    assert _claim_approved_call({APPROVED_CALL_KEY: _signed(expires_at=EARLIER)}, now=NOW, key=KEY) == (None, "expired")
 
 
 def test_expiry_defaults_to_the_real_clock():
     past = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
     future = (datetime.now(UTC) + timedelta(minutes=5)).isoformat()
-    assert approved_call_of({APPROVED_CALL_KEY: _signed(expires_at=past)}, key=KEY) == (None, "expired")
-    assert approved_call_of({APPROVED_CALL_KEY: _signed(expires_at=future)}, key=KEY)[1] is None
+    assert _claim_approved_call({APPROVED_CALL_KEY: _signed(expires_at=past)}, key=KEY) == (None, "expired")
+    assert _claim_approved_call({APPROVED_CALL_KEY: _signed(expires_at=future)}, key=KEY)[1] is None
 
 
-def test_replay_is_refused_after_mark_run():
+def test_claiming_is_one_step_so_a_replay_is_refused():
     meta = {APPROVED_CALL_KEY: _signed()}
-    call, reason = approved_call_of(meta, now=NOW, key=KEY)
+    call, reason = _claim_approved_call(meta, now=NOW, key=KEY)
     assert call is not None and reason is None
-    # Verifying alone doesn't consume it.
-    assert approved_call_of(meta, now=NOW, key=KEY)[0] == call
-    mark_run(call)
-    assert approved_call_of(meta, now=NOW, key=KEY) == (None, "already run")
+    assert "c-1" in confirmations._RUN
+    assert _claim_approved_call(meta, now=NOW, key=KEY) == (None, "already run")
     # Another confirmation is unaffected.
     other = {APPROVED_CALL_KEY: _signed(confirmation_id="c-2")}
-    assert approved_call_of(other, now=NOW, key=KEY)[1] is None
+    assert _claim_approved_call(other, now=NOW, key=KEY)[1] is None
+
+
+def test_a_refused_call_is_not_claimed():
+    _claim_approved_call({APPROVED_CALL_KEY: _signed(key="other")}, now=NOW, key=KEY)
+    _claim_approved_call({APPROVED_CALL_KEY: _signed(expires_at=EARLIER)}, now=NOW, key=KEY)
+    assert confirmations._RUN == set()
 
 
 def test_a_bad_signature_is_reported_before_a_replay():
-    mark_run(ApprovedCall("c-1", "refund", {}))
+    confirmations._RUN.add("c-1")
     raw = _signed()
     raw["signature"] = "0" * 64
-    assert approved_call_of({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "bad signature")
+    assert _claim_approved_call({APPROVED_CALL_KEY: raw}, now=NOW, key=KEY) == (None, "bad signature")
 
 
 # ---------------------------------------------------------------------------
@@ -257,25 +296,25 @@ def test_a_bad_signature_is_reported_before_a_replay():
 
 def test_sensitive_flags_keep_only_str_to_bool():
     meta = {SENSITIVE_TOOLS_KEY: {"a": True, "b": False, "": True, "c": "yes", "d": 1, "e": None, 7: True}}
-    assert sensitive_flags_of(meta) == {"a": True, "b": False}
+    assert _sensitive_flags_of(meta) == {"a": True, "b": False}
 
 
 @pytest.mark.parametrize("raw", ["x", ["a"], 5, None, True])
 def test_non_dict_flags_are_empty(raw):
-    assert sensitive_flags_of({SENSITIVE_TOOLS_KEY: raw}) == {}
+    assert _sensitive_flags_of({SENSITIVE_TOOLS_KEY: raw}) == {}
 
 
 @pytest.mark.parametrize("meta", [None, {}, {"other": 1}])
 def test_missing_flags_are_empty(meta):
-    assert sensitive_flags_of(meta) == {}
+    assert _sensitive_flags_of(meta) == {}
 
 
 def test_is_peer_turn_only_for_literal_true():
-    assert is_peer_turn({PEER_TURN_KEY: True}) is True
+    assert _is_peer_turn({PEER_TURN_KEY: True}) is True
     for value in (1, "true", False, None):
-        assert is_peer_turn({PEER_TURN_KEY: value}) is False
-    assert is_peer_turn(None) is False
-    assert is_peer_turn({}) is False
+        assert _is_peer_turn({PEER_TURN_KEY: value}) is False
+    assert _is_peer_turn(None) is False
+    assert _is_peer_turn({}) is False
 
 
 def test_keys_and_exports():
@@ -284,6 +323,27 @@ def test_keys_and_exports():
     assert PEER_TURN_KEY == "genfleet.peer_turn"
     assert CONFIRMATION_REQUESTS_KEY == "genfleet.confirmation_requests"
     assert APPROVAL_KEY_ENV == "GENFLEET_APPROVAL_KEY"
+    from genfleet import sdk
+
+    assert sdk.APPROVAL_KEY_ENV is APPROVAL_KEY_ENV
+    assert sdk.PEER_TURN_KEY is PEER_TURN_KEY
+    assert sdk.canonical_json is canonical_json
+    assert sdk.APPROVED_CALL_KEY is APPROVED_CALL_KEY
+    assert sdk.SENSITIVE_TOOLS_KEY is SENSITIVE_TOOLS_KEY
+    assert sdk.CONFIRMATION_REQUESTS_KEY is CONFIRMATION_REQUESTS_KEY
+    assert sdk.sign_approved_call is sign_approved_call
+    for name in ("APPROVAL_KEY_ENV", "PEER_TURN_KEY", "canonical_json"):
+        assert name in sdk.__all__
+
+
+def test_is_sensitive_is_add_only_and_never_for_remember():
+    assert _is_sensitive("a", False, {}) is False
+    assert _is_sensitive("a", True, {}) is True
+    assert _is_sensitive("a", False, {"a": True}) is True
+    assert _is_sensitive("a", True, {"a": False}) is True
+    assert _is_sensitive("a", False, {"a": False}) is False
+    assert _is_sensitive("remember", True, {"remember": True}) is False
+    assert _is_sensitive("remember", False, {"remember": True}) is False
 
 
 # ---------------------------------------------------------------------------
@@ -395,10 +455,11 @@ async def test_a_sensitive_tool_is_not_run_and_is_reported():
     model = _Model(_call_round("refund", order="A1"), _DONE)
     outputs = await _run(_agent(model, tools=[refund, lookup]), {})
     assert ran == []
-    assert _tool_messages(model) == [PENDING_RESULT]
+    assert _tool_messages(model) == [_PENDING_RESULT]
     result = _events(outputs, "tool_result")[0]
-    assert result["ok"] is True
-    assert result["output"] == PENDING_RESULT
+    assert result["ok"] is False
+    assert result["status"] == "pending"
+    assert result["output"] == _PENDING_RESULT
     assert outputs[-1].done is True
     assert _requests(outputs) == [{"tool": "refund", "arguments": {"order": "A1"}}]
 
@@ -408,6 +469,7 @@ async def test_an_ordinary_tool_still_runs_and_leaves_metadata_empty():
     model = _Model(_call_round("lookup", order="A1"), _DONE)
     outputs = await _run(_agent(model, tools=[refund, lookup]), {})
     assert ran == [("lookup", {"order": "A1"})]
+    assert "status" not in _events(outputs, "tool_result")[0]
     assert outputs[-1].done is True
     assert outputs[-1].metadata == {}
 
@@ -482,11 +544,27 @@ async def test_platform_flag_makes_an_unmarked_tool_sensitive():
 
 
 @pytest.mark.asyncio
-async def test_platform_flag_false_unmarks_an_author_sensitive_tool():
+async def test_a_forged_false_flag_does_not_unmark_an_author_sensitive_tool():
     model = _Model(_call_round("refund", order="A1"), _DONE)
     outputs = await _run(_agent(model, tools=[refund]), {SENSITIVE_TOOLS_KEY: {"refund": False}})
-    assert ran == [("refund", {"order": "A1", "amount": 0})]
+    assert ran == []
+    assert _tool_messages(model) == [_PENDING_RESULT]
+    assert _events(outputs, "tool_result")[0]["status"] == "pending"
+    assert _requests(outputs) == [{"tool": "refund", "arguments": {"order": "A1"}}]
+
+
+@pytest.mark.asyncio
+async def test_remember_is_never_sensitive():
+    @tool(sensitive=True)
+    def remember(fact: str = "") -> str:
+        ran.append(("remember", {"fact": fact}))
+        return "saved"
+
+    model = _Model(_call_round("remember", fact="f"), _DONE)
+    outputs = await _run(_agent(model, tools=[remember]), {SENSITIVE_TOOLS_KEY: {"remember": True}})
+    assert ran == [("remember", {"fact": "f"})]
     assert _requests(outputs) == []
+    assert "status" not in _events(outputs, "tool_result")[0]
 
 
 @pytest.mark.asyncio
@@ -504,9 +582,21 @@ async def test_a_peer_turn_refuses_a_sensitive_tool():
     assert ran == []
     result = _events(outputs, "tool_result")[0]
     assert result["ok"] is False
-    assert result["output"] == PEER_REFUSAL
-    assert _tool_messages(model) == [PEER_REFUSAL]
+    assert result["output"] == _PEER_REFUSAL
+    assert _tool_messages(model) == [_PEER_REFUSAL]
+    assert "status" not in result
     assert outputs[-1].metadata == {}
+
+
+@pytest.mark.asyncio
+async def test_a_peer_turn_refuses_an_author_sensitive_tool_even_if_flags_say_false():
+    model = _Model(_call_round("refund", order="A1"), _DONE)
+    outputs = await _run(
+        _agent(model, tools=[refund]), {PEER_TURN_KEY: True, SENSITIVE_TOOLS_KEY: {"refund": False}}
+    )
+    assert ran == []
+    assert _events(outputs, "tool_result")[0]["output"] == _PEER_REFUSAL
+    assert _requests(outputs) == []
 
 
 @pytest.mark.asyncio
@@ -567,7 +657,7 @@ async def test_mcp_sensitive_tools_config_waits_for_approval(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcp_platform_flag_overrides_the_config_by_name(monkeypatch):
+async def test_mcp_platform_flag_only_adds_never_unmarks(monkeypatch):
     config = {"type": "sse", "url": "http://mcp.test", "sensitive_tools": ["wire"]}
     _mcp_fetch(monkeypatch, ["wire", "read"])
     invoked: list[str] = []
@@ -586,8 +676,11 @@ async def test_mcp_platform_flag_overrides_the_config_by_name(monkeypatch):
         _DONE,
     )
     outputs = await _run(_agent(model, mcps=[config]), flags)
-    assert invoked == ["wire"]
-    assert _requests(outputs) == [{"tool": "read", "arguments": {}}]
+    assert invoked == []
+    assert _requests(outputs) == [
+        {"tool": "wire", "arguments": {}},
+        {"tool": "read", "arguments": {}},
+    ]
 
 
 @pytest.mark.asyncio
@@ -793,3 +886,28 @@ async def test_a_turn_with_no_approval_adds_no_note():
 def test_json_dumps_is_what_canonical_json_wraps():
     value = {"b": [1, {"y": 1, "x": 2}], "a": "é"}
     assert canonical_json(value) == json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+
+@pytest.mark.asyncio
+async def test_an_approved_call_is_audited_like_any_tool_call(key):
+    received = []
+    agent = _agent(_Model(_DONE), tools=[refund], audit={"backend": "callback", "callback": received.append})
+    await _run(agent, _approved_meta())
+    assert ran == [("refund", {"order": "A1", "amount": 5})]
+    types = [e.event_type for e in received]
+    assert "tool.call" in types and "tool.result" in types
+    assert types.index("tool.call") < types.index("tool.result")
+    call = next(e for e in received if e.event_type == "tool.call")
+    assert call.data["tool_name"] == "refund"
+    result = next(e for e in received if e.event_type == "tool.result")
+    assert result.data["tool_name"] == "refund"
+    assert result.data["result"] == "refunded"
+
+
+@pytest.mark.asyncio
+async def test_a_pending_sensitive_call_is_not_audited_as_a_tool_run():
+    received = []
+    model = _Model(_call_round("refund", order="A1"), _DONE)
+    await _run(_agent(model, tools=[refund], audit={"backend": "callback", "callback": received.append}), {})
+    assert ran == []
+    assert "tool.result" not in [e.event_type for e in received]
