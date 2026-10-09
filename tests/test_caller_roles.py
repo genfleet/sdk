@@ -8,7 +8,7 @@ import pytest
 
 from genfleet.sdk import Agent, AgentInput, AgentOutput, ToolCall, tool
 from genfleet.sdk import agent as agent_module
-from genfleet.sdk.caller import CALLER_METADATA_KEY, HOSTED_ENV, Caller, caller_of, may_use
+from genfleet.sdk.caller import _LEGACY_HOSTED_ENV, CALLER_METADATA_KEY, HOSTED_ENV, Caller, caller_of, may_use
 from genfleet.sdk.manifest import ManifestError, load_agent_manifest
 
 
@@ -148,6 +148,7 @@ def _reset_ran(monkeypatch):
     ran.clear()
     # Not hosted unless a test says so.
     monkeypatch.delenv(HOSTED_ENV, raising=False)
+    monkeypatch.delenv(_LEGACY_HOSTED_ENV, raising=False)
 
 
 @pytest.mark.asyncio
@@ -233,11 +234,22 @@ def test_empty_or_unknown_audiences_are_rejected(tmp_path, value):
 @pytest.mark.asyncio
 async def test_a_hosted_turn_without_a_caller_gets_the_narrowest_set(monkeypatch):
     """In a platform sandbox the engine always sets the key; its absence is not trust."""
-    monkeypatch.setenv(HOSTED_ENV, "spawn-token")
+    monkeypatch.setenv(HOSTED_ENV, "1")
     assert caller_of({}) == Caller(role="customer")
     model = _Model(_DONE)
     await _run(_agent(model, tools=[lookup_order, refund]), {})
     assert set(model.offered) == {"lookup_order"}
+
+
+def test_an_older_engine_s_a2a_token_still_marks_a_sandbox_hosted(monkeypatch):
+    """Engines before GENFLEET_HOSTED set only the per-spawn token, in container sandboxes."""
+    monkeypatch.setenv(_LEGACY_HOSTED_ENV, "spawn-token")
+    assert caller_of({}) == Caller(role="customer")
+
+
+def test_an_empty_marker_is_not_hosted(monkeypatch):
+    monkeypatch.setenv(HOSTED_ENV, "")
+    assert caller_of({}) is None
 
 
 @pytest.mark.asyncio
