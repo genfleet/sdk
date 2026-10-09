@@ -16,18 +16,25 @@ What it decides here is which tools the turn may use:
 ``name`` is the sender's own display name and is untrusted text: never base a
 decision on it, and don't put it in a system prompt as if it were a fact.
 
-A turn without the key did not come from the platform (a local ``serve``, a
-test), and nothing is filtered. A key that is present but malformed is treated
-as a customer in a group: the narrowest tool set.
+A turn without the key is filtered by where the agent runs. Hosted (the
+platform spawned it: ``GENFLEET_A2A_TOKEN`` is set), the engine always sets the
+key, so a missing one is read as the narrowest caller. Not hosted (a local
+``serve``, a test), there are no roles and nothing is filtered. A key that is
+present but malformed is always the narrowest caller: a customer in a group.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
 #: ``AgentInput.metadata`` key the platform sets on every hosted turn.
 CALLER_METADATA_KEY = "genfleet.caller"
+
+#: Set in every sandbox the platform spawns (the per-spawn A2A token): the
+#: agent is hosted, and a turn without a caller is not trusted with every tool.
+HOSTED_ENV = "GENFLEET_A2A_TOKEN"
 
 Role = Literal["operator", "customer"]
 ROLES: tuple[Role, ...] = ("operator", "customer")
@@ -70,9 +77,9 @@ _NARROWEST = Caller(role="customer")
 
 
 def caller_of(metadata: dict[str, Any] | None) -> Caller | None:
-    """The turn's caller, ``None`` for a turn that did not come from the platform."""
+    """The turn's caller; ``None`` (no roles) only for an agent the platform did not spawn."""
     if not metadata or CALLER_METADATA_KEY not in metadata:
-        return None
+        return _NARROWEST if os.environ.get(HOSTED_ENV) else None
     raw = metadata[CALLER_METADATA_KEY]
     if not isinstance(raw, dict) or raw.get("role") not in ROLES:
         return _NARROWEST

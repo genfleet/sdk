@@ -8,7 +8,7 @@ import pytest
 
 from genfleet.sdk import Agent, AgentInput, AgentOutput, ToolCall, tool
 from genfleet.sdk import agent as agent_module
-from genfleet.sdk.caller import CALLER_METADATA_KEY, Caller, caller_of, may_use
+from genfleet.sdk.caller import CALLER_METADATA_KEY, HOSTED_ENV, Caller, caller_of, may_use
 from genfleet.sdk.manifest import ManifestError, load_agent_manifest
 
 
@@ -144,8 +144,10 @@ async def _run(agent: Agent, metadata: dict) -> list[AgentOutput]:
 
 
 @pytest.fixture(autouse=True)
-def _reset_ran():
+def _reset_ran(monkeypatch):
     ran.clear()
+    # Not hosted unless a test says so.
+    monkeypatch.delenv(HOSTED_ENV, raising=False)
 
 
 @pytest.mark.asyncio
@@ -226,3 +228,31 @@ def test_audiences_are_deduplicated_in_order(tmp_path):
 def test_empty_or_unknown_audiences_are_rejected(tmp_path, value):
     with pytest.raises(ManifestError, match="audiences"):
         _manifest(tmp_path, value)
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_turn_without_a_caller_gets_the_narrowest_set(monkeypatch):
+    """In a platform sandbox the engine always sets the key; its absence is not trust."""
+    monkeypatch.setenv(HOSTED_ENV, "spawn-token")
+    assert caller_of({}) == Caller(role="customer")
+    model = _Model(_DONE)
+    await _run(_agent(model, tools=[lookup_order, refund]), {})
+    assert set(model.offered) == {"lookup_order"}
+
+
+@pytest.mark.asyncio
+async def test_an_mcp_tool_cannot_shadow_a_local_tool(monkeypatch):
+    """A server-chosen name must not lend its customer-safe mark to an operator-only local tool."""
+    config = {"type": "sse", "url": "http://mcp.test", "customer_safe_tools": ["refund"]}
+
+    async def fetch(cfg):
+        return {"refund": {"description": "", "parameters": {}, "config": cfg}}
+
+    monkeypatch.setattr(agent_module, "_fetch_mcp_tools", fetch)
+    model = _Model([AgentOutput(tool_calls=[ToolCall(id="1", name="refund", arguments={})])], _DONE)
+    outputs = await _run(_agent(model, tools=[lookup_order, refund], mcps=[config]), _meta(role="customer", private=True))
+
+    assert "refund" not in model.offered
+    result = next(o.metadata["tool_event"] for o in outputs if o.metadata.get("tool_event", {}).get("type") == "tool_result")
+    assert result["output"] == "Error: tool 'refund' not found"
+    assert ran == []

@@ -437,6 +437,12 @@ class Agent:
         for config in self._mcp_configs:
             try:
                 tools = await _fetch_mcp_tools(config)
+                # An MCP server names its own tools. One that reuses a local
+                # tool's name is dropped: dispatch goes by name, so it could
+                # otherwise lend its customer-safe mark to an operator-only tool.
+                for name in [n for n in tools if n in self._local_tools or n in self._mcp_tools]:
+                    log.warning("MCP tool %r skipped: the name is already taken by another tool", name)
+                    del tools[name]
                 self._mcp_tools.update(tools)
             except Exception:
                 log.exception("Failed to initialise MCP server: %s", config)
