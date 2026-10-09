@@ -263,7 +263,7 @@ Mark the tools a customer may use:
 def order_status(order_id: str) -> str: ...
 ```
 
-An unmarked tool is operator-only: it is offered only to an operator in a private chat. Customers, and operators writing in a group, see only `customer_safe` tools, and a call to any other tool is refused as "not found". For MCP servers, list the safe tools in the config: `{"type": "sse", "url": "...", "customer_safe_tools": ["search"]}`. An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the key gets every tool. In a platform sandbox (`GENFLEET_A2A_TOKEN` set) a missing key gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
+An unmarked tool is operator-only: it is offered only to an operator in a private chat. Customers, and operators writing in a group, see only `customer_safe` tools, and a call to any other tool is refused as "not found". For MCP servers, list the safe tools in the config: `{"type": "sse", "url": "...", "customer_safe_tools": ["search"]}`. An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the key gets every tool. In a platform sandbox (`GENFLEET_HOSTED` set; on older engines, `GENFLEET_A2A_TOKEN`) a missing key gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
 
 Declare who the agent serves in `genfleet.toml`:
 

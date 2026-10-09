@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## 0.17.1
+
+- **A sandbox is hosted when `GENFLEET_HOSTED` is set.** The engine sets it in every sandbox it spawns, process sandboxes included. Before, the SDK keyed on `GENFLEET_A2A_TOKEN`, which a process sandbox never gets, so a process-hosted agent reached without `genfleet.caller` offered every tool. `GENFLEET_A2A_TOKEN` still counts as hosted, for engines that don't set the new marker yet. `HOSTED_ENV` is now `"GENFLEET_HOSTED"`.
+
 ## 0.17.0
 
 - **Operators and customers (ADR-0028).** On a hosted turn the platform sets `metadata["genfleet.caller"]` = `{role, id, name, channel, private, legacy_tools}`, resolved from the provider-verified sender and overwritten from any value a caller sends. `role` is `"operator"` (tenant staff) or `"customer"`. `name` is the sender's own display name: untrusted text, never an authorization input. `genfleet.sdk.caller` adds `CALLER_METADATA_KEY`, `Caller`, `caller_of(metadata)` and `may_use(caller, customer_safe=…)`.

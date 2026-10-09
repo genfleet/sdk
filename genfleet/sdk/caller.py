@@ -17,7 +17,7 @@ What it decides here is which tools the turn may use:
 decision on it, and don't put it in a system prompt as if it were a fact.
 
 A turn without the key is filtered by where the agent runs. Hosted (the
-platform spawned it: ``GENFLEET_A2A_TOKEN`` is set), the engine always sets the
+platform spawned it: ``GENFLEET_HOSTED`` is set), the engine always sets the
 key, so a missing one is read as the narrowest caller. Not hosted (a local
 ``serve``, a test), there are no roles and nothing is filtered. A key that is
 present but malformed is always the narrowest caller: a customer in a group.
@@ -32,9 +32,13 @@ from typing import Any, Literal
 #: ``AgentInput.metadata`` key the platform sets on every hosted turn.
 CALLER_METADATA_KEY = "genfleet.caller"
 
-#: Set in every sandbox the platform spawns (the per-spawn A2A token): the
-#: agent is hosted, and a turn without a caller is not trusted with every tool.
-HOSTED_ENV = "GENFLEET_A2A_TOKEN"
+#: Set in every sandbox the platform spawns, container or process: the agent is
+#: hosted, and a turn without a caller is not trusted with every tool.
+HOSTED_ENV = "GENFLEET_HOSTED"
+
+#: Engines older than the ``GENFLEET_HOSTED`` marker set only the per-spawn A2A
+#: token, and only in container sandboxes. It still counts as hosted.
+_LEGACY_HOSTED_ENV = "GENFLEET_A2A_TOKEN"
 
 Role = Literal["operator", "customer"]
 ROLES: tuple[Role, ...] = ("operator", "customer")
@@ -76,10 +80,14 @@ class Caller:
 _NARROWEST = Caller(role="customer")
 
 
+def _hosted() -> bool:
+    return bool(os.environ.get(HOSTED_ENV) or os.environ.get(_LEGACY_HOSTED_ENV))
+
+
 def caller_of(metadata: dict[str, Any] | None) -> Caller | None:
     """The turn's caller; ``None`` (no roles) only for an agent the platform did not spawn."""
     if not metadata or CALLER_METADATA_KEY not in metadata:
-        return _NARROWEST if os.environ.get(HOSTED_ENV) else None
+        return _NARROWEST if _hosted() else None
     raw = metadata[CALLER_METADATA_KEY]
     if not isinstance(raw, dict) or raw.get("role") not in ROLES:
         return _NARROWEST
