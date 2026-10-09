@@ -30,17 +30,22 @@ from .schemas import (
     ToolCall,
     ToolSchema,
 )
-from .caller import Caller, caller_of, may_use
-from .tool import ToolWrapper, _build_schema
+from .caller import (
+    Audience,
+    Caller,
+    caller_of,
+    effective_audiences,
+    marked,
+    may_offer,
+    tool_audiences_of,
+)
+from .tool import ToolWrapper, wrap_tool
 
 log = logging.getLogger("genfleet.sdk.agent")
 
 
 def _wrap_tool(fn: Callable) -> ToolWrapper:
-    if isinstance(fn, ToolWrapper):
-        return fn
-    schema = _build_schema(fn, name=fn.__name__, description=fn.__doc__ or "")
-    return ToolWrapper(fn=fn, schema=schema)
+    return wrap_tool(fn)
 
 
 def _tool_call_to_dict(tc: ToolCall) -> dict:
@@ -178,11 +183,11 @@ class Agent:
                 messages.append(self._message_to_dict(msg))
             messages.append({"role": "user", "content": input.message})
 
-            # The tools this caller may use (ADR-0028): only customer-safe ones
-            # on a customer's turn or in a group chat. A tool left out here is
-            # also refused at dispatch, whatever the model asks for.
+            # The tools this caller may use (ADR-0028): by each tool's
+            # audience, the platform's per-tool setting first. A tool left out
+            # here is also refused at dispatch, whatever the model asks for.
             caller = caller_of(input.metadata)
-            offered = self._offered_tools(caller)
+            offered = self._offered_tools(caller, tool_audiences_of(input.metadata))
             tool_schemas = [w.schema() for name, w in self._local_tools.items() if name in offered]
             tool_schemas += [
                 ToolSchema(name=name, description=spec["description"], parameters=spec["parameters"])
@@ -407,12 +412,19 @@ class Agent:
         else:
             await self._memory.save(session_id, list(history) + turn)
 
-    def _offered_tools(self, caller: Caller | None) -> set[str]:
-        """Names of the tools offered on this caller's turn."""
-        names = {n for n, w in self._local_tools.items() if may_use(caller, customer_safe=w.customer_safe)}
+    def _offered_tools(self, caller: Caller | None, overrides: dict[str, frozenset[Audience]]) -> set[str]:
+        """Names of the tools offered on this caller's turn, by ``effective_audiences``."""
+        names = {
+            n for n, w in self._local_tools.items()
+            if may_offer(caller, effective_audiences(n, w.slug, w.audiences, overrides))
+        }
         names |= {
             n for n, spec in self._mcp_tools.items()
-            if may_use(caller, customer_safe=n in spec["config"].get("customer_safe_tools", []))
+            # MCP: `customer_safe_tools` is the config's (legacy) marking; the
+            # platform's setting names an MCP tool by name only.
+            if may_offer(
+                caller, effective_audiences(n, None, marked(n in spec["config"].get("customer_safe_tools", [])), overrides)
+            )
         }
         return names
 
@@ -473,8 +485,8 @@ async def _fetch_mcp_tools(config: MCPConfig) -> dict[str, dict]:
     """Connect to an MCP server and return its tool schemas."""
     try:
         from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
         from mcp.client.sse import sse_client
+        from mcp.client.stdio import stdio_client
     except ImportError:
         raise ImportError(
             "MCP support requires the mcp extra: pip install 'genfleet-sdk[mcp]'"
@@ -523,8 +535,8 @@ async def _invoke_mcp_tool(config: MCPConfig, name: str, arguments: dict) -> tup
         return "Error: unsupported MCP transport", False
 
     from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
     from mcp.client.sse import sse_client
+    from mcp.client.stdio import stdio_client
 
     if config["type"] == "stdio":
         transport = stdio_client(StdioServerParameters(

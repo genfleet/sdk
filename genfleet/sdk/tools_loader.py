@@ -28,8 +28,10 @@ put there.
 
 from __future__ import annotations
 
+import functools
 import importlib.machinery
 import importlib.util
+import inspect
 import logging
 import os
 import sys
@@ -46,7 +48,7 @@ from .manifest import (
     load_agent_manifest,
     load_tool_manifest,
 )
-
+from .tool import TOOL_SLUG_ATTR, ToolWrapper, wrap_tool
 
 # Set by whatever unpacked the agent — the engine, a sandbox, a test harness.
 # Exists because an agent's own idea of where it lives is computed when the
@@ -378,6 +380,11 @@ def load_tools(
     """
     The tools named in an agent's `genfleet.toml`, ready to pass to `Agent`.
 
+    Each comes back carrying its manifest slug (0.18), so the platform's
+    per-tool audience can name it by slug: a plain callable as a fresh proxy
+    that behaves exactly like it (sync stays sync, results are unchanged), a
+    `ToolWrapper` as a copy. The loaded object itself is never modified.
+
         from genfleet.sdk import Agent, load_tools
 
         def build_agent(remote_tools=()):
@@ -426,9 +433,39 @@ def load_tools(
     resolved: list[Callable] = []
     for ref in spec.tools:
         try:
-            resolved.append(active.resolve(ref))
+            fn = active.resolve(ref)
         except ToolResolutionError as exc:
             # Name the agent as well as the tool. With several agents in one
             # repo, "not installed" alone does not say which manifest to fix.
             raise ToolResolutionError(f"{spec.name}: {exc}") from exc
+        resolved.append(_with_slug(fn, ref.slug))
     return resolved
+
+
+def _with_slug(fn: Callable, slug: str) -> Callable:
+    """``fn`` carrying ``slug``, as a new object (ADR-0028).
+
+    Not an attribute set on ``fn``: a loaded object can be shared (one module,
+    two manifests), and tagging it would let one agent's slug overwrite
+    another's. A proxy per call keeps each agent's own.
+    """
+    if isinstance(fn, ToolWrapper):
+        return fn.with_slug(slug)
+    if not (inspect.isfunction(fn) or inspect.ismethod(fn)):
+        # A builtin, a partial, an `itemgetter`, a callable instance: no
+        # signature to copy faithfully onto a proxy, so a ToolWrapper instead.
+        return wrap_tool(fn, slug=slug)
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def proxy(*args: Any, **kwargs: Any) -> Any:
+            return await fn(*args, **kwargs)
+
+    else:
+
+        @functools.wraps(fn)
+        def proxy(*args: Any, **kwargs: Any) -> Any:
+            return fn(*args, **kwargs)
+
+    setattr(proxy, TOOL_SLUG_ATTR, slug)
+    return proxy

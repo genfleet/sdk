@@ -5,27 +5,43 @@ sender (a Telegram user id, a WhatsApp number, a signed-in dashboard member)
 and sets it on ``AgentInput.metadata`` under :data:`CALLER_METADATA_KEY`. The
 engine overwrites any value a caller supplied, so agent code can trust it.
 
-What it decides here is which tools the turn may use:
+What it decides here is which tools the turn may use. Every tool has an
+**audience**: ``operator``, ``customer``, or both.
 
-- An **operator** in a **private** chat gets every tool.
+- An **operator** in a **private** chat gets the tools whose audience
+  includes ``operator``.
 - Anyone else (a customer, or an operator writing in a group, where the reply
-  is seen by everyone) gets only the tools marked customer-safe.
-- A tool is operator-only unless it is marked customer-safe. Forgetting the
-  mark keeps a tool away from customers; it never exposes one.
+  is seen by everyone) gets the tools whose audience includes ``customer``.
+- A tool's audience is ``[operator]`` unless its author marks it with
+  ``@tool(audiences=…)``. Forgetting the mark keeps a tool away from
+  customers; it never exposes one.
+- **The platform's setting decides.** On a hosted turn the platform may send
+  the tenant owner's audience for a tool, by tool name or by manifest slug,
+  under :data:`TOOL_AUDIENCES_METADATA_KEY`. It replaces the author's marking,
+  which is only the default, and may widen it as well as narrow it. The engine
+  sets the key on every hosted turn and replaces any value a caller sent. An
+  entry the SDK can't read is offered to no one (fail closed).
+- This covers every tool an SDK ``Agent`` holds: its own functions,
+  ``load_tools()`` tools, remote tools passed in as ``tools=``, and MCP tools.
+  Tools the engine keeps itself (runner-held peers, ``remember``) are
+  filtered by the engine.
+- The platform's ``legacy_tools`` grace flag offers every tool.
 
 ``name`` is the sender's own display name and is untrusted text: never base a
 decision on it, and don't put it in a system prompt as if it were a fact.
 
-A turn without the key is filtered by where the agent runs. Hosted (the
-platform spawned it: ``GENFLEET_HOSTED`` is set), the engine always sets the
-key, so a missing one is read as the narrowest caller. Not hosted (a local
-``serve``, a test), there are no roles and nothing is filtered. A key that is
-present but malformed is always the narrowest caller: a customer in a group.
+A turn without the caller key is filtered by where the agent runs. Hosted
+(the platform spawned it: ``GENFLEET_HOSTED`` is set), the engine always sets
+the key, so a missing one is read as a customer in a group: the tools for
+customers, never the staff tools. Not hosted (a local ``serve``, a test),
+there are no roles and nothing is filtered. A key that is present but
+malformed is always a customer in a group.
 """
 
 from __future__ import annotations
 
 import os
+import warnings
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -40,8 +56,17 @@ HOSTED_ENV = "GENFLEET_HOSTED"
 #: token, and only in container sandboxes. It still counts as hosted.
 _LEGACY_HOSTED_ENV = "GENFLEET_A2A_TOKEN"
 
+#: ``AgentInput.metadata`` key for the tenant owner's per-tool audiences:
+#: ``{tool name or manifest slug: ["operator", "customer"]}``. Platform-set.
+TOOL_AUDIENCES_METADATA_KEY = "genfleet.tool_audiences"
+
 Role = Literal["operator", "customer"]
 ROLES: tuple[Role, ...] = ("operator", "customer")
+
+#: Who a tool is for. The same two values as a caller's role.
+Audience = Role
+OPERATOR_ONLY: frozenset[Audience] = frozenset({"operator"})
+EVERYONE: frozenset[Audience] = frozenset({"operator", "customer"})
 
 
 @dataclass(frozen=True)
@@ -62,8 +87,9 @@ class Caller:
 
     @property
     def full_toolset(self) -> bool:
-        """Whether this turn may use operator-only tools."""
-        return self.legacy_tools or (self.role == "operator" and self.private)
+        """Deprecated (0.18): ``may_offer(caller, OPERATOR_ONLY)``. Removed in 1.0 (backend#252)."""
+        _deprecated("Caller.full_toolset", "may_offer(caller, OPERATOR_ONLY)")
+        return may_offer(self, OPERATOR_ONLY)
 
     def as_metadata(self) -> dict[str, Any]:
         return {
@@ -76,7 +102,7 @@ class Caller:
         }
 
 
-#: What a malformed caller is read as: nothing more than a customer in a group.
+#: What a missing (hosted) or malformed caller is read as: a customer in a group.
 _NARROWEST = Caller(role="customer")
 
 
@@ -101,9 +127,78 @@ def caller_of(metadata: dict[str, Any] | None) -> Caller | None:
     )
 
 
+def _audiences_of(value: Any) -> frozenset[Audience] | None:
+    """A valid audience list as a set, or ``None`` (empty, unknown values, not a list)."""
+    if not isinstance(value, (list, tuple, set, frozenset)) or not value:
+        return None
+    if any(v not in ROLES for v in value):
+        return None
+    return frozenset(value)
+
+
+def tool_audiences_of(metadata: dict[str, Any] | None) -> dict[str, frozenset[Audience]]:
+    """The platform's per-tool audiences on this turn, keyed by tool name or manifest slug.
+
+    An entry whose value is not a valid audience list is read as **no
+    audience**: the tool is offered to no one. A setting that arrives broken
+    then fails closed instead of falling back to the author's (possibly
+    wider) marking. A value that is not a mapping is no setting at all.
+    """
+    raw = metadata.get(TOOL_AUDIENCES_METADATA_KEY) if metadata else None
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        key: _audiences_of(value) or frozenset()
+        for key, value in raw.items()
+        if isinstance(key, str) and key
+    }
+
+
+def effective_audiences(
+    name: str,
+    slug: str | None,
+    default: frozenset[Audience],
+    overrides: dict[str, frozenset[Audience]],
+) -> frozenset[Audience]:
+    """A tool's audience on this turn: the platform's setting for its name,
+    else for its manifest slug, else its author's marking (``default``)."""
+    if name in overrides:
+        return overrides[name]
+    if slug and slug in overrides:
+        return overrides[slug]
+    return default
+
+
+def marked(customer_safe: bool) -> frozenset[Audience]:
+    """The audience a 0.17 ``customer_safe`` marking stands for."""
+    return EVERYONE if customer_safe else OPERATOR_ONLY
+
+
+def may_offer(caller: Caller | None, audiences: frozenset[Audience]) -> bool:
+    """Whether a tool with these audiences is offered on the caller's turn.
+
+    No caller (an agent the platform did not spawn) and the ``legacy_tools``
+    grace flag offer every tool. Otherwise an operator in a private chat needs
+    ``operator`` in the audience; anyone else, ``customer``. So a
+    ``[customer]``-only tool is not offered to staff in a private chat.
+    """
+    if caller is None or caller.legacy_tools:
+        return True
+    needed: Audience = "operator" if caller.role == "operator" and caller.private else "customer"
+    return needed in audiences
+
+
 def may_use(caller: Caller | None, *, customer_safe: bool) -> bool:
-    """Whether a tool with this marking is offered on the caller's turn."""
-    return caller is None or caller.full_toolset or customer_safe
+    """Deprecated (0.18): :func:`may_offer` with ``EVERYONE`` or ``OPERATOR_ONLY``.
+
+    Removed in 1.0 (backend#252).
+    """
+    _deprecated("may_use(caller, customer_safe=…)", "may_offer(caller, EVERYONE | OPERATOR_ONLY)")
+    return may_offer(caller, marked(customer_safe))
+
+
+def _deprecated(old: str, new: str) -> None:
+    warnings.warn(f"{old} is deprecated since 0.18 and removed in 1.0; use {new}", DeprecationWarning, stacklevel=3)
 
 
 def _text(value: Any) -> str:
