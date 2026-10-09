@@ -259,16 +259,18 @@ On a hosted agent the platform tells each turn who is writing, as `AgentInput.me
 Every tool has an **audience**: who it is offered to. Mark it on the tool:
 
 ```python
-@tool(audiences=["operator", "customer"])   # same as customer_safe=True
+@tool(audiences=["operator", "customer"])
 def order_status(order_id: str) -> str: ...
 
 @tool(audiences=["customer"])               # customers only: staff shouldn't trigger it
 def start_return(order_id: str) -> str: ...
 ```
 
-An unmarked tool is `["operator"]`. An operator in a private chat gets the tools whose audience includes `operator`. A customer, or an operator writing in a group, gets those whose audience includes `customer`. So a `["customer"]` tool is hidden from staff in a private chat. A call to a tool that wasn't offered is refused as "not found". For MCP servers, list the tools for both audiences in the config: `{"type": "sse", "url": "...", "customer_safe_tools": ["search"]}`.
+An unmarked tool is `["operator"]`. An operator in a private chat gets the tools whose audience includes `operator`. A customer, or an operator writing in a group, gets those whose audience includes `customer`. So a `["customer"]` tool is hidden from staff in a private chat. A call to a tool that wasn't offered is refused as "not found". For MCP servers, the config's `customer_safe_tools: [names]` (the 0.17 form) marks tools for both audiences; there is no customer-only form in the config, but the platform's setting can make one by name.
 
-**Your marking is the default, and the platform's setting wins.** The tenant owner sets each tool's audience in the dashboard. The platform sends it as `metadata["genfleet.tool_audiences"]` (`TOOL_AUDIENCES_METADATA_KEY`), keyed by tool name, or by manifest slug for tools from `load_tools()` (each tool it returns carries its slug). That setting replaces your marking, and can widen it as well as narrow it. Read the effective rule with `may_offer(caller, audiences)`.
+**Your marking is the default, and the platform's setting wins.** The tenant owner sets each tool's audience in the dashboard. The platform sends it as `metadata["genfleet.tool_audiences"]` (`TOOL_AUDIENCES_METADATA_KEY`), keyed by tool name, or by manifest slug for tools from `load_tools()`. Each tool it returns carries its slug, on a fresh proxy that behaves like the original. That setting replaces your marking, and can widen it as well as narrow it. An entry the SDK can't read is offered to no one. `Agent` applies this to every tool it holds: its own functions, `load_tools()` tools, remote tools passed in as `tools=`, and MCP tools. Tools the engine keeps itself are filtered by the engine. Read the effective rule with `may_offer(caller, audiences)`.
+
+`customer_safe=True` (0.17) still works and means both audiences, but it is deprecated and removed in 1.0, as are `may_use` and `Caller.full_toolset`.
 
 An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the caller key gets every tool. In a platform sandbox (`GENFLEET_HOSTED` set; on older engines, `GENFLEET_A2A_TOKEN`) a missing caller gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
 

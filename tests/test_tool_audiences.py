@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from collections.abc import AsyncIterator
 
 import pytest
 
+from genfleet.sdk import EVERYONE as SDK_EVERYONE
+from genfleet.sdk import OPERATOR_ONLY as SDK_OPERATOR_ONLY
 from genfleet.sdk import Agent, AgentInput, AgentOutput, ToolCall, tool
 from genfleet.sdk import agent as agent_module
 from genfleet.sdk.caller import (
@@ -16,14 +20,18 @@ from genfleet.sdk.caller import (
     OPERATOR_ONLY,
     TOOL_AUDIENCES_METADATA_KEY,
     Caller,
-    audiences_of,
+    effective_audiences,
+    marked,
     may_offer,
     may_use,
     tool_audiences_of,
 )
+from genfleet.sdk.caller import (
+    _audiences_of as audiences_of,
+)
 from genfleet.sdk.manifest import AgentManifest, ToolRef
 from genfleet.sdk.schemas import ToolSchema
-from genfleet.sdk.tool import TOOL_SLUG_ATTR, ToolWrapper
+from genfleet.sdk.tool import ToolWrapper, wrap_tool
 from genfleet.sdk.tools_loader import load_tools
 
 OP = frozenset({"operator"})
@@ -110,12 +118,31 @@ def test_tool_audiences_of_keeps_valid_entries():
     assert tool_audiences_of(meta) == {"a": OP, "@acme/b": BOTH}
 
 
-def test_tool_audiences_of_drops_invalid_entries():
+def test_tool_audiences_of_invalid_values_fail_closed():
     meta = {TOOL_AUDIENCES_METADATA_KEY: {
         "ok": ["customer"], "empty": [], "unknown": ["admin"], "text": "customer", "none": None,
         "": ["customer"], 7: ["customer"],
     }}
-    assert tool_audiences_of(meta) == {"ok": CU}
+    assert tool_audiences_of(meta) == {
+        "ok": CU, "empty": frozenset(), "unknown": frozenset(), "text": frozenset(), "none": frozenset(),
+    }
+
+
+def test_effective_audiences_precedence():
+    overrides = {"n": CU, "@a/s": BOTH}
+    assert effective_audiences("n", "@a/s", OP, overrides) == CU
+    assert effective_audiences("x", "@a/s", OP, overrides) == BOTH
+    assert effective_audiences("x", "@a/other", OP, overrides) == OP
+    assert effective_audiences("x", None, OP, overrides) == OP
+    assert effective_audiences("x", "", OP, {"": CU}) == OP
+    assert effective_audiences("n", None, BOTH, {"n": frozenset()}) == frozenset()
+
+
+def test_marked_and_sdk_exports():
+    assert marked(True) == BOTH
+    assert marked(False) == OP
+    assert SDK_EVERYONE == BOTH
+    assert SDK_OPERATOR_ONLY == OP
 
 
 @pytest.mark.parametrize("raw", ["x", ["a"], 5, None, True])
@@ -143,12 +170,22 @@ def test_tool_defaults_to_operator_only():
 
 
 def test_customer_safe_means_both_audiences():
-    @tool(customer_safe=True)
-    def a() -> str:
-        return ""
+    with pytest.warns(DeprecationWarning):
+        @tool(customer_safe=True)
+        def a() -> str:
+            return ""
 
     assert a.audiences == BOTH
     assert a.customer_safe is True
+
+
+def test_customer_safe_false_warns_and_is_operator_only():
+    with pytest.warns(DeprecationWarning):
+        @tool(customer_safe=False)
+        def a() -> str:
+            return ""
+
+    assert a.audiences == OP
 
 
 def test_customer_only_audience():
@@ -157,7 +194,7 @@ def test_customer_only_audience():
         return ""
 
     assert a.audiences == CU
-    assert a.customer_safe is True
+    assert a.customer_safe is False
 
 
 def test_operator_audience_list_is_not_customer_safe():
@@ -175,6 +212,11 @@ def test_both_markings_are_rejected():
         def a() -> str:
             return ""
 
+    with pytest.raises(ValueError, match="not both"):
+        @tool(customer_safe=False, audiences=["customer"])
+        def b() -> str:
+            return ""
+
 
 @pytest.mark.parametrize("bad", [[], ["admin"], ["operator", "root"]])
 def test_bad_audiences_are_rejected(bad):
@@ -184,34 +226,67 @@ def test_bad_audiences_are_rejected(bad):
             return ""
 
 
-def test_customer_safe_setter_resets_audiences():
-    @tool(audiences=["customer"])
+def test_customer_safe_is_read_only():
+    @tool(audiences=["operator", "customer"])
     def a() -> str:
         return ""
 
-    a.customer_safe = False
-    assert a.audiences == OP
-    a.customer_safe = True
-    assert a.audiences == BOTH
+    assert a.customer_safe is True
+    with pytest.raises(AttributeError):
+        a.customer_safe = False
 
 
 def test_repr_lists_sorted_audiences():
-    @tool(customer_safe=True)
+    @tool(audiences=["operator", "customer"])
     def a() -> str:
         return ""
 
     assert repr(a) == "ToolWrapper(name='a', audiences=['customer', 'operator'])"
 
 
-def test_wrapper_slug_from_argument_or_function_attribute():
+def test_wrapper_slug_only_from_the_argument():
     def f() -> str:
         return ""
 
+    f.__genfleet_tool_slug__ = "@b/f"  # the 0.18-dev attribute is no longer read
     schema = ToolSchema(name="f", description="", parameters={})
     assert ToolWrapper(f, schema, slug="@a/f").slug == "@a/f"
-    setattr(f, TOOL_SLUG_ATTR, "@b/f")
-    assert ToolWrapper(f, schema).slug == "@b/f"
-    assert ToolWrapper(f, schema, slug="@a/f").slug == "@a/f"
+    assert ToolWrapper(f, schema).slug is None
+
+
+def test_with_slug_returns_a_copy():
+    @tool(audiences=["customer"])
+    def f() -> str:
+        return "x"
+
+    copy = f.with_slug("@a/f")
+    assert copy is not f
+    assert copy.slug == "@a/f"
+    assert f.slug is None
+    assert copy.audiences == CU
+    assert copy.schema() == f.schema()
+
+
+def test_wrap_tool():
+    def plain(order_id: str) -> str:
+        """Look up."""
+        return order_id
+
+    wrapped = wrap_tool(plain, slug="@a/plain")
+    assert isinstance(wrapped, ToolWrapper)
+    assert wrapped.slug == "@a/plain"
+    assert wrapped.schema().name == "plain"
+    assert wrapped.schema().description == "Look up."
+    assert wrapped.audiences == OP
+    assert wrap_tool(plain).slug is None
+
+    @tool
+    def t() -> str:
+        return ""
+
+    assert wrap_tool(t) is t
+    assert wrap_tool(t, slug="@a/t").slug == "@a/t"
+    assert t.slug is None
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +311,7 @@ _DONE = [AgentOutput(content="ok", done=True)]
 ran: list[str] = []
 
 
-@tool(customer_safe=True)
+@tool(audiences=["operator", "customer"])
 def lookup_order() -> str:
     ran.append("lookup_order")
     return "shipped"
@@ -297,7 +372,7 @@ async def test_override_by_slug_applies_to_a_tagged_function():
     def plain() -> str:
         return ""
 
-    setattr(plain, TOOL_SLUG_ATTR, "@acme/plain")
+    plain = wrap_tool(plain, slug="@acme/plain")
     metadata = _meta({"@acme/plain": ["customer"]}, role="customer", private=True)
     assert await _offered(metadata, tools=[plain]) == {"plain"}
     assert await _offered(_meta(role="customer", private=True), tools=[plain]) == set()
@@ -309,7 +384,7 @@ async def test_override_by_slug_applies_to_a_wrapper_with_a_slug():
     def wrapped() -> str:
         return ""
 
-    wrapped.slug = "@acme/wrapped"
+    wrapped = wrapped.with_slug("@acme/wrapped")
     metadata = _meta({"@acme/wrapped": ["customer"]}, role="customer", private=True)
     assert await _offered(metadata, tools=[wrapped]) == {"wrapped"}
 
@@ -326,7 +401,7 @@ async def test_name_wins_over_slug():
     def wrapped() -> str:
         return ""
 
-    wrapped.slug = "@acme/wrapped"
+    wrapped = wrapped.with_slug("@acme/wrapped")
     narrowed = _meta({"wrapped": ["operator"], "@acme/wrapped": ["customer"]}, role="customer", private=True)
     assert await _offered(narrowed, tools=[wrapped]) == set()
     widened = _meta({"wrapped": ["customer"], "@acme/wrapped": ["operator"]}, role="customer", private=True)
@@ -335,11 +410,21 @@ async def test_name_wins_over_slug():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bad", [[], ["admin"], "customer", None])
-async def test_a_malformed_override_falls_back_to_the_default(bad):
-    got = await _offered(_meta({"refund": bad, "lookup_order": bad}, role="customer", private=True))
+async def test_a_malformed_override_hides_the_tool_from_everyone_restricted(bad):
+    overrides = {"refund": bad, "lookup_order": bad}
+    assert await _offered(_meta(overrides, role="customer", private=True)) == set()
+    assert await _offered(_meta(overrides, role="operator", private=True)) == set()
+    assert await _offered(_meta(overrides, role="operator", private=False)) == set()
+    # Unrestricted turns still get everything.
+    legacy = _meta(overrides, role="customer", legacy_tools=True)
+    assert await _offered(legacy) == {"lookup_order", "refund"}
+    assert await _offered({TOOL_AUDIENCES_METADATA_KEY: overrides}) == {"lookup_order", "refund"}
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_override_for_one_tool_leaves_others_alone():
+    got = await _offered(_meta({"refund": []}, role="operator", private=True))
     assert got == {"lookup_order"}
-    got = await _offered(_meta({"refund": bad, "lookup_order": bad}, role="operator", private=True))
-    assert got == {"lookup_order", "refund"}
 
 
 @pytest.mark.asyncio
@@ -423,7 +508,7 @@ async def test_mcp_override_by_name(monkeypatch):
     assert await offered(None) == ["a"]
     assert await offered({"b": ["customer"]}) == ["a", "b"]
     assert await offered({"a": ["operator"]}) == []
-    assert await offered({"a": ["bogus"]}) == ["a"]
+    assert await offered({"a": ["bogus"]}) == []
 
 
 # ---------------------------------------------------------------------------
@@ -443,19 +528,35 @@ def _load(by_slug: dict) -> list:
     return load_tools(manifest=manifest, resolver=_Resolver(by_slug))
 
 
-def test_load_tools_tags_a_plain_function_and_agent_picks_up_the_slug():
-    def plain() -> str:
-        return ""
+def test_load_tools_returns_a_fresh_proxy_that_behaves_like_the_function():
+    def plain(x: int) -> int:
+        """Doubles."""
+        return x * 2
 
     [loaded] = _load({"@acme/plain": plain})
-    assert loaded is plain
-    assert getattr(plain, TOOL_SLUG_ATTR) == "@acme/plain"
+    assert loaded is not plain
+    assert not isinstance(loaded, ToolWrapper)
+    # Called directly it is the function: sync, raw result (other SDKs call it).
+    assert loaded(3) == 6
+    assert loaded.__name__ == "plain" and loaded.__doc__ == "Doubles."
+    assert loaded.__genfleet_tool_slug__ == "@acme/plain"
+    assert not hasattr(plain, "__genfleet_tool_slug__")
     agent = Agent(role="r", model={"model": "openai/gpt-4o-mini", "api_key": "k"}, tools=[loaded])
     assert agent._local_tools["plain"].slug == "@acme/plain"
+    assert agent._local_tools["plain"].schema().parameters["properties"]["x"]["type"] == "integer"
 
 
-def test_load_tools_tags_a_wrapper_without_overwriting_an_existing_slug():
-    @tool
+def test_load_tools_keeps_an_async_function_async():
+    async def fetch(order_id: str) -> str:
+        return order_id
+
+    [loaded] = _load({"@acme/fetch": fetch})
+    assert inspect.iscoroutinefunction(loaded)
+    assert asyncio.run(loaded("o-1")) == "o-1"
+
+
+def test_load_tools_does_not_mutate_a_resolved_wrapper():
+    @tool(audiences=["customer"])
     def fresh() -> str:
         return ""
 
@@ -463,29 +564,43 @@ def test_load_tools_tags_a_wrapper_without_overwriting_an_existing_slug():
     def tagged() -> str:
         return ""
 
-    tagged.slug = "@own/tagged"
+    tagged = tagged.with_slug("@own/tagged")
     got_fresh, got_tagged = _load({"@acme/fresh": fresh, "@acme/tagged": tagged})
-    assert got_fresh is fresh and fresh.slug == "@acme/fresh"
-    assert got_tagged is tagged and tagged.slug == "@own/tagged"
+    assert got_fresh is not fresh and got_fresh.slug == "@acme/fresh"
+    assert got_fresh.audiences == CU
+    assert fresh.slug is None
+    assert got_tagged.slug == "@acme/tagged"
+    assert tagged.slug == "@own/tagged"
 
 
-def test_load_tools_wraps_a_callable_that_refuses_attributes():
+def test_one_object_under_two_slugs_gives_two_wrappers():
+    @tool
+    def shared() -> str:
+        return ""
+
+    [a] = _load({"@acme/one": shared})
+    [b] = _load({"@acme/two": shared})
+    assert a is not b
+    assert (a.slug, b.slug) == ("@acme/one", "@acme/two")
+    assert shared.slug is None
+
+
+def test_load_tools_proxies_a_bound_method():
     class Holder:
         def lookup(self, order_id: str) -> str:
             """Look an order up."""
             return order_id
 
-    bound = Holder().lookup
-    [loaded] = _load({"@acme/lookup": bound})
-    assert isinstance(loaded, ToolWrapper)
-    assert loaded.slug == "@acme/lookup"
-    assert loaded.schema().name == "lookup"
-    assert loaded.schema().description == "Look an order up."
-    assert loaded.audiences == OP
-
+    [loaded] = _load({"@acme/lookup": Holder().lookup})
+    assert loaded("o-9") == "o-9"
     agent = Agent(role="r", model={"model": "openai/gpt-4o-mini", "api_key": "k"}, tools=[loaded])
+    wrapper = agent._local_tools["lookup"]
+    assert wrapper.slug == "@acme/lookup"
+    assert wrapper.schema().description == "Look an order up."
+    assert "self" not in wrapper.schema().parameters["properties"]
+    assert wrapper.audiences == OP
     assert agent._offered_tools(Caller(role="customer"), {"@acme/lookup": CU}) == {"lookup"}
-    assert agent._offered_tools(Caller(role="customer")) == set()
+    assert agent._offered_tools(Caller(role="customer"), {}) == set()
 
 
 # ---------------------------------------------------------------------------
@@ -505,4 +620,14 @@ def test_load_tools_wraps_a_callable_that_refuses_attributes():
     ],
 )
 def test_may_use_is_unchanged(caller, safe, allowed):
-    assert may_use(caller, customer_safe=safe) is allowed
+    with pytest.warns(DeprecationWarning):
+        assert may_use(caller, customer_safe=safe) is allowed
+
+
+def test_full_toolset_is_deprecated_but_unchanged():
+    with pytest.warns(DeprecationWarning):
+        assert Caller(role="operator", private=True).full_toolset is True
+    with pytest.warns(DeprecationWarning):
+        assert Caller(role="operator", private=False).full_toolset is False
+    with pytest.warns(DeprecationWarning):
+        assert Caller(role="customer", legacy_tools=True).full_toolset is True

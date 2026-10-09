@@ -4,8 +4,8 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable
-from typing import Any, Literal
+from collections.abc import Callable
+from typing import Any, AsyncIterator, Literal
 
 from .audit import Auditor, audit_for
 from .audit.schemas import AuditConfig
@@ -14,17 +14,8 @@ from .memory import memory_for
 #: ``AgentInput.metadata`` key the platform sets per turn: ``"off"`` means the
 #: Agent neither loads nor writes its session memory for that turn.
 MEMORY_METADATA_KEY = "genfleet.memory"
-from . import turn as _turn
-from .caller import (
-    EVERYONE,
-    OPERATOR_ONLY,
-    Audience,
-    Caller,
-    caller_of,
-    may_offer,
-    tool_audiences_of,
-)
 from .memory.base import AppendableMemory, Memory
+from . import turn as _turn
 from .models import ModelClient, discover_model_client
 from .providers import provider_for
 from .schemas import (
@@ -39,16 +30,22 @@ from .schemas import (
     ToolCall,
     ToolSchema,
 )
-from .tool import ToolWrapper, _build_schema
+from .caller import (
+    Audience,
+    Caller,
+    caller_of,
+    effective_audiences,
+    marked,
+    may_offer,
+    tool_audiences_of,
+)
+from .tool import ToolWrapper, wrap_tool
 
 log = logging.getLogger("genfleet.sdk.agent")
 
 
 def _wrap_tool(fn: Callable) -> ToolWrapper:
-    if isinstance(fn, ToolWrapper):
-        return fn
-    schema = _build_schema(fn, name=fn.__name__, description=fn.__doc__ or "")
-    return ToolWrapper(fn=fn, schema=schema)
+    return wrap_tool(fn)
 
 
 def _tool_call_to_dict(tc: ToolCall) -> dict:
@@ -415,30 +412,18 @@ class Agent:
         else:
             await self._memory.save(session_id, list(history) + turn)
 
-    def _offered_tools(
-        self, caller: Caller | None, overrides: dict[str, frozenset[Audience]] | None = None
-    ) -> set[str]:
-        """Names of the tools offered on this caller's turn.
-
-        A tool's audience is the platform's setting for its name, else for its
-        manifest slug, else the author's marking (``[operator]`` if none).
-        """
-
-        overrides = overrides or {}
-
-        def audience(name: str, slug: str | None, default: frozenset[Audience]) -> frozenset[Audience]:
-            if name in overrides:
-                return overrides[name]
-            if slug and slug in overrides:
-                return overrides[slug]
-            return default
-
-        names = {n for n, w in self._local_tools.items() if may_offer(caller, audience(n, w.slug, w.audiences))}
+    def _offered_tools(self, caller: Caller | None, overrides: dict[str, frozenset[Audience]]) -> set[str]:
+        """Names of the tools offered on this caller's turn, by ``effective_audiences``."""
+        names = {
+            n for n, w in self._local_tools.items()
+            if may_offer(caller, effective_audiences(n, w.slug, w.audiences, overrides))
+        }
         names |= {
             n for n, spec in self._mcp_tools.items()
+            # MCP: `customer_safe_tools` is the config's (legacy) marking; the
+            # platform's setting names an MCP tool by name only.
             if may_offer(
-                caller,
-                audience(n, None, EVERYONE if n in spec["config"].get("customer_safe_tools", []) else OPERATOR_ONLY),
+                caller, effective_audiences(n, None, marked(n in spec["config"].get("customer_safe_tools", [])), overrides)
             )
         }
         return names

@@ -8,13 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 0.18.0
 
-- **Tool audiences (ADR-0028).** A tool is offered by its audience, `["operator"]`, `["operator", "customer"]` or `["customer"]`, set with `@tool(audiences=[...])`. `customer_safe=True` still works and means both; passing both arguments is a `ValueError`. `ToolWrapper.audiences` holds the set, and `customer_safe` is now a property over it.
+- **Tool audiences (ADR-0028).** A tool is offered by its audience, set with `@tool(audiences=[...])`: `["operator"]` (the default), `["operator", "customer"]` or `["customer"]`. `ToolWrapper.audiences` holds the set. An empty or unknown audience list is a `ValueError`.
   - An operator in a private chat gets the tools for `operator`. A customer, or anyone in a group, gets the tools for `customer`.
   - **New:** a `["customer"]` tool is hidden from staff in a private chat.
-  - `legacy_tools` still offers every tool.
-- **The platform's per-tool setting wins.** On a hosted turn, `metadata["genfleet.tool_audiences"]` (`TOOL_AUDIENCES_METADATA_KEY`) holds the tenant owner's audience per tool, keyed by tool name or manifest slug. The engine sets it and overwrites any caller value. It replaces the author's marking, wider or narrower, for local, mounted, MCP and remote tools alike. An invalid entry keeps that tool's default, and a non-mapping value is ignored.
-- **`load_tools()` tags each tool with its manifest slug.** It is the `__genfleet_tool_slug__` attribute, or `ToolWrapper.slug`; a callable that refuses attributes comes back wrapped. This lets the platform's setting name a mounted tool before its function name is known.
-- New in `genfleet.sdk`: `may_offer(caller, audiences)`, `tool_audiences_of(metadata)`, `Audience`, `TOOL_AUDIENCES_METADATA_KEY`. `may_use(caller, customer_safe=…)` is deprecated; it now calls `may_offer`.
+  - `legacy_tools`, and an agent the platform didn't spawn, get every tool.
+  - A hosted turn with a missing or malformed caller is a customer in a group. It now also gets `["customer"]` tools, never staff tools.
+- **The platform's per-tool setting wins.** On a hosted turn, `metadata["genfleet.tool_audiences"]` (`TOOL_AUDIENCES_METADATA_KEY`) holds the tenant owner's audience per tool, keyed by tool name or manifest slug. It replaces the author's marking, wider or narrower (`effective_audiences`: name, then slug, then the marking).
+  - It covers every tool an `Agent` holds: its own functions, `load_tools()` tools, remote tools passed in as `tools=`, and MCP tools (by name). Tools the engine keeps itself, such as runner-held peers and `remember`, are filtered by the engine.
+  - **Fail closed:** an entry whose value can't be read is offered to no one. A value that isn't a mapping is ignored.
+  - **Deploy gate:** the engine must replace or strip this key on every turn before a runtime image ships 0.18. An engine that passes request metadata through would let an invoke set audiences. See the engine PR for backend#248.
+- **`load_tools()` tools carry their manifest slug.** Each plain callable comes back as a fresh `functools.wraps` proxy that behaves exactly like it: sync stays sync and the result is unchanged. The slug is on the proxy, and `ToolWrapper`s come back as copies (`with_slug`). The loaded objects are never modified.
+- New in `genfleet.sdk`: `may_offer`, `tool_audiences_of`, `Audience`, `EVERYONE`, `OPERATOR_ONLY` and `TOOL_AUDIENCES_METADATA_KEY`, plus `ToolWrapper.with_slug` and `genfleet.sdk.tool.wrap_tool`.
+- **Deprecated, removed in 1.0 (backend#252), each with a `DeprecationWarning`:**
+  - `customer_safe=` on `@tool` / `ToolWrapper` (it means both audiences);
+  - `may_use(caller, customer_safe=…)` (use `may_offer`);
+  - `Caller.full_toolset` (use `may_offer(caller, OPERATOR_ONLY)`).
+  - `ToolWrapper.customer_safe` is read-only, and is true only for both audiences.
+  - MCP configs' `customer_safe_tools` stays, as the legacy marking for both audiences.
 
 ## 0.17.1
 

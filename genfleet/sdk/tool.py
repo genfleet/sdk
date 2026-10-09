@@ -4,10 +4,11 @@ import asyncio
 import inspect
 import types
 import typing
+import warnings
 from collections.abc import Callable, Iterable
 from typing import Any, get_args, get_origin
 
-from .caller import EVERYONE, OPERATOR_ONLY, ROLES, Audience, audiences_of
+from .caller import EVERYONE, OPERATOR_ONLY, ROLES, Audience, _audiences_of, marked
 from .schemas import ToolCall, ToolSchema
 
 _SIMPLE: dict[Any, dict[str, str]] = {
@@ -75,8 +76,8 @@ class ToolWrapper:
         fn: Callable[..., Any],
         schema: ToolSchema,
         *,
-        customer_safe: bool = False,
-        audiences: Iterable[str] | None = None,
+        customer_safe: bool | None = None,
+        audiences: Iterable[Audience] | None = None,
         slug: str | None = None,
     ) -> None:
         self._fn = fn
@@ -86,16 +87,19 @@ class ToolWrapper:
         self.audiences: frozenset[Audience] = _resolve_audiences(audiences, customer_safe)
         #: The manifest slug a mounted tool came from (``load_tools``), so the
         #: platform's setting can name it before its function name is known.
-        self.slug = slug or getattr(fn, TOOL_SLUG_ATTR, None)
+        self.slug = slug
 
     @property
     def customer_safe(self) -> bool:
-        """Whether customers are in the audience (the 0.17 marking)."""
-        return "customer" in self.audiences
+        """The 0.17 marking: offered to operators *and* customers. Read-only.
 
-    @customer_safe.setter
-    def customer_safe(self, value: bool) -> None:
-        self.audiences = EVERYONE if value else OPERATOR_ONLY
+        False for a ``["customer"]``-only tool, which operators don't get.
+        """
+        return self.audiences == EVERYONE
+
+    def with_slug(self, slug: str) -> ToolWrapper:
+        """A copy carrying ``slug``; the original is left untouched."""
+        return ToolWrapper(fn=self._fn, schema=self._schema, audiences=self.audiences, slug=slug)
 
     def schema(self) -> ToolSchema:
         return self._schema
@@ -116,16 +120,34 @@ class ToolWrapper:
         return f"ToolWrapper(name={self._schema.name!r}, audiences={sorted(self.audiences)})"
 
 
-#: Set by ``load_tools`` on a mounted tool: the manifest slug it came from.
+#: Set by ``load_tools`` on the proxy it returns for a mounted tool (never on
+#: the loaded object): the manifest slug it came from.
 TOOL_SLUG_ATTR = "__genfleet_tool_slug__"
 
 
-def _resolve_audiences(audiences: Iterable[str] | None, customer_safe: bool) -> frozenset[Audience]:
+def wrap_tool(fn: Callable[..., Any], *, slug: str | None = None) -> ToolWrapper:
+    """``fn`` as a ToolWrapper. A plain callable gets a schema from its
+    signature, and the slug ``load_tools`` gave it; a ToolWrapper is returned
+    as is, or copied to carry ``slug``."""
+    if isinstance(fn, ToolWrapper):
+        return fn.with_slug(slug) if slug else fn
+    schema = _build_schema(fn, name=fn.__name__, description=fn.__doc__ or "")
+    return ToolWrapper(fn=fn, schema=schema, slug=slug or getattr(fn, TOOL_SLUG_ATTR, None))
+
+
+def _resolve_audiences(audiences: Iterable[Audience] | None, customer_safe: bool | None) -> frozenset[Audience]:
+    if customer_safe is not None:
+        if audiences is not None:
+            raise ValueError("pass audiences= or customer_safe=, not both")
+        warnings.warn(
+            'customer_safe= is deprecated since 0.18 and removed in 1.0; use audiences=["operator", "customer"]',
+            DeprecationWarning,
+            stacklevel=4,
+        )
+        return marked(customer_safe)
     if audiences is None:
-        return EVERYONE if customer_safe else OPERATOR_ONLY
-    if customer_safe:
-        raise ValueError("pass audiences= or customer_safe=, not both")
-    resolved = audiences_of(list(audiences))
+        return OPERATOR_ONLY
+    resolved = _audiences_of(list(audiences))
     if resolved is None:
         raise ValueError(f"audiences must be a non-empty list of {list(ROLES)}, got {audiences!r}")
     return resolved
@@ -136,8 +158,8 @@ def tool(
     *,
     name: str | None = None,
     description: str = "",
-    customer_safe: bool = False,
-    audiences: Iterable[str] | None = None,
+    customer_safe: bool | None = None,
+    audiences: Iterable[Audience] | None = None,
 ) -> ToolWrapper | Callable[[Callable[..., Any]], ToolWrapper]:
     """
     Decorator that turns any function into a ToolProtocol.
@@ -149,7 +171,7 @@ def tool(
         @tool(description="adds two numbers")
         async def add(a: float, b: float) -> str: ...
 
-        @tool(audiences=["operator", "customer"])   # or customer_safe=True
+        @tool(audiences=["operator", "customer"])
         async def order_status(order_id: str) -> str: ...
 
         @tool(audiences=["customer"])
@@ -164,6 +186,9 @@ def tool(
 
     The marking is the author's **default**. On the platform the tenant owner
     sets each tool's audience, and that setting wins, wider or narrower.
+
+    ``customer_safe=True`` (0.17) still means both audiences; it is deprecated
+    and removed in 1.0.
     """
 
     def _wrap(f: Callable[..., Any]) -> ToolWrapper:

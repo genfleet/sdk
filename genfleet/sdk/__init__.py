@@ -2,6 +2,8 @@ from .agent import Agent
 from .audit.schemas import AuditConfig, AuditEvent
 from .caller import (
     CALLER_METADATA_KEY,
+    EVERYONE,
+    OPERATOR_ONLY,
     TOOL_AUDIENCES_METADATA_KEY,
     Audience,
     Caller,
@@ -65,6 +67,8 @@ __all__ = [
     "tool_audiences_of",
     "TOOL_AUDIENCES_METADATA_KEY",
     "Audience",
+    "EVERYONE",
+    "OPERATOR_ONLY",
     # Config
     "ModelConfig",
     "MemoryConfig",

@@ -45,7 +45,8 @@ def test_malformed_caller_is_the_narrowest(raw):
     caller = caller_of({CALLER_METADATA_KEY: raw})
     assert caller.role == "customer"
     assert caller.private is False
-    assert not caller.full_toolset
+    with pytest.warns(DeprecationWarning):
+        assert not caller.full_toolset
 
 
 def test_non_string_text_fields_become_empty():
@@ -70,7 +71,8 @@ def test_non_string_text_fields_become_empty():
     ],
 )
 def test_may_use_truth_table(caller, safe, allowed):
-    assert may_use(caller, customer_safe=safe) is allowed
+    with pytest.warns(DeprecationWarning):
+        assert may_use(caller, customer_safe=safe) is allowed
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +84,7 @@ def test_tool_is_operator_only_by_default():
     def a() -> str:
         return ""
 
-    @tool(customer_safe=True)
+    @tool(audiences=["operator", "customer"])
     def b() -> str:
         return ""
 
@@ -96,7 +98,7 @@ def test_plain_function_in_agent_is_operator_only():
 
     agent = Agent(role="r", model={"model": "openai/gpt-4o-mini", "api_key": "k"}, tools=[plain])
     assert agent._local_tools["plain"].customer_safe is False
-    assert agent._offered_tools(Caller(role="customer")) == set()
+    assert agent._offered_tools(Caller(role="customer"), {}) == set()
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +123,7 @@ _DONE = [AgentOutput(content="ok", done=True)]
 ran: list[str] = []
 
 
-@tool(customer_safe=True)
+@tool(audiences=["operator", "customer"])
 def lookup_order() -> str:
     ran.append("lookup_order")
     return "shipped"
