@@ -5,13 +5,22 @@ sender (a Telegram user id, a WhatsApp number, a signed-in dashboard member)
 and sets it on ``AgentInput.metadata`` under :data:`CALLER_METADATA_KEY`. The
 engine overwrites any value a caller supplied, so agent code can trust it.
 
-What it decides here is which tools the turn may use:
+What it decides here is which tools the turn may use. Every tool has an
+**audience**: ``operator``, ``customer``, or both.
 
-- An **operator** in a **private** chat gets every tool.
+- An **operator** in a **private** chat gets the tools whose audience
+  includes ``operator``.
 - Anyone else (a customer, or an operator writing in a group, where the reply
-  is seen by everyone) gets only the tools marked customer-safe.
-- A tool is operator-only unless it is marked customer-safe. Forgetting the
+  is seen by everyone) gets the tools whose audience includes ``customer``.
+- A tool's audience is ``[operator]`` unless its author marks it
+  (``@tool(audiences=…)``, or ``customer_safe=True`` for both). Forgetting the
   mark keeps a tool away from customers; it never exposes one.
+- **The platform's setting decides.** On a hosted turn the platform may send
+  the tenant owner's audience for a tool, by tool name or by manifest slug,
+  under :data:`TOOL_AUDIENCES_METADATA_KEY`. It replaces the author's marking,
+  which is only the default, and may widen it as well as narrow it. The engine
+  sets the key on every hosted turn and overwrites any value a caller sent.
+- The platform's ``legacy_tools`` grace flag offers every tool.
 
 ``name`` is the sender's own display name and is untrusted text: never base a
 decision on it, and don't put it in a system prompt as if it were a fact.
@@ -40,8 +49,17 @@ HOSTED_ENV = "GENFLEET_HOSTED"
 #: token, and only in container sandboxes. It still counts as hosted.
 _LEGACY_HOSTED_ENV = "GENFLEET_A2A_TOKEN"
 
+#: ``AgentInput.metadata`` key for the tenant owner's per-tool audiences:
+#: ``{tool name or manifest slug: ["operator", "customer"]}``. Platform-set.
+TOOL_AUDIENCES_METADATA_KEY = "genfleet.tool_audiences"
+
 Role = Literal["operator", "customer"]
 ROLES: tuple[Role, ...] = ("operator", "customer")
+
+#: Who a tool is for. The same two values as a caller's role.
+Audience = Role
+OPERATOR_ONLY: frozenset[Audience] = frozenset({"operator"})
+EVERYONE: frozenset[Audience] = frozenset({"operator", "customer"})
 
 
 @dataclass(frozen=True)
@@ -101,9 +119,49 @@ def caller_of(metadata: dict[str, Any] | None) -> Caller | None:
     )
 
 
+def audiences_of(value: Any) -> frozenset[Audience] | None:
+    """A valid audience list as a set, or ``None`` (empty, unknown values, not a list)."""
+    if not isinstance(value, (list, tuple, set, frozenset)) or not value:
+        return None
+    if any(v not in ROLES for v in value):
+        return None
+    return frozenset(value)
+
+
+def tool_audiences_of(metadata: dict[str, Any] | None) -> dict[str, frozenset[Audience]]:
+    """The platform's per-tool audiences on this turn, keyed by tool name or manifest slug.
+
+    An entry that is not a valid audience list is dropped, so that tool keeps
+    its author's default. A key that is not a mapping is no override at all.
+    """
+    raw = metadata.get(TOOL_AUDIENCES_METADATA_KEY) if metadata else None
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, frozenset[Audience]] = {}
+    for key, value in raw.items():
+        audiences = audiences_of(value)
+        if isinstance(key, str) and key and audiences is not None:
+            out[key] = audiences
+    return out
+
+
+def may_offer(caller: Caller | None, audiences: frozenset[Audience]) -> bool:
+    """Whether a tool with these audiences is offered on the caller's turn.
+
+    No caller (an agent the platform did not spawn) and the ``legacy_tools``
+    grace flag offer every tool. Otherwise an operator in a private chat needs
+    ``operator`` in the audience; anyone else, ``customer``. So a
+    ``[customer]``-only tool is not offered to staff in a private chat.
+    """
+    if caller is None or caller.legacy_tools:
+        return True
+    needed: Audience = "operator" if caller.role == "operator" and caller.private else "customer"
+    return needed in audiences
+
+
 def may_use(caller: Caller | None, *, customer_safe: bool) -> bool:
-    """Whether a tool with this marking is offered on the caller's turn."""
-    return caller is None or caller.full_toolset or customer_safe
+    """Deprecated (0.18): :func:`may_offer` with ``EVERYONE`` or ``OPERATOR_ONLY``."""
+    return may_offer(caller, EVERYONE if customer_safe else OPERATOR_ONLY)
 
 
 def _text(value: Any) -> str:

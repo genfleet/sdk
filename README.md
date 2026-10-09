@@ -256,14 +256,21 @@ result = await add.call(ToolCall(id="1", name="add", arguments={"a": 3, "b": 4})
 
 On a hosted agent the platform tells each turn who is writing, as `AgentInput.metadata["genfleet.caller"]` (`CALLER_METADATA_KEY`, from `genfleet.sdk.caller`): `role` (`"operator"` or `"customer"`), `id` (the verified sender), `channel`, `private` (a one-to-one chat), `legacy_tools`, and `name`. `name` is the sender's own display name and is untrusted; don't base decisions on it. Use `caller_of(input.metadata)` to read it.
 
-Mark the tools a customer may use:
+Every tool has an **audience**: who it is offered to. Mark it on the tool:
 
 ```python
-@tool(customer_safe=True)
+@tool(audiences=["operator", "customer"])   # same as customer_safe=True
 def order_status(order_id: str) -> str: ...
+
+@tool(audiences=["customer"])               # customers only: staff shouldn't trigger it
+def start_return(order_id: str) -> str: ...
 ```
 
-An unmarked tool is operator-only: it is offered only to an operator in a private chat. Customers, and operators writing in a group, see only `customer_safe` tools, and a call to any other tool is refused as "not found". For MCP servers, list the safe tools in the config: `{"type": "sse", "url": "...", "customer_safe_tools": ["search"]}`. An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the key gets every tool. In a platform sandbox (`GENFLEET_HOSTED` set; on older engines, `GENFLEET_A2A_TOKEN`) a missing key gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
+An unmarked tool is `["operator"]`. An operator in a private chat gets the tools whose audience includes `operator`. A customer, or an operator writing in a group, gets those whose audience includes `customer`. So a `["customer"]` tool is hidden from staff in a private chat. A call to a tool that wasn't offered is refused as "not found". For MCP servers, list the tools for both audiences in the config: `{"type": "sse", "url": "...", "customer_safe_tools": ["search"]}`.
+
+**Your marking is the default, and the platform's setting wins.** The tenant owner sets each tool's audience in the dashboard. The platform sends it as `metadata["genfleet.tool_audiences"]` (`TOOL_AUDIENCES_METADATA_KEY`), keyed by tool name, or by manifest slug for tools from `load_tools()` (each tool it returns carries its slug). That setting replaces your marking, and can widen it as well as narrow it. Read the effective rule with `may_offer(caller, audiences)`.
+
+An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the caller key gets every tool. In a platform sandbox (`GENFLEET_HOSTED` set; on older engines, `GENFLEET_A2A_TOKEN`) a missing caller gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
 
 Declare who the agent serves in `genfleet.toml`:
 

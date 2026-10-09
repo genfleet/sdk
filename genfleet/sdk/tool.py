@@ -4,11 +4,11 @@ import asyncio
 import inspect
 import types
 import typing
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any, get_args, get_origin
 
+from .caller import EVERYONE, OPERATOR_ONLY, ROLES, Audience, audiences_of
 from .schemas import ToolCall, ToolSchema
-
 
 _SIMPLE: dict[Any, dict[str, str]] = {
     str: {"type": "string"},
@@ -70,11 +70,32 @@ def _build_schema(fn: Callable[..., Any], name: str, description: str) -> ToolSc
 class ToolWrapper:
     """Wraps any sync or async callable as a ToolProtocol."""
 
-    def __init__(self, fn: Callable[..., Any], schema: ToolSchema, *, customer_safe: bool = False) -> None:
+    def __init__(
+        self,
+        fn: Callable[..., Any],
+        schema: ToolSchema,
+        *,
+        customer_safe: bool = False,
+        audiences: Iterable[str] | None = None,
+        slug: str | None = None,
+    ) -> None:
         self._fn = fn
         self._schema = schema
-        #: Offered on a customer's turn (ADR-0028). Unmarked tools are operator-only.
-        self.customer_safe = customer_safe
+        #: Who the author offers the tool to (ADR-0028): the default the
+        #: platform's per-tool setting replaces. ``[operator]`` unless marked.
+        self.audiences: frozenset[Audience] = _resolve_audiences(audiences, customer_safe)
+        #: The manifest slug a mounted tool came from (``load_tools``), so the
+        #: platform's setting can name it before its function name is known.
+        self.slug = slug or getattr(fn, TOOL_SLUG_ATTR, None)
+
+    @property
+    def customer_safe(self) -> bool:
+        """Whether customers are in the audience (the 0.17 marking)."""
+        return "customer" in self.audiences
+
+    @customer_safe.setter
+    def customer_safe(self, value: bool) -> None:
+        self.audiences = EVERYONE if value else OPERATOR_ONLY
 
     def schema(self) -> ToolSchema:
         return self._schema
@@ -92,7 +113,22 @@ class ToolWrapper:
         return str(result)
 
     def __repr__(self) -> str:
-        return f"ToolWrapper(name={self._schema.name!r}, customer_safe={self.customer_safe})"
+        return f"ToolWrapper(name={self._schema.name!r}, audiences={sorted(self.audiences)})"
+
+
+#: Set by ``load_tools`` on a mounted tool: the manifest slug it came from.
+TOOL_SLUG_ATTR = "__genfleet_tool_slug__"
+
+
+def _resolve_audiences(audiences: Iterable[str] | None, customer_safe: bool) -> frozenset[Audience]:
+    if audiences is None:
+        return EVERYONE if customer_safe else OPERATOR_ONLY
+    if customer_safe:
+        raise ValueError("pass audiences= or customer_safe=, not both")
+    resolved = audiences_of(list(audiences))
+    if resolved is None:
+        raise ValueError(f"audiences must be a non-empty list of {list(ROLES)}, got {audiences!r}")
+    return resolved
 
 
 def tool(
@@ -101,6 +137,7 @@ def tool(
     name: str | None = None,
     description: str = "",
     customer_safe: bool = False,
+    audiences: Iterable[str] | None = None,
 ) -> ToolWrapper | Callable[[Callable[..., Any]], ToolWrapper]:
     """
     Decorator that turns any function into a ToolProtocol.
@@ -112,20 +149,28 @@ def tool(
         @tool(description="adds two numbers")
         async def add(a: float, b: float) -> str: ...
 
-        @tool(customer_safe=True)
+        @tool(audiences=["operator", "customer"])   # or customer_safe=True
         async def order_status(order_id: str) -> str: ...
 
-    A tool is operator-only unless ``customer_safe=True`` (ADR-0028): on a
-    hosted turn from a customer, or from anyone in a group chat, only
-    customer-safe tools are offered. Mark a tool customer-safe only when any
-    customer may see what it returns and trigger what it does.
+        @tool(audiences=["customer"])
+        async def start_return(order_id: str) -> str: ...
+
+    Every tool has an audience (ADR-0028), ``["operator"]`` unless marked. On
+    a hosted turn an operator in a private chat gets the tools for
+    ``operator``; a customer, or anyone in a group chat, the tools for
+    ``customer``. A ``["customer"]`` tool is one staff should not trigger.
+    Offer a tool to customers only when any customer may see what it returns
+    and trigger what it does.
+
+    The marking is the author's **default**. On the platform the tenant owner
+    sets each tool's audience, and that setting wins, wider or narrower.
     """
 
     def _wrap(f: Callable[..., Any]) -> ToolWrapper:
         resolved_name = name or f.__name__
         resolved_desc = description or (inspect.getdoc(f) or "")
         schema = _build_schema(f, name=resolved_name, description=resolved_desc)
-        return ToolWrapper(fn=f, schema=schema, customer_safe=customer_safe)
+        return ToolWrapper(fn=f, schema=schema, customer_safe=customer_safe, audiences=audiences)
 
     if fn is not None:
         return _wrap(fn)

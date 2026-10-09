@@ -4,8 +4,8 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Callable
-from typing import Any, AsyncIterator, Literal
+from collections.abc import AsyncIterator, Callable
+from typing import Any, Literal
 
 from .audit import Auditor, audit_for
 from .audit.schemas import AuditConfig
@@ -14,8 +14,17 @@ from .memory import memory_for
 #: ``AgentInput.metadata`` key the platform sets per turn: ``"off"`` means the
 #: Agent neither loads nor writes its session memory for that turn.
 MEMORY_METADATA_KEY = "genfleet.memory"
-from .memory.base import AppendableMemory, Memory
 from . import turn as _turn
+from .caller import (
+    EVERYONE,
+    OPERATOR_ONLY,
+    Audience,
+    Caller,
+    caller_of,
+    may_offer,
+    tool_audiences_of,
+)
+from .memory.base import AppendableMemory, Memory
 from .models import ModelClient, discover_model_client
 from .providers import provider_for
 from .schemas import (
@@ -30,7 +39,6 @@ from .schemas import (
     ToolCall,
     ToolSchema,
 )
-from .caller import Caller, caller_of, may_use
 from .tool import ToolWrapper, _build_schema
 
 log = logging.getLogger("genfleet.sdk.agent")
@@ -178,11 +186,11 @@ class Agent:
                 messages.append(self._message_to_dict(msg))
             messages.append({"role": "user", "content": input.message})
 
-            # The tools this caller may use (ADR-0028): only customer-safe ones
-            # on a customer's turn or in a group chat. A tool left out here is
-            # also refused at dispatch, whatever the model asks for.
+            # The tools this caller may use (ADR-0028): by each tool's
+            # audience, the platform's per-tool setting first. A tool left out
+            # here is also refused at dispatch, whatever the model asks for.
             caller = caller_of(input.metadata)
-            offered = self._offered_tools(caller)
+            offered = self._offered_tools(caller, tool_audiences_of(input.metadata))
             tool_schemas = [w.schema() for name, w in self._local_tools.items() if name in offered]
             tool_schemas += [
                 ToolSchema(name=name, description=spec["description"], parameters=spec["parameters"])
@@ -407,12 +415,31 @@ class Agent:
         else:
             await self._memory.save(session_id, list(history) + turn)
 
-    def _offered_tools(self, caller: Caller | None) -> set[str]:
-        """Names of the tools offered on this caller's turn."""
-        names = {n for n, w in self._local_tools.items() if may_use(caller, customer_safe=w.customer_safe)}
+    def _offered_tools(
+        self, caller: Caller | None, overrides: dict[str, frozenset[Audience]] | None = None
+    ) -> set[str]:
+        """Names of the tools offered on this caller's turn.
+
+        A tool's audience is the platform's setting for its name, else for its
+        manifest slug, else the author's marking (``[operator]`` if none).
+        """
+
+        overrides = overrides or {}
+
+        def audience(name: str, slug: str | None, default: frozenset[Audience]) -> frozenset[Audience]:
+            if name in overrides:
+                return overrides[name]
+            if slug and slug in overrides:
+                return overrides[slug]
+            return default
+
+        names = {n for n, w in self._local_tools.items() if may_offer(caller, audience(n, w.slug, w.audiences))}
         names |= {
             n for n, spec in self._mcp_tools.items()
-            if may_use(caller, customer_safe=n in spec["config"].get("customer_safe_tools", []))
+            if may_offer(
+                caller,
+                audience(n, None, EVERYONE if n in spec["config"].get("customer_safe_tools", []) else OPERATOR_ONLY),
+            )
         }
         return names
 
@@ -473,8 +500,8 @@ async def _fetch_mcp_tools(config: MCPConfig) -> dict[str, dict]:
     """Connect to an MCP server and return its tool schemas."""
     try:
         from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
         from mcp.client.sse import sse_client
+        from mcp.client.stdio import stdio_client
     except ImportError:
         raise ImportError(
             "MCP support requires the mcp extra: pip install 'genfleet-sdk[mcp]'"
@@ -523,8 +550,8 @@ async def _invoke_mcp_tool(config: MCPConfig, name: str, arguments: dict) -> tup
         return "Error: unsupported MCP transport", False
 
     from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
     from mcp.client.sse import sse_client
+    from mcp.client.stdio import stdio_client
 
     if config["type"] == "stdio":
         transport = stdio_client(StdioServerParameters(

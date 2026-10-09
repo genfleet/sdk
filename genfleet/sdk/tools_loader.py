@@ -30,13 +30,15 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import inspect
 import logging
 import os
 import sys
+from collections.abc import Callable
 from importlib.metadata import entry_points
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from .manifest import (
     AgentManifest,
@@ -46,7 +48,7 @@ from .manifest import (
     load_agent_manifest,
     load_tool_manifest,
 )
-
+from .tool import TOOL_SLUG_ATTR, ToolWrapper, _build_schema
 
 # Set by whatever unpacked the agent — the engine, a sandbox, a test harness.
 # Exists because an agent's own idea of where it lives is computed when the
@@ -426,9 +428,32 @@ def load_tools(
     resolved: list[Callable] = []
     for ref in spec.tools:
         try:
-            resolved.append(active.resolve(ref))
+            fn = active.resolve(ref)
         except ToolResolutionError as exc:
             # Name the agent as well as the tool. With several agents in one
             # repo, "not installed" alone does not say which manifest to fix.
             raise ToolResolutionError(f"{spec.name}: {exc}") from exc
+        resolved.append(_tagged(fn, ref.slug))
     return resolved
+
+
+def _tagged(fn: Callable, slug: str) -> Callable:
+    """``fn`` carrying its manifest slug (ADR-0028), so the platform's per-tool
+    audience can name a mounted tool by slug: the backend knows the slugs an
+    agent pins, not the function names they load as."""
+    if isinstance(fn, ToolWrapper):
+        fn.slug = fn.slug or slug
+        return fn
+    try:
+        setattr(fn, TOOL_SLUG_ATTR, slug)
+    except (AttributeError, TypeError):
+        # A callable that refuses attributes (a builtin, a slotted object):
+        # wrapped here instead, keeping its own name and docstring.
+        return _wrap_untaggable(fn, slug)
+    return fn
+
+
+def _wrap_untaggable(fn: Callable, slug: str) -> ToolWrapper:
+    name = getattr(fn, "__name__", None) or slug.rsplit("/", 1)[-1]
+    schema = _build_schema(fn, name=name, description=inspect.getdoc(fn) or "")
+    return ToolWrapper(fn=fn, schema=schema, slug=slug)

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## 0.18.0
+
+- **Tool audiences (ADR-0028).** A tool is offered by its audience, `["operator"]`, `["operator", "customer"]` or `["customer"]`, set with `@tool(audiences=[...])`. `customer_safe=True` still works and means both; passing both arguments is a `ValueError`. `ToolWrapper.audiences` holds the set, and `customer_safe` is now a property over it.
+  - An operator in a private chat gets the tools for `operator`. A customer, or anyone in a group, gets the tools for `customer`.
+  - **New:** a `["customer"]` tool is hidden from staff in a private chat.
+  - `legacy_tools` still offers every tool.
+- **The platform's per-tool setting wins.** On a hosted turn, `metadata["genfleet.tool_audiences"]` (`TOOL_AUDIENCES_METADATA_KEY`) holds the tenant owner's audience per tool, keyed by tool name or manifest slug. The engine sets it and overwrites any caller value. It replaces the author's marking, wider or narrower, for local, mounted, MCP and remote tools alike. An invalid entry keeps that tool's default, and a non-mapping value is ignored.
+- **`load_tools()` tags each tool with its manifest slug.** It is the `__genfleet_tool_slug__` attribute, or `ToolWrapper.slug`; a callable that refuses attributes comes back wrapped. This lets the platform's setting name a mounted tool before its function name is known.
+- New in `genfleet.sdk`: `may_offer(caller, audiences)`, `tool_audiences_of(metadata)`, `Audience`, `TOOL_AUDIENCES_METADATA_KEY`. `may_use(caller, customer_safe=…)` is deprecated; it now calls `may_offer`.
+
 ## 0.17.1
 
 - **A sandbox is hosted when `GENFLEET_HOSTED` is set.** The engine sets it in every sandbox it spawns, process sandboxes included. Before, the SDK keyed on `GENFLEET_A2A_TOKEN`, which a process sandbox never gets, so a process-hosted agent reached without `genfleet.caller` offered every tool. `GENFLEET_A2A_TOKEN` still counts as hosted, for engines that don't set the new marker yet. `HOSTED_ENV` is now `"GENFLEET_HOSTED"`.
