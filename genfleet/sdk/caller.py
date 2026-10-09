@@ -17,7 +17,8 @@ What it decides here is which tools the turn may use. Every tool has an
   customers; it never exposes one.
 - **The platform's setting decides.** On a hosted turn the platform may send
   the tenant owner's audience for a tool, by tool name or by manifest slug,
-  under :data:`TOOL_AUDIENCES_METADATA_KEY`. It replaces the author's marking,
+  under :data:`TOOL_AUDIENCES_METADATA_KEY` (a manifest tool by its slug key
+  only, any other tool by its name only). It replaces the author's marking,
   which is only the default, and may widen it as well as narrow it. The engine
   sets the key on every hosted turn and replaces any value a caller sent. An
   entry the SDK can't read is offered to no one (fail closed).
@@ -160,13 +161,27 @@ def effective_audiences(
     default: frozenset[Audience],
     overrides: dict[str, frozenset[Audience]],
 ) -> frozenset[Audience]:
-    """A tool's audience on this turn: the platform's setting for its name,
-    else for its manifest slug, else its author's marking (``default``)."""
-    if name in overrides:
-        return overrides[name]
-    if slug and slug in overrides:
-        return overrides[slug]
-    return default
+    """A tool's audience on this turn: the platform's setting, else its
+    author's marking (``default``).
+
+    Two key spaces that never mix (0.18.1). A tool that came from a manifest
+    (it carries a ``slug``) is matched **only** by its slug key,
+    :func:`slug_key`; a bare name in the setting never reaches it, even when
+    the names are equal. Any other tool (code-defined, MCP, a peer) is matched
+    only by its name. So the owner's setting for an installed tool ``search``
+    (``@search``) can't open a code tool also called ``search``, nor the reverse.
+    """
+    key = slug_key(slug) if slug else name
+    return overrides.get(key, default)
+
+
+def slug_key(slug: str) -> str:
+    """The platform's key for a manifest tool: its slug with a leading ``@``.
+
+    ``@acme/crm`` stays as is; a platform tool ``search`` is ``@search``.
+    Tool names never start with ``@``, so the two key spaces can't collide.
+    """
+    return slug if slug.startswith("@") else f"@{slug}"
 
 
 def marked(customer_safe: bool) -> frozenset[Audience]:
