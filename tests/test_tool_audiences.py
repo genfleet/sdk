@@ -25,6 +25,7 @@ from genfleet.sdk.caller import (
     marked,
     may_offer,
     may_use,
+    slug_key,
     tool_audiences_of,
 )
 from genfleet.sdk.caller import (
@@ -129,14 +130,24 @@ def test_tool_audiences_of_invalid_values_fail_closed():
     }
 
 
-def test_effective_audiences_precedence():
-    overrides = {"n": CU, "@a/s": BOTH}
-    assert effective_audiences("n", "@a/s", OP, overrides) == CU
-    assert effective_audiences("x", "@a/s", OP, overrides) == BOTH
+def test_effective_audiences_keeps_slug_and_name_keys_apart():
+    overrides = {"n": CU, "@a/s": BOTH, "@search": BOTH, "search": CU}
+    # A manifest tool: only its slug key, never its name.
+    assert effective_audiences("n", "@a/s", OP, overrides) == BOTH
     assert effective_audiences("x", "@a/other", OP, overrides) == OP
+    # A platform tool's plain slug is keyed with a leading @.
+    assert effective_audiences("search", "search", OP, overrides) == BOTH
+    assert effective_audiences("search", "search", OP, {"search": CU}) == OP
+    # Any other tool: only its name, never a slug key.
+    assert effective_audiences("n", None, OP, overrides) == CU
+    assert effective_audiences("search", None, OP, {"@search": BOTH}) == OP
     assert effective_audiences("x", None, OP, overrides) == OP
-    assert effective_audiences("x", "", OP, {"": CU}) == OP
     assert effective_audiences("n", None, BOTH, {"n": frozenset()}) == frozenset()
+
+
+def test_slug_key_adds_the_at_once():
+    assert slug_key("@acme/crm") == "@acme/crm"
+    assert slug_key("search") == "@search"
 
 
 def test_marked_and_sdk_exports():
@@ -412,16 +423,33 @@ async def test_a_slug_override_does_not_touch_an_untagged_tool():
 
 
 @pytest.mark.asyncio
-async def test_name_wins_over_slug():
+async def test_a_manifest_tool_answers_only_to_its_slug_key():
+    """0.18.1: a bare name in the setting never reaches a slug-tagged tool."""
+
     @tool
     def wrapped() -> str:
         return ""
 
     wrapped = wrapped.with_slug("@acme/wrapped")
-    narrowed = _meta({"wrapped": ["operator"], "@acme/wrapped": ["customer"]}, role="customer", private=True)
-    assert await _offered(narrowed, tools=[wrapped]) == set()
-    widened = _meta({"wrapped": ["customer"], "@acme/wrapped": ["operator"]}, role="customer", private=True)
-    assert await _offered(widened, tools=[wrapped]) == {"wrapped"}
+    by_name_only = _meta({"wrapped": ["customer"]}, role="customer", private=True)
+    assert await _offered(by_name_only, tools=[wrapped]) == set()
+    by_slug = _meta({"wrapped": ["operator"], "@acme/wrapped": ["customer"]}, role="customer", private=True)
+    assert await _offered(by_slug, tools=[wrapped]) == {"wrapped"}
+
+
+@pytest.mark.asyncio
+async def test_a_platform_tools_setting_does_not_open_a_same_named_code_tool():
+    """The collision 0.18.1 closes: `@search` (an installed tool) vs a code tool `search`."""
+
+    @tool
+    def search() -> str:
+        return ""
+
+    mounted = wrap_tool(lambda: "", slug="search")
+    meta = _meta({"@search": ["customer"]}, role="customer", private=True)
+    assert await _offered(meta, tools=[search]) == set()
+    offered = await _offered(meta, tools=[mounted])
+    assert offered == {"<lambda>"}
 
 
 @pytest.mark.asyncio

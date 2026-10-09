@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## 0.18.1
+
+- **Tool keys never mix (ADR-0028 §5).** The platform's per-tool setting (`genfleet.tool_audiences`) has two key spaces:
+  - A manifest tool, one that carries a `slug` from `load_tools()`, matches **only** its slug key: the slug with a leading `@`, from the new `slug_key()`. So `@acme/crm` stays as is, and a platform tool `search` is `@search`. A bare name never reaches it.
+  - Any other tool (code-defined, MCP, peer) matches only its name.
+
+  In 0.18.0 a manifest tool matched its name first. The owner's setting for an installed `search` then also opened a code or MCP tool called `search`, and the other way round.
+
 ## 0.18.0
 
 - **Tool audiences (ADR-0028).** A tool is offered by its audience, set with `@tool(audiences=[...])`: `["operator"]` (the default), `["operator", "customer"]` or `["customer"]`. `ToolWrapper.audiences` holds the set. An empty or unknown audience list is a `ValueError`.
