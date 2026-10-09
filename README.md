@@ -252,6 +252,27 @@ result = await add.call(ToolCall(id="1", name="add", arguments={"a": 3, "b": 4})
 # "7.0"
 ```
 
+### Operators and customers
+
+On a hosted agent the platform tells each turn who is writing, as `AgentInput.metadata["genfleet.caller"]` (`CALLER_METADATA_KEY`, from `genfleet.sdk.caller`): `role` (`"operator"` or `"customer"`), `id` (the verified sender), `channel`, `private` (a one-to-one chat), `legacy_tools`, and `name`. `name` is the sender's own display name and is untrusted; don't base decisions on it. Use `caller_of(input.metadata)` to read it.
+
+Mark the tools a customer may use:
+
+```python
+@tool(customer_safe=True)
+def order_status(order_id: str) -> str: ...
+```
+
+An unmarked tool is operator-only: it is offered only to an operator in a private chat. Customers, and operators writing in a group, see only `customer_safe` tools, and a call to any other tool is refused as "not found". For MCP servers, list the safe tools in the config: `{"type": "sse", "url": "...", "customer_safe_tools": ["search"]}`. An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the key gets every tool. In a platform sandbox (`GENFLEET_A2A_TOKEN` set) a missing key gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
+
+Declare who the agent serves in `genfleet.toml`:
+
+```toml
+[agent]
+name = "support"
+audiences = ["operator", "customer"]   # default when absent: operators only
+```
+
 ## AgentProtocol — direct implementation
 
 For framework integrations (LangChain, CrewAI) that manage their own LLM calls, implement `AgentProtocol` directly:
