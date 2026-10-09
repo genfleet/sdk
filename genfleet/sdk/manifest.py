@@ -185,6 +185,10 @@ class ToolManifest(BaseModel):
     secrets: dict[str, SecretField] = Field(default_factory=dict)
     #: Hosts this tool reaches; added to every agent that pins it (ADR-0021 §3).
     egress: list[str] = Field(default_factory=list)
+    #: ADR-0028 §8a: the author's marking. A call waits for an owner's
+    #: approval. The platform reads this at publish as the tool's default and
+    #: sends the effective flag on every turn (`genfleet.sensitive_tools`).
+    sensitive: bool = False
 
     @field_validator("egress")
     @classmethod

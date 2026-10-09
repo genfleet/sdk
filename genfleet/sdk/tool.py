@@ -95,6 +95,7 @@ class ToolWrapper:
         customer_safe: bool | None = None,
         audiences: Iterable[Audience] | None = None,
         slug: str | None = None,
+        sensitive: bool = False,
     ) -> None:
         self._fn = fn
         self._schema = schema
@@ -104,6 +105,9 @@ class ToolWrapper:
         #: The manifest slug a mounted tool came from (``load_tools``), so the
         #: platform's setting can name it before its function name is known.
         self.slug = slug
+        #: ADR-0028 §8a: the author's marking. A sensitive call doesn't run
+        #: until an owner or admin approves it; the platform's flag wins.
+        self.sensitive = sensitive
 
     @property
     def customer_safe(self) -> bool:
@@ -121,7 +125,7 @@ class ToolWrapper:
 
     def with_slug(self, slug: str) -> ToolWrapper:
         """A copy carrying ``slug``; the original is left untouched."""
-        return ToolWrapper(fn=self._fn, schema=self._schema, audiences=self.audiences, slug=slug)
+        return ToolWrapper(fn=self._fn, schema=self._schema, audiences=self.audiences, slug=slug, sensitive=self.sensitive)
 
     def schema(self) -> ToolSchema:
         return self._schema
@@ -190,6 +194,7 @@ def tool(
     description: str = "",
     customer_safe: bool | None = None,
     audiences: Iterable[Audience] | None = None,
+    sensitive: bool = False,
 ) -> ToolWrapper | Callable[[Callable[..., Any]], ToolWrapper]:
     """
     Decorator that turns any function into a ToolProtocol.
@@ -219,6 +224,10 @@ def tool(
 
     ``customer_safe=True`` (0.17) still means both audiences; it is deprecated
     and removed in 1.0.
+
+    ``sensitive=True`` (ADR-0028 §8a): the call doesn't run when the model
+    makes it. It waits for a workspace owner or admin to approve it, then runs
+    once in a follow-up turn. See :mod:`genfleet.sdk.confirmations`.
     """
 
     def _wrap(f: Callable[..., Any]) -> ToolWrapper:
@@ -228,7 +237,7 @@ def tool(
         # Resolved here, so a deprecation warning points at the decorated
         # definition (two frames up), not at this module.
         resolved = _resolve_audiences(audiences, customer_safe, stacklevel=2)
-        return ToolWrapper(fn=f, schema=schema, audiences=resolved)
+        return ToolWrapper(fn=f, schema=schema, audiences=resolved, sensitive=sensitive)
 
     if fn is not None:
         return _wrap(fn)

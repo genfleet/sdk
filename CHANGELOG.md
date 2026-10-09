@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## 0.19.0
+
+- **Sensitive tools (ADR-0028 §8a).** `@tool(sensitive=True)` (or `sensitive = true` in a tool's manifest, or an MCP config's `sensitive_tools`) marks a tool whose call waits for a workspace owner's or admin's approval. The platform's per-tool flags (`metadata["genfleet.sensitive_tools"]`, `{key: bool}`, keyed like audiences) are **add-only**: `true` marks a tool sensitive, `false` never unmarks one its author marked. The map is unsigned, so a forged one can't switch an approval off. `remember` is never sensitive.
+  - When the model calls one, it does **not run**. The model is told the action awaits approval, and the tool result event has `ok: false` and `status: "pending"`. The request (`{tool key, arguments}`) is reported on the turn's final chunk, `metadata["genfleet.confirmation_requests"]`.
+  - On a turn another agent started (`genfleet.peer_turn`), a sensitive tool is refused outright.
+- **Approved calls.** A follow-up turn can carry `metadata["genfleet.approved_call"]`, signed by the engine with a per-spawn key in `GENFLEET_APPROVAL_KEY`. `Agent` runs it **first and exactly once**, before the model, and only if all of these hold:
+  - the HMAC-SHA256 signature over `canonical_json` of `{confirmation_id, tool, arguments, args_hash, expires_at}` verifies (`hmac.compare_digest`);
+  - it hasn't expired;
+  - its `confirmation_id` hasn't already run in this process;
+  - the tool is offered to the caller.
+
+  Otherwise nothing runs and the model is told so. A verified call is used up even when it can't run (unknown tool, not offered now), so it can never run later. A tool that raises becomes a failed result the model reports, instead of ending the turn. The key sits in the agent's own environment, so the signature stops other agents and direct callers, not the agent's code. For code that doesn't use `Agent`, this is advisory.
+  - The turn's final chunk says what became of it, under `metadata["genfleet.approved_call_result"]` (`APPROVED_CALL_RESULT_KEY`): `"ran"`, `"failed"` (the tool raised, or an MCP call failed; a local tool that returns an error string counts as `"ran"`) or `"refused"` (no key, malformed, a bad signature, expired, already run, an unknown tool, or not offered to the caller). A turn without an approved call has no such key.
+  - It is agent-reported, so it is advisory. A turn that errors before its final chunk (the provider, the audit sink) sends no result, even if the tool ran: read a missing result as "unconfirmed", not "did not run". It reaches the platform only through the non-streaming invoke (`serve`'s streaming paths drop final-chunk metadata).
+  - Only the tool's own exception becomes a failed result; one from the audit sink after the tool ran ends the turn as before.
+- An approved call is verified **and claimed in one step**. A signature that isn't 64 lowercase hex characters, and arguments with NaN, infinities or lone surrogates (`canonical_json` uses `allow_nan=False`), are malformed and refused without an error. It runs through the same audited dispatch as any tool call (`tool.call` / `tool.result`).
+- Exported for the engine: `APPROVAL_KEY_ENV`, `PEER_TURN_KEY`, `canonical_json`, `sign_approved_call` and the metadata keys. The agent-side helpers in `genfleet.sdk.confirmations` are private.
+- MCP tools whose names start with `@` are skipped: that's a slug key's form.
+
 ## 0.18.1
 
 - **Tool keys never mix (ADR-0028 §5).** The platform's per-tool setting (`genfleet.tool_audiences`) has two key spaces:

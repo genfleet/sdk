@@ -1,5 +1,15 @@
 from .agent import Agent
 from .audit.schemas import AuditConfig, AuditEvent
+from .confirmations import (
+    APPROVAL_KEY_ENV,
+    APPROVED_CALL_KEY,
+    APPROVED_CALL_RESULT_KEY,
+    CONFIRMATION_REQUESTS_KEY,
+    PEER_TURN_KEY,
+    SENSITIVE_TOOLS_KEY,
+    canonical_json,
+    sign_approved_call,
+)
 from .caller import (
     CALLER_METADATA_KEY,
     EVERYONE,
@@ -63,6 +73,15 @@ __all__ = [
     "Caller",
     "caller_of",
     "may_use",
+    # Sensitive tools (ADR-0028 §8a)
+    "APPROVAL_KEY_ENV",
+    "APPROVED_CALL_KEY",
+    "APPROVED_CALL_RESULT_KEY",
+    "CONFIRMATION_REQUESTS_KEY",
+    "PEER_TURN_KEY",
+    "SENSITIVE_TOOLS_KEY",
+    "canonical_json",
+    "sign_approved_call",
     "may_offer",
     "tool_audiences_of",
     "TOOL_AUDIENCES_METADATA_KEY",

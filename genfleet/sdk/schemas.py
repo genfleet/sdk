@@ -93,12 +93,16 @@ class MCPStdioConfig(TypedDict):
     #: Names of this server's tools offered on a customer's turn (ADR-0028).
     #: Every other tool of the server is operator-only.
     customer_safe_tools: NotRequired[list[str]]
+    #: Names of this server's tools that wait for an owner's approval (ADR-0028 §8a).
+    sensitive_tools: NotRequired[list[str]]
 
 
 class MCPSseConfig(TypedDict):
     type: Literal["sse"]
     url: str
     customer_safe_tools: NotRequired[list[str]]
+    #: Names of this server's tools that wait for an owner's approval (ADR-0028 §8a).
+    sensitive_tools: NotRequired[list[str]]
 
 
 MCPConfig = MCPStdioConfig | MCPSseConfig
