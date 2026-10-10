@@ -120,6 +120,55 @@ turn and appended to after it.
   `request_id` or `message_id` in the request metadata is passed to the store
   as the turn's idempotency key.
 
+### Durable workflow state
+
+`SQLiteStateStore` saves application workflow state independently of conversation
+memory. Give it a persistent SQLite path and use a stable agent ID plus a
+caller ID verified by your ingress. The store treats these IDs as scopes; it
+does not authenticate a caller for you.
+
+```python
+from genfleet.sdk import SQLiteStateStore
+
+store = SQLiteStateStore("/var/lib/my-agent/runs.sqlite3")
+run = store.create("orders-agent", verified_caller_id, {"order_id": order_id})
+# Save progress before pausing for approval.
+run, resume_token = store.pause(
+    run.run_id, agent="orders-agent", owner=verified_caller_id,
+    version=run.version, state={"order_id": order_id, "step": "awaiting_approval"},
+    ttl_seconds=3600,
+)
+# A later process can atomically consume the token once.
+run = store.resume(
+    run.run_id, agent="orders-agent", owner=verified_caller_id,
+    token=resume_token,
+)
+effect = store.claim_effect(
+    run.run_id, "charge-order", agent="orders-agent", owner=verified_caller_id,
+)
+receipt = payment_client.charge(order_id, idempotency_key=effect.idempotency_key)
+store.complete_effect(
+    run.run_id, "charge-order", agent="orders-agent",
+    owner=verified_caller_id, result={"receipt": receipt.id},
+)
+run = store.complete(
+    run.run_id, agent="orders-agent", owner=verified_caller_id,
+    version=run.version, state={"order_id": order_id, "step": "done"},
+)
+```
+
+`checkpoint` updates a running run without pausing. Every write requires the
+last returned `version`, so stale workers cannot overwrite newer state. Keep
+resume tokens private. Use a persistent volume if workers restart; each
+process can open the same database path. For an external side effect,
+`claim_effect` records intent before the call and gives a stable idempotency
+key to pass to a remote API that supports it. A second claim is rejected,
+including after a restart. If a worker dies between the claim and
+`complete_effect`, `get_effect` reports `claimed`: the remote outcome is
+uncertain and must be reconciled before proceeding. The store never silently
+replays that call. No local checkpoint can make a remote side effect and its
+SQLite commit one atomic transaction.
+
 ### With Redis memory
 
 ```python
