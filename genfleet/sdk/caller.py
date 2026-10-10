@@ -107,14 +107,22 @@ class Caller:
 _NARROWEST = Caller(role="customer")
 
 
-def _hosted() -> bool:
+def is_hosted() -> bool:
+    """Whether the platform spawned this process (a hosted sandbox).
+
+    Code that must behave differently on the platform (no durable local
+    files, platform-scoped stores) reads this rather than the env itself.
+    """
     return bool(os.environ.get(HOSTED_ENV) or os.environ.get(_LEGACY_HOSTED_ENV))
+
+
+_hosted = is_hosted  # pre-0.19 private name
 
 
 def caller_of(metadata: dict[str, Any] | None) -> Caller | None:
     """The turn's caller; ``None`` (no roles) only for an agent the platform did not spawn."""
     if not metadata or CALLER_METADATA_KEY not in metadata:
-        return _NARROWEST if _hosted() else None
+        return _NARROWEST if is_hosted() else None
     raw = metadata[CALLER_METADATA_KEY]
     if not isinstance(raw, dict) or raw.get("role") not in ROLES:
         return _NARROWEST

@@ -120,6 +120,90 @@ turn and appended to after it.
   `request_id` or `message_id` in the request metadata is passed to the store
   as the turn's idempotency key.
 
+### Workflow state (checkpoints, pause/resume, effect claims)
+
+Workflow state is separate from conversation memory. Two backends implement
+one async `StateStore` interface:
+
+- **Hosted:** an `Agent` selects `PlatformStateStore` when its sandbox
+  receives `GENFLEET_STATE_URL` and `GENFLEET_STATE_TOKEN`; `agent.state` then
+  goes through the engine proxy to a PostgreSQL store. `Agent(state="platform")`
+  requires that pair and fails, naming the missing variable, without it.
+- **Local/self-hosted:** `LocalStateStore(path)` wraps `SQLiteStateStore` on a
+  worker thread. It refuses to open in a hosted sandbox, whose files don't
+  survive a restart.
+
+**Who a run belongs to.** Every call takes `agent` and `owner`.
+
+- Locally, both are yours to choose: pass a stable agent id and the caller id
+  your ingress verified (for example `caller_of(input.metadata).id`).
+- Hosted, the platform stamps the scope and the SDK sends neither. Tenant and
+  agent instance come from the sandbox's token. The owner is the **verified
+  caller of the running turn**, role included (`customer` and `operator` runs
+  never mix), which the SDK names by the turn's `session_id`/`turn_id` (set by
+  `Agent` while a tool or the model client runs; other code can wrap a call in
+  `genfleet.sdk.turn.call_within(input.metadata, ...)`). A call made outside
+  any turn uses the agent's background scope, which no customer turn can read;
+  a call naming a turn that has ended is refused. So `owner` is ignored when
+  hosted, and one store keeps one `agent` value (a second one raises
+  `StateError` instead of silently sharing runs). `purge` deletes the current
+  scope's runs; `purge_subject` is refused on a customer's turn.
+
+**Pause/resume is not an approval.** A paused run is resumed by whoever holds
+its resume token within the same owner scope, so the requester can resume it
+themselves. Don't build an approval gate on it: an approval by someone other
+than the requester (an owner or admin) goes through the platform's sensitive
+tool confirmations (ADR-0028 §8a), and durable resume after a human approval is
+tracked in [genfleet/sdk#59](https://github.com/genfleet/sdk/issues/59).
+
+```python
+from genfleet.sdk import LocalStateStore
+
+store = LocalStateStore("/var/lib/my-agent/runs.sqlite3")
+run = await store.create("orders-agent", verified_caller_id, {"order_id": order_id}, subject=customer_id)
+# Save progress before waiting for an external event (not an approval).
+run, resume_token = await store.pause(
+    run.run_id, agent="orders-agent", owner=verified_caller_id,
+    version=run.version, state={"order_id": order_id, "step": "waiting"},
+    ttl_seconds=3600,
+)
+# A later process can atomically consume the token once.
+run = await store.resume(
+    run.run_id, agent="orders-agent", owner=verified_caller_id,
+    token=resume_token,
+)
+effect = await store.claim_effect(
+    run.run_id, "charge-order", agent="orders-agent", owner=verified_caller_id,
+)
+receipt = payment_client.charge(order_id, idempotency_key=effect.idempotency_key)
+await store.complete_effect(
+    run.run_id, "charge-order", agent="orders-agent",
+    owner=verified_caller_id, result={"receipt": receipt.id},
+)
+run = await store.complete(
+    run.run_id, agent="orders-agent", owner=verified_caller_id,
+    version=run.version, state={"order_id": order_id, "step": "done"},
+)
+```
+
+`checkpoint` updates a running run without pausing. State writes require the
+last returned `version`; effect claims are separately deduplicated by
+`effect_id`. Keep resume tokens private. A pause lasts at most 30 days on both
+backends. `cancel` closes an expired or abandoned run, and `purge` removes the
+owner's runs and effect records. `purge_subject` deletes one subject's runs
+within the agent. State and result payloads are limited to 64 KiB
+(`StateTooLarge`). Hosted, the platform also caps runs per agent, effects per
+run, stored bytes and the request rate, and answers over a cap with
+`StateQuotaExceeded`. Every failure is a `StateError` (a hosted one is also a
+`PlatformStateError` with the HTTP `status`, 0 when unreachable). For an
+external side effect, `claim_effect` records intent before the call and gives
+a stable idempotency key to pass to a remote API that supports it. A second
+claim is rejected, including after a restart. If a worker dies between the
+claim and `complete_effect`, `get_effect` reports `claimed`: the remote outcome
+is uncertain and must be reconciled before proceeding. The store never
+silently replays that call. No checkpoint can make a remote side effect and
+its state commit one atomic transaction.
+
 ### With Redis memory
 
 ```python

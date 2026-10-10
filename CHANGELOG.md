@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Add a shared async workflow state interface (`StateStore`) with a hosted proxy client (`PlatformStateStore`) and a local SQLite backend (`LocalStateStore`). Runs support bounded checkpoints, one-time resume claims, cancellation, caller/subject purge, and external-effect claims. Hosted, the platform stamps the owner from the running turn's verified caller (role + id); the SDK sends no tenant, agent or owner. Pause/resume is a continuation, **not an approval**: human approval goes through ADR-0028 §8a confirmations (durable resume after approval: sdk#59). Hosted sandboxes refuse SQLite because their files are ephemeral. Failures are `StateError`s (`StateTooLarge`, `StateQuotaExceeded`, `PlatformStateError`); pauses are capped at 30 days on both backends.
+- Add `is_hosted()`, the public form of the "am I in a platform sandbox" check.
 - Add repository skill discovery and selection, including pinned `owner/repo@commit` sources for `Agent`. Skill instructions are read on demand, filtered by caller audience, and omitted from audit events and persisted memory.
 - Accept caller-provided `Memory` implementations for local development and custom stores.
 - Add a notebook covering skills, tools, memory, and an optional free OpenRouter model.
