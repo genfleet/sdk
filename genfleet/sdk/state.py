@@ -1,4 +1,4 @@
-"""Durable, caller-scoped workflow checkpoints using Python's SQLite library.
+"""Local workflow checkpoints using Python's SQLite library.
 
 The caller identity must come from trusted ingress (for example the platform's
 verified sender), never from a resume request's unverified payload.
@@ -8,12 +8,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import sqlite3
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from .caller import _hosted
+
+_MAX_JSON_BYTES = 64 * 1024
 
 
 class StateError(RuntimeError):
@@ -37,7 +43,7 @@ class EffectState:
 
 
 class SQLiteStateStore:
-    """One durable workflow store. Use a persistent path shared by workers.
+    """A local or self-hosted workflow store on a persistent filesystem.
 
     Each transition opens its own connection and commits atomically. ``owner``
     is an opaque, verified caller ID and ``agent`` is the agent's stable ID.
@@ -45,10 +51,19 @@ class SQLiteStateStore:
     """
 
     def __init__(self, path: str | Path):
+        if _hosted():
+            raise RuntimeError("SQLiteStateStore cannot persist in a hosted sandbox; use platform state")
         self.path = str(path)
         if self.path == ":memory:":
             raise ValueError("durable state requires a file path, not :memory:")
+        try:
+            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            os.close(fd)
         with self._connect() as db:
+            db.execute("PRAGMA journal_mode=WAL")
             db.execute("""CREATE TABLE IF NOT EXISTS agent_runs (
                 run_id TEXT PRIMARY KEY, agent TEXT NOT NULL, owner TEXT NOT NULL,
                 status TEXT NOT NULL, state TEXT NOT NULL, version INTEGER NOT NULL,
@@ -61,10 +76,15 @@ class SQLiteStateStore:
                 FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)
             )""")
 
-    def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.path, timeout=30)
-        db.execute("PRAGMA busy_timeout = 30000")
-        return db
+    @contextmanager
+    def _connect(self):
+        db = sqlite3.connect(self.path, timeout=1)
+        try:
+            db.execute("PRAGMA foreign_keys=ON")
+            with db:
+                yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _identity(agent: str, owner: str) -> None:
@@ -73,13 +93,18 @@ class SQLiteStateStore:
 
     @staticmethod
     def _json(state: Any) -> str:
-        return json.dumps(state, allow_nan=False, separators=(",", ":"))
+        encoded = json.dumps(state, allow_nan=False, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > _MAX_JSON_BYTES:
+            raise ValueError("state or result exceeds 64 KiB")
+        return encoded
 
     def create(self, agent: str, owner: str, state: Any) -> RunState:
         self._identity(agent, owner)
         run_id = secrets.token_urlsafe(24)
         with self._connect() as db:
-            db.execute("INSERT INTO agent_runs VALUES (?, ?, ?, 'running', ?, 1, NULL, NULL)",
+            db.execute("""INSERT INTO agent_runs
+                (run_id, agent, owner, status, state, version, token_hash, expires_at)
+                VALUES (?, ?, ?, 'running', ?, 1, NULL, NULL)""",
                        (run_id, agent, owner, self._json(state)))
         return RunState(run_id, "running", state, 1)
 
@@ -148,6 +173,29 @@ class SQLiteStateStore:
                 raise StateError("run missing, not running, or version changed")
         return RunState(run_id, "completed", state, version + 1)
 
+    def cancel(self, run_id: str, *, agent: str, owner: str, version: int) -> RunState:
+        """Close a running or paused run, including an expired pause."""
+        self._identity(agent, owner)
+        with self._connect() as db:
+            cursor = db.execute("""UPDATE agent_runs SET status='cancelled',
+                version=version+1, token_hash=NULL, expires_at=NULL
+                WHERE run_id=? AND agent=? AND owner=? AND version=?
+                AND status IN ('running', 'paused')""",
+                (run_id, agent, owner, version))
+            if cursor.rowcount != 1:
+                raise StateError("run missing, closed, or version changed")
+            row = db.execute("SELECT state FROM agent_runs WHERE run_id=?", (run_id,)).fetchone()
+        return RunState(run_id, "cancelled", json.loads(row[0]), version + 1)
+
+    def purge(self, *, agent: str, owner: str) -> int:
+        """Delete this caller's runs and their effect records."""
+        self._identity(agent, owner)
+        with self._connect() as db:
+            db.execute("""DELETE FROM agent_effects WHERE run_id IN
+                (SELECT run_id FROM agent_runs WHERE agent=? AND owner=?)""", (agent, owner))
+            cursor = db.execute("DELETE FROM agent_runs WHERE agent=? AND owner=?", (agent, owner))
+        return cursor.rowcount
+
     @staticmethod
     def _effect_key(run_id: str, effect_id: str) -> str:
         return hashlib.sha256(f"genfleet-effect-v1:{run_id}:{effect_id}".encode()).hexdigest()
@@ -191,9 +239,8 @@ class SQLiteStateStore:
         with self._connect() as db:
             cursor = db.execute("""UPDATE agent_effects SET status='completed', result=?
                 WHERE run_id=? AND effect_id=? AND status='claimed' AND EXISTS (
-                    SELECT 1 FROM agent_runs WHERE run_id=? AND agent=? AND owner=?
-                    AND status='running')""",
+                    SELECT 1 FROM agent_runs WHERE run_id=? AND agent=? AND owner=?)""",
                 (self._json(result), run_id, effect_id, run_id, agent, owner))
             if cursor.rowcount != 1:
-                raise StateError("effect missing, already completed, or run not running")
+                raise StateError("effect missing or already completed")
         return EffectState(effect_id, self._effect_key(run_id, effect_id), "completed", result)

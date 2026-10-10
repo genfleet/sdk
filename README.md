@@ -120,22 +120,27 @@ turn and appended to after it.
   `request_id` or `message_id` in the request metadata is passed to the store
   as the turn's idempotency key.
 
-### Durable workflow state
+### Local workflow state
 
-`SQLiteStateStore` saves application workflow state independently of conversation
-memory. Give it a persistent SQLite path and use a stable agent ID plus a
-caller ID verified by your ingress. The store treats these IDs as scopes; it
-does not authenticate a caller for you.
+`genfleet.sdk.state.SQLiteStateStore` is a local/self-hosted checkpoint store,
+separate from conversation memory. It refuses to start in a hosted Genfleet
+sandbox: sandbox files disappear on restart, so they cannot hold durable state.
+Hosted workflow state needs the platform-backed agent store and jobs described
+in ADR-0020. This module is not an approval or authorization service.
+
+Give it a persistent SQLite path and a stable agent ID plus a caller ID
+verified by your ingress. The store treats these IDs as scopes; it does not
+authenticate callers or approvers.
 
 ```python
-from genfleet.sdk import SQLiteStateStore
+from genfleet.sdk.state import SQLiteStateStore
 
 store = SQLiteStateStore("/var/lib/my-agent/runs.sqlite3")
 run = store.create("orders-agent", verified_caller_id, {"order_id": order_id})
-# Save progress before pausing for approval.
+# Save progress before pausing for an external event.
 run, resume_token = store.pause(
     run.run_id, agent="orders-agent", owner=verified_caller_id,
-    version=run.version, state={"order_id": order_id, "step": "awaiting_approval"},
+    version=run.version, state={"order_id": order_id, "step": "waiting"},
     ttl_seconds=3600,
 )
 # A later process can atomically consume the token once.
@@ -157,10 +162,12 @@ run = store.complete(
 )
 ```
 
-`checkpoint` updates a running run without pausing. Every write requires the
-last returned `version`, so stale workers cannot overwrite newer state. Keep
-resume tokens private. Use a persistent volume if workers restart; each
-process can open the same database path. For an external side effect,
+`checkpoint` updates a running run without pausing. State writes require the
+last returned `version`; effect claims are separately deduplicated by
+`effect_id`. Keep resume tokens private. `cancel` closes an expired or rejected
+run, and `purge` removes a caller's runs and effect records. State and result
+payloads are limited to 64 KiB. The methods are synchronous; call them through
+`asyncio.to_thread` in an async event loop. For an external side effect,
 `claim_effect` records intent before the call and gives a stable idempotency
 key to pass to a remote API that supports it. A second claim is rejected,
 including after a restart. If a worker dies between the claim and

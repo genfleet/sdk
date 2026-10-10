@@ -3,7 +3,7 @@
 import pytest
 from concurrent.futures import ThreadPoolExecutor
 
-from genfleet.sdk import SQLiteStateStore, StateError
+from genfleet.sdk.state import SQLiteStateStore, StateError
 
 
 def test_restart_and_resume_once(tmp_path):
@@ -118,3 +118,47 @@ def test_effect_claim_is_caller_scoped_and_atomic(tmp_path):
     with pytest.raises(StateError):
         store.complete_effect(run.run_id, "send-email", agent="agent",
                               owner="bob", result="sent")
+
+
+def test_hosted_sandbox_refuses_ephemeral_sqlite(tmp_path, monkeypatch):
+    monkeypatch.setenv("GENFLEET_HOSTED", "1")
+    with pytest.raises(RuntimeError, match="hosted sandbox"):
+        SQLiteStateStore(tmp_path / "runs.db")
+
+
+def test_cancel_expired_run_and_purge_caller_data(tmp_path, monkeypatch):
+    import genfleet.sdk.state as state_module
+
+    store = SQLiteStateStore(tmp_path / "runs.db")
+    run = store.create("agent", "alice", {"order": "one"})
+    store.claim_effect(run.run_id, "charge", agent="agent", owner="alice")
+    monkeypatch.setattr(state_module.time, "time", lambda: 100)
+    paused, token = store.pause(run.run_id, agent="agent", owner="alice",
+                                version=run.version, state=run.state, ttl_seconds=1)
+    monkeypatch.setattr(state_module.time, "time", lambda: 101)
+    with pytest.raises(StateError):
+        store.resume(run.run_id, agent="agent", owner="alice", token=token)
+    cancelled = store.cancel(run.run_id, agent="agent", owner="alice", version=paused.version)
+    assert cancelled.status == "cancelled"
+    assert store.purge(agent="agent", owner="bob") == 0
+    assert store.purge(agent="agent", owner="alice") == 1
+    with pytest.raises(StateError):
+        store.get_effect(run.run_id, "charge", agent="agent", owner="alice")
+
+
+def test_payload_limit_and_file_permissions(tmp_path):
+    store = SQLiteStateStore(tmp_path / "runs.db")
+    assert (tmp_path / "runs.db").stat().st_mode & 0o777 == 0o600
+    with pytest.raises(ValueError, match="64 KiB"):
+        store.create("agent", "alice", {"large": "x" * 65536})
+
+
+def test_confirmed_effect_can_be_recorded_after_pause(tmp_path):
+    store = SQLiteStateStore(tmp_path / "runs.db")
+    run = store.create("agent", "alice", {})
+    store.claim_effect(run.run_id, "send-email", agent="agent", owner="alice")
+    store.pause(run.run_id, agent="agent", owner="alice", version=run.version,
+                state={"step": "waiting"})
+    effect = store.complete_effect(run.run_id, "send-email", agent="agent",
+                                   owner="alice", result={"message_id": "m-1"})
+    assert effect.result == {"message_id": "m-1"}
