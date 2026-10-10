@@ -1,4 +1,13 @@
-"""Async workflow-state interface shared by hosted and local agents."""
+"""Async workflow-state interface shared by hosted and local agents.
+
+``agent`` and ``owner`` scope every run. Locally (:class:`LocalStateStore`)
+both are whatever the caller passes: pass the verified caller id from your
+ingress as ``owner``. Hosted (:class:`PlatformStateStore`) the platform stamps
+the scope itself (tenant and agent instance from the sandbox, owner from the
+running turn's verified caller), so ``owner`` is ignored there.
+
+Pause/resume is a continuation, not an approval (ADR-0028 §8a, sdk#59).
+"""
 
 from __future__ import annotations
 
@@ -7,7 +16,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from .platform_state import PlatformStateStore, STATE_TOKEN_ENV, STATE_URL_ENV
+from .platform_state import STATE_TOKEN_ENV, STATE_URL_ENV, PlatformStateStore
 from .state import EffectState, RunState, SQLiteStateStore
 
 

@@ -1,4 +1,22 @@
-"""Workflow state through the engine's tenant-scoped sandbox proxy."""
+"""Workflow state through the engine's tenant-scoped sandbox proxy.
+
+Scope is stamped by the platform, never sent by the agent:
+
+- **tenant and agent** come from the sandbox's per-spawn token;
+- **owner** comes from the running turn's verified caller (role + id), which
+  the engine looks up from the turn this call names. The SDK names the turn
+  with ``session_id`` and ``turn_id`` from :func:`genfleet.sdk.turn.current_turn`
+  (set by ``Agent`` while a tool or the model client runs). A call made
+  outside any turn uses the agent's own background scope, which no customer
+  turn can read. A call naming a turn that has already ended is refused.
+
+So the ``agent`` and ``owner`` arguments are not sent. ``owner`` is ignored
+when hosted. ``agent`` must stay the same for one store: hosted, every call
+shares the agent instance's scope, so a second ``agent`` value would silently
+share runs (and ``purge``) with the first, and is refused instead.
+
+Pause/resume is a continuation, not an approval: see the README.
+"""
 
 from __future__ import annotations
 
@@ -9,32 +27,45 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from .state import EffectState, RunState, StateError
+from .state import EffectState, RunState, StateError, StateQuotaExceeded, StateTooLarge
+from .turn import current_turn
 
 STATE_URL_ENV = "GENFLEET_STATE_URL"
 STATE_TOKEN_ENV = "GENFLEET_STATE_TOKEN"
 
 
 class PlatformStateError(StateError):
+    """The proxy refused or failed an operation. ``status`` is 0 when it was unreachable."""
+
     def __init__(self, op: str, status: int, detail: str) -> None:
         super().__init__(f"platform state {op} failed ({status}): {detail}")
         self.op = op
         self.status = status
 
 
-class PlatformStateStore:
-    """The platform resolves tenant and agent from a per-spawn token.
+class _PlatformStateTooLarge(PlatformStateError, StateTooLarge):
+    """HTTP 413 from the proxy."""
 
-    ``agent`` keeps the same SDK API as the local store; it is never sent on
-    the wire. The proxy stamps its own agent scope. ``owner`` is a run key,
-    not authorization to approve another caller's action.
-    """
+
+class _PlatformStateQuotaExceeded(PlatformStateError, StateQuotaExceeded):
+    """HTTP 429 from the proxy: a backend quota or the proxy's rate cap."""
+
+
+_BY_STATUS: dict[int, type[PlatformStateError]] = {
+    413: _PlatformStateTooLarge,
+    429: _PlatformStateQuotaExceeded,
+}
+
+
+class PlatformStateStore:
+    """The hosted :class:`~genfleet.sdk.state_store.StateStore` (see the module doc)."""
 
     def __init__(self, base_url: str, token: str):
         if not base_url or not token:
             raise ValueError("PlatformStateStore needs a URL and token")
         self._base = base_url.rstrip("/")
         self._token = token
+        self._agent: str | None = None
 
     @classmethod
     def from_env(cls) -> PlatformStateStore:
@@ -44,57 +75,91 @@ class PlatformStateStore:
         return cls(url, token)
 
     async def create(self, agent: str, owner: str, state: Any, *, subject: str | None = None) -> RunState:
-        return self._run(await self._call("create", {"owner": owner, "state": state, "subject": subject}))
+        return self._run("create", await self._call("create", agent, {"state": state, "subject": subject}))
 
     async def get(self, run_id: str, *, agent: str, owner: str) -> RunState:
-        return self._run(await self._call("get", {"run_id": run_id, "owner": owner}))
+        return self._run("get", await self._call("get", agent, {"run_id": run_id}))
 
     async def checkpoint(self, run_id: str, *, agent: str, owner: str, version: int, state: Any) -> RunState:
-        return self._run(await self._call("checkpoint", {"run_id": run_id, "owner": owner, "version": version, "state": state}))
+        body = {"run_id": run_id, "version": version, "state": state}
+        return self._run("checkpoint", await self._call("checkpoint", agent, body))
 
     async def pause(self, run_id: str, *, agent: str, owner: str, version: int,
                     state: Any, ttl_seconds: float = 3600) -> tuple[RunState, str]:
-        data = await self._call("pause", {"run_id": run_id, "owner": owner, "version": version,
-                                          "state": state, "ttl_seconds": ttl_seconds})
-        token = data.pop("token")
-        return self._run(data), token
+        data = await self._call("pause", agent, {"run_id": run_id, "version": version,
+                                                 "state": state, "ttl_seconds": ttl_seconds})
+        token = data.get("token")
+        if not isinstance(token, str) or not token:
+            raise PlatformStateError("pause", 200, "invalid response")
+        return self._run("pause", data), token
 
     async def resume(self, run_id: str, *, agent: str, owner: str, token: str) -> RunState:
-        return self._run(await self._call("resume", {"run_id": run_id, "owner": owner, "token": token}))
+        return self._run("resume", await self._call("resume", agent, {"run_id": run_id, "token": token}))
 
     async def complete(self, run_id: str, *, agent: str, owner: str, version: int, state: Any) -> RunState:
-        return self._run(await self._call("complete", {"run_id": run_id, "owner": owner, "version": version, "state": state}))
+        body = {"run_id": run_id, "version": version, "state": state}
+        return self._run("complete", await self._call("complete", agent, body))
 
     async def cancel(self, run_id: str, *, agent: str, owner: str, version: int) -> RunState:
-        return self._run(await self._call("cancel", {"run_id": run_id, "owner": owner, "version": version}))
+        return self._run("cancel", await self._call("cancel", agent, {"run_id": run_id, "version": version}))
 
     async def purge(self, *, agent: str, owner: str) -> int:
-        return int((await self._call("purge", {"owner": owner}))["runs"])
+        """Delete the current scope's runs (the turn's caller, or the background scope)."""
+        return self._count("purge", await self._call("purge", agent, {}))
 
     async def purge_subject(self, *, agent: str, subject: str) -> int:
-        return int((await self._call("purge_subject", {"subject": subject}))["runs"])
+        """Refused on a customer's turn: it would reach other callers' runs."""
+        return self._count("purge_subject", await self._call("purge_subject", agent, {"subject": subject}))
 
     async def claim_effect(self, run_id: str, effect_id: str, *, agent: str, owner: str) -> EffectState:
-        return self._effect(await self._call("claim_effect", {"run_id": run_id, "effect_id": effect_id, "owner": owner}))
+        body = {"run_id": run_id, "effect_id": effect_id}
+        return self._effect("claim_effect", await self._call("claim_effect", agent, body))
 
     async def get_effect(self, run_id: str, effect_id: str, *, agent: str, owner: str) -> EffectState:
-        return self._effect(await self._call("get_effect", {"run_id": run_id, "effect_id": effect_id, "owner": owner}))
+        body = {"run_id": run_id, "effect_id": effect_id}
+        return self._effect("get_effect", await self._call("get_effect", agent, body))
 
     async def complete_effect(self, run_id: str, effect_id: str, *, agent: str,
                               owner: str, result: Any) -> EffectState:
-        return self._effect(await self._call("complete_effect", {"run_id": run_id,
-                            "effect_id": effect_id, "owner": owner, "result": result}))
+        body = {"run_id": run_id, "effect_id": effect_id, "result": result}
+        return self._effect("complete_effect", await self._call("complete_effect", agent, body))
 
     @staticmethod
-    def _run(data: dict[str, Any]) -> RunState:
-        return RunState(data["run_id"], data["status"], data["state"], data["version"])
+    def _run(op: str, data: dict[str, Any]) -> RunState:
+        try:
+            return RunState(str(data["run_id"]), data["status"], data["state"], int(data["version"]))
+        except (KeyError, TypeError, ValueError):
+            raise PlatformStateError(op, 200, "invalid response") from None
 
     @staticmethod
-    def _effect(data: dict[str, Any]) -> EffectState:
-        return EffectState(data["effect_id"], data["idempotency_key"], data["status"], data.get("result"))
+    def _effect(op: str, data: dict[str, Any]) -> EffectState:
+        try:
+            return EffectState(str(data["effect_id"]), str(data["idempotency_key"]),
+                               data["status"], data.get("result"))
+        except (KeyError, TypeError):
+            raise PlatformStateError(op, 200, "invalid response") from None
 
-    async def _call(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
-        return await asyncio.to_thread(self._call_sync, op, body)
+    @staticmethod
+    def _count(op: str, data: dict[str, Any]) -> int:
+        try:
+            return int(data["runs"])
+        except (KeyError, TypeError, ValueError):
+            raise PlatformStateError(op, 200, "invalid response") from None
+
+    def _scope(self, agent: str) -> None:
+        if not agent:
+            raise ValueError("agent is required")
+        if self._agent is None:
+            self._agent = agent
+        elif agent != self._agent:
+            raise StateError(
+                f"hosted state has one scope per agent instance; this store already uses "
+                f"agent={self._agent!r}, so agent={agent!r} would share its runs"
+            )
+
+    async def _call(self, op: str, agent: str, body: dict[str, Any]) -> dict[str, Any]:
+        self._scope(agent)
+        return await asyncio.to_thread(self._call_sync, op, {**body, **_turn_ref()})
 
     def _call_sync(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         req = urllib.request.Request(
@@ -105,7 +170,7 @@ class PlatformStateStore:
             with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310 — platform URL
                 payload = response.read()
         except urllib.error.HTTPError as exc:
-            raise PlatformStateError(op, exc.code, "request rejected") from None
+            raise _BY_STATUS.get(exc.code, PlatformStateError)(op, exc.code, "request rejected") from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise PlatformStateError(op, 0, str(exc)) from None
         try:
@@ -115,3 +180,15 @@ class PlatformStateStore:
         if not isinstance(data, dict):
             raise PlatformStateError(op, 200, "expected an object")
         return data
+
+
+def _turn_ref() -> dict[str, str]:
+    """The running turn's ``session_id`` and ``turn_id``, or nothing outside a turn.
+
+    The engine stamps the owner from the caller of exactly this turn.
+    """
+    turn = current_turn()
+    session_id, turn_id = turn.get("session_id"), turn.get("turn_id")
+    if isinstance(session_id, str) and session_id and isinstance(turn_id, str) and turn_id:
+        return {"session_id": session_id, "turn_id": turn_id}
+    return {}
