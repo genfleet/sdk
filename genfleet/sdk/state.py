@@ -2,6 +2,10 @@
 
 The caller identity must come from trusted ingress (for example the platform's
 verified sender), never from a resume request's unverified payload.
+
+Pause and resume are a continuation, not an approval: whoever holds the resume
+token (and the same ``owner``) can resume. Human approval is a separate
+platform flow (ADR-0028 §8a; genfleet/sdk#59).
 """
 
 from __future__ import annotations
@@ -15,21 +19,36 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from .caller import _hosted
+from .caller import is_hosted
 
 _MAX_JSON_BYTES = 64 * 1024
+#: The longest pause either backend accepts (the platform refuses more).
+MAX_PAUSE_TTL_SECONDS = 30 * 86_400
+#: How long a local writer waits for SQLite's lock before raising StateError.
+_BUSY_TIMEOUT_S = 5.0
+
+RunStatus = Literal["running", "paused", "completed", "cancelled"]
+EffectStatus = Literal["claimed", "completed"]
 
 
 class StateError(RuntimeError):
     """A run cannot make the requested state transition."""
 
 
+class StateTooLarge(StateError, ValueError):
+    """A state or result payload is over the 64 KiB cap (or the request is too big)."""
+
+
+class StateQuotaExceeded(StateError):
+    """The platform refused the write: a quota or the request rate is exceeded."""
+
+
 @dataclass(frozen=True)
 class RunState:
     run_id: str
-    status: str
+    status: RunStatus
     state: Any
     version: int
 
@@ -38,7 +57,7 @@ class RunState:
 class EffectState:
     effect_id: str
     idempotency_key: str
-    status: str
+    status: EffectStatus
     result: Any = None
 
 
@@ -51,7 +70,7 @@ class SQLiteStateStore:
     """
 
     def __init__(self, path: str | Path):
-        if _hosted():
+        if is_hosted():
             raise RuntimeError("SQLiteStateStore cannot persist in a hosted sandbox; use platform state")
         self.path = str(path)
         if self.path == ":memory:":
@@ -80,13 +99,17 @@ class SQLiteStateStore:
 
     @contextmanager
     def _connect(self):
-        db = sqlite3.connect(self.path, timeout=1)
+        """One connection per transition; a lock or I/O failure is a StateError."""
         try:
-            db.execute("PRAGMA foreign_keys=ON")
-            with db:
-                yield db
-        finally:
-            db.close()
+            db = sqlite3.connect(self.path, timeout=_BUSY_TIMEOUT_S)
+            try:
+                db.execute("PRAGMA foreign_keys=ON")
+                with db:
+                    yield db
+            finally:
+                db.close()
+        except sqlite3.OperationalError as exc:
+            raise StateError(f"local state store unavailable: {exc}") from exc
 
     @staticmethod
     def _identity(agent: str, owner: str) -> None:
@@ -97,7 +120,7 @@ class SQLiteStateStore:
     def _json(state: Any) -> str:
         encoded = json.dumps(state, allow_nan=False, separators=(",", ":"))
         if len(encoded.encode("utf-8")) > _MAX_JSON_BYTES:
-            raise ValueError("state or result exceeds 64 KiB")
+            raise StateTooLarge("state or result exceeds 64 KiB")
         return encoded
 
     def create(self, agent: str, owner: str, state: Any, *, subject: str | None = None) -> RunState:
@@ -132,8 +155,8 @@ class SQLiteStateStore:
     def pause(self, run_id: str, *, agent: str, owner: str, version: int,
               state: Any, ttl_seconds: float = 3600) -> tuple[RunState, str]:
         self._identity(agent, owner)
-        if ttl_seconds <= 0:
-            raise ValueError("ttl_seconds must be positive")
+        if not 0 < ttl_seconds <= MAX_PAUSE_TTL_SECONDS:
+            raise ValueError("ttl_seconds must be between 0 and 30 days")
         token = secrets.token_urlsafe(32)
         digest = hashlib.sha256(token.encode()).hexdigest()
         with self._connect() as db:

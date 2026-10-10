@@ -1,9 +1,11 @@
 """Durable state survives process boundaries and enforces transition claims."""
 
-import pytest
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
-from genfleet.sdk.state import SQLiteStateStore, StateError
+import pytest
+
+from genfleet.sdk.state import SQLiteStateStore, StateError, StateTooLarge
 
 
 def test_restart_and_resume_once(tmp_path):
@@ -86,13 +88,15 @@ def test_effect_claim_survives_restart_and_never_replays(tmp_path):
     assert len(effect.idempotency_key) == 64
 
     restarted = SQLiteStateStore(path)
-    assert restarted.get_effect(run.run_id, "charge-order-1", agent="agent", owner="alice") == effect
+    stored = restarted.get_effect(run.run_id, "charge-order-1", agent="agent", owner="alice")
+    assert stored == effect
     with pytest.raises(StateError, match="already claimed"):
         restarted.claim_effect(run.run_id, "charge-order-1", agent="agent", owner="alice")
 
     completed = restarted.complete_effect(run.run_id, "charge-order-1", agent="agent",
                                           owner="alice", result={"receipt": "r-1"})
-    assert restarted.get_effect(run.run_id, "charge-order-1", agent="agent", owner="alice") == completed
+    stored = restarted.get_effect(run.run_id, "charge-order-1", agent="agent", owner="alice")
+    assert stored == completed
     with pytest.raises(StateError, match="already completed"):
         restarted.complete_effect(run.run_id, "charge-order-1", agent="agent",
                                   owner="alice", result={"receipt": "r-2"})
@@ -149,7 +153,9 @@ def test_cancel_expired_run_and_purge_caller_data(tmp_path, monkeypatch):
 def test_payload_limit_and_file_permissions(tmp_path):
     store = SQLiteStateStore(tmp_path / "runs.db")
     assert (tmp_path / "runs.db").stat().st_mode & 0o777 == 0o600
-    with pytest.raises(ValueError, match="64 KiB"):
+    with pytest.raises(StateTooLarge, match="64 KiB"):
+        store.create("agent", "alice", {"large": "x" * 65536})
+    with pytest.raises(ValueError):  # StateTooLarge is still a ValueError
         store.create("agent", "alice", {"large": "x" * 65536})
 
 
@@ -162,3 +168,33 @@ def test_confirmed_effect_can_be_recorded_after_pause(tmp_path):
     effect = store.complete_effect(run.run_id, "send-email", agent="agent",
                                    owner="alice", result={"message_id": "m-1"})
     assert effect.result == {"message_id": "m-1"}
+
+
+def test_pause_ttl_is_capped_like_the_platform(tmp_path):
+    store = SQLiteStateStore(tmp_path / "runs.db")
+    run = store.create("agent", "alice", {})
+    for ttl in (0, -1, 30 * 86_400 + 1):
+        with pytest.raises(ValueError, match="30 days"):
+            store.pause(run.run_id, agent="agent", owner="alice", version=run.version,
+                        state={}, ttl_seconds=ttl)
+    paused, _ = store.pause(run.run_id, agent="agent", owner="alice", version=run.version,
+                            state={}, ttl_seconds=30 * 86_400)
+    assert paused.status == "paused"
+
+
+def test_a_locked_database_is_a_state_error(tmp_path, monkeypatch):
+    import genfleet.sdk.state as state_module
+
+    path = tmp_path / "runs.db"
+    store = SQLiteStateStore(path)
+    run = store.create("agent", "alice", {})
+    monkeypatch.setattr(state_module, "_BUSY_TIMEOUT_S", 0.05)
+    holder = sqlite3.connect(path)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        with pytest.raises(StateError, match="unavailable"):
+            store.checkpoint(run.run_id, agent="agent", owner="alice",
+                             version=run.version, state={"step": 1})
+    finally:
+        holder.rollback()
+        holder.close()
