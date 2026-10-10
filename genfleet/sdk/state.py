@@ -67,8 +67,10 @@ class SQLiteStateStore:
             db.execute("""CREATE TABLE IF NOT EXISTS agent_runs (
                 run_id TEXT PRIMARY KEY, agent TEXT NOT NULL, owner TEXT NOT NULL,
                 status TEXT NOT NULL, state TEXT NOT NULL, version INTEGER NOT NULL,
-                token_hash TEXT, expires_at REAL
+                token_hash TEXT, expires_at REAL, subject TEXT
             )""")
+            if "subject" not in {row[1] for row in db.execute("PRAGMA table_info(agent_runs)")}:
+                db.execute("ALTER TABLE agent_runs ADD COLUMN subject TEXT")
             db.execute("""CREATE TABLE IF NOT EXISTS agent_effects (
                 run_id TEXT NOT NULL, effect_id TEXT NOT NULL,
                 status TEXT NOT NULL, result TEXT,
@@ -98,14 +100,14 @@ class SQLiteStateStore:
             raise ValueError("state or result exceeds 64 KiB")
         return encoded
 
-    def create(self, agent: str, owner: str, state: Any) -> RunState:
+    def create(self, agent: str, owner: str, state: Any, *, subject: str | None = None) -> RunState:
         self._identity(agent, owner)
         run_id = secrets.token_urlsafe(24)
         with self._connect() as db:
             db.execute("""INSERT INTO agent_runs
-                (run_id, agent, owner, status, state, version, token_hash, expires_at)
-                VALUES (?, ?, ?, 'running', ?, 1, NULL, NULL)""",
-                       (run_id, agent, owner, self._json(state)))
+                (run_id, agent, owner, status, state, version, token_hash, expires_at, subject)
+                VALUES (?, ?, ?, 'running', ?, 1, NULL, NULL, ?)""",
+                       (run_id, agent, owner, self._json(state), subject))
         return RunState(run_id, "running", state, 1)
 
     def get(self, run_id: str, *, agent: str, owner: str) -> RunState:
@@ -194,6 +196,16 @@ class SQLiteStateStore:
             db.execute("""DELETE FROM agent_effects WHERE run_id IN
                 (SELECT run_id FROM agent_runs WHERE agent=? AND owner=?)""", (agent, owner))
             cursor = db.execute("DELETE FROM agent_runs WHERE agent=? AND owner=?", (agent, owner))
+        return cursor.rowcount
+
+    def purge_subject(self, *, agent: str, subject: str) -> int:
+        """Delete one subject's runs and effect records within an agent."""
+        if not agent or not subject:
+            raise ValueError("agent and subject are required")
+        with self._connect() as db:
+            db.execute("""DELETE FROM agent_effects WHERE run_id IN
+                (SELECT run_id FROM agent_runs WHERE agent=? AND subject=?)""", (agent, subject))
+            cursor = db.execute("DELETE FROM agent_runs WHERE agent=? AND subject=?", (agent, subject))
         return cursor.rowcount
 
     @staticmethod

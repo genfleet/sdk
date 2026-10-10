@@ -1,4 +1,6 @@
 from .agent import Agent
+from .state_store import LocalStateStore, StateStore, state_for
+from .platform_state import PlatformStateStore
 from .audit.schemas import AuditConfig, AuditEvent
 from .confirmations import (
     APPROVAL_KEY_ENV,
@@ -59,6 +61,10 @@ from .tools_loader import (
 __all__ = [
     # Core
     "Agent",
+    "StateStore",
+    "LocalStateStore",
+    "PlatformStateStore",
+    "state_for",
     "Skill",
     "SkillOption",
     "discover_skills",

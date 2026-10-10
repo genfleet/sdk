@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- Add an experimental, local-only SQLite workflow state module with bounded checkpoints, one-time resume claims, cancellation, caller purge, and external-effect claims. Hosted sandboxes reject this backend because their files are ephemeral.
+- Add a shared async workflow state interface with a hosted proxy client and a local SQLite backend. Runs support bounded checkpoints, one-time resume claims, cancellation, caller/subject purge, and external-effect claims. Hosted sandboxes refuse SQLite because their files are ephemeral.
 - Add repository skill discovery and selection, including pinned `owner/repo@commit` sources for `Agent`. Skill instructions are read on demand, filtered by caller audience, and omitted from audit events and persisted memory.
 - Accept caller-provided `Memory` implementations for local development and custom stores.
 - Add a notebook covering skills, tools, memory, and an optional free OpenRouter model.

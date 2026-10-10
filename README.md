@@ -122,41 +122,47 @@ turn and appended to after it.
 
 ### Local workflow state
 
-`genfleet.sdk.state.SQLiteStateStore` is a local/self-hosted checkpoint store,
-separate from conversation memory. It refuses to start in a hosted Genfleet
-sandbox: sandbox files disappear on restart, so they cannot hold durable state.
-Hosted workflow state needs the platform-backed agent store and jobs described
-in ADR-0020. This module is not an approval or authorization service.
+Workflow state is separate from conversation memory. A hosted `Agent` selects
+`PlatformStateStore` when its sandbox receives `GENFLEET_STATE_URL` and
+`GENFLEET_STATE_TOKEN`; `agent.state` then uses the engine proxy and a
+PostgreSQL store scoped to that tenant and agent instance. The SDK sends no
+tenant or agent identifier to the proxy. `Agent(state="platform")` requires
+the environment pair and fails if it is absent.
+
+For local/self-hosted work, use `LocalStateStore(path)` as the async backend.
+It wraps `SQLiteStateStore` on a worker thread and refuses to open in a hosted
+sandbox. Both implement the same `StateStore` interface. This state API is
+not an approval or authorization service.
 
 Give it a persistent SQLite path and a stable agent ID plus a caller ID
 verified by your ingress. The store treats these IDs as scopes; it does not
 authenticate callers or approvers.
 
 ```python
-from genfleet.sdk.state import SQLiteStateStore
+from genfleet.sdk import LocalStateStore
 
-store = SQLiteStateStore("/var/lib/my-agent/runs.sqlite3")
-run = store.create("orders-agent", verified_caller_id, {"order_id": order_id})
+store = LocalStateStore("/var/lib/my-agent/runs.sqlite3")
+run = await store.create("orders-agent", verified_caller_id, {"order_id": order_id}, subject=customer_id)
 # Save progress before pausing for an external event.
-run, resume_token = store.pause(
+run, resume_token = await store.pause(
     run.run_id, agent="orders-agent", owner=verified_caller_id,
     version=run.version, state={"order_id": order_id, "step": "waiting"},
     ttl_seconds=3600,
 )
 # A later process can atomically consume the token once.
-run = store.resume(
+run = await store.resume(
     run.run_id, agent="orders-agent", owner=verified_caller_id,
     token=resume_token,
 )
-effect = store.claim_effect(
+effect = await store.claim_effect(
     run.run_id, "charge-order", agent="orders-agent", owner=verified_caller_id,
 )
 receipt = payment_client.charge(order_id, idempotency_key=effect.idempotency_key)
-store.complete_effect(
+await store.complete_effect(
     run.run_id, "charge-order", agent="orders-agent",
     owner=verified_caller_id, result={"receipt": receipt.id},
 )
-run = store.complete(
+run = await store.complete(
     run.run_id, agent="orders-agent", owner=verified_caller_id,
     version=run.version, state={"order_id": order_id, "step": "done"},
 )
@@ -165,9 +171,9 @@ run = store.complete(
 `checkpoint` updates a running run without pausing. State writes require the
 last returned `version`; effect claims are separately deduplicated by
 `effect_id`. Keep resume tokens private. `cancel` closes an expired or rejected
-run, and `purge` removes a caller's runs and effect records. State and result
-payloads are limited to 64 KiB. The methods are synchronous; call them through
-`asyncio.to_thread` in an async event loop. For an external side effect,
+run, and `purge` removes a caller's runs and effect records. `purge_subject`
+deletes one subject's runs within the agent. State and result payloads are
+limited to 64 KiB. For an external side effect,
 `claim_effect` records intent before the call and gives a stable idempotency
 key to pass to a remote API that supports it. A second claim is rejected,
 including after a restart. If a worker dies between the claim and

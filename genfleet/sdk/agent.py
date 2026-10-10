@@ -11,6 +11,7 @@ from typing import Any, AsyncIterator, Literal
 from .audit import Auditor, audit_for
 from .audit.schemas import AuditConfig
 from .memory import memory_for
+from .state_store import StateStore, state_for
 
 #: ``AgentInput.metadata`` key the platform sets per turn: ``"off"`` means the
 #: Agent neither loads nor writes its session memory for that turn.
@@ -144,6 +145,7 @@ class Agent:
         audit: AuditConfig | None = None,
         model_client: ModelClient | None = None,
         skills: list[Skill | str | Path] | None = None,
+        state: StateStore | Literal["platform"] | None = None,
     ) -> None:
         self._role = role
         self._context = context
@@ -151,6 +153,7 @@ class Agent:
 
         self._provider: ModelClient = _model_client_for(model, model_client)
         self._memory: Memory | None = memory_for(memory)
+        self._state: StateStore | None = state_for(state)
         self._auditor: Auditor | None = audit_for(audit)
         self._mcp_configs: list[MCPConfig] = mcps or []
 
@@ -177,6 +180,11 @@ class Agent:
         :class:`~genfleet.sdk.memory.PlatformMemory` exposes ``search`` and
         ``purge``. ``None`` when the agent runs without memory."""
         return self._memory
+
+    @property
+    def state(self) -> StateStore | None:
+        """Workflow checkpoints; platform-backed when hosted, if configured."""
+        return self._state
 
     @property
     def skills(self) -> tuple[Skill, ...]:
