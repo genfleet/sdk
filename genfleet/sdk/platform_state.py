@@ -182,13 +182,13 @@ class PlatformStateStore:
         return data
 
 
-def _turn_ref() -> dict[str, str]:
+def _turn_ref() -> dict[str, Any]:
     """The running turn's ``session_id`` and ``turn_id``, or nothing outside a turn.
 
-    The engine stamps the owner from the caller of exactly this turn.
+    The engine stamps the owner from the caller of exactly this turn. A turn
+    that carries only one of the two still sends what it has, so the engine
+    refuses it rather than treating a customer's turn as background work.
     """
     turn = current_turn()
-    session_id, turn_id = turn.get("session_id"), turn.get("turn_id")
-    if isinstance(session_id, str) and session_id and isinstance(turn_id, str) and turn_id:
-        return {"session_id": session_id, "turn_id": turn_id}
-    return {}
+    ref = {key: turn[key] for key in ("session_id", "turn_id") if turn.get(key) is not None}
+    return ref if ref.get("turn_id") or ref.get("session_id") else {}

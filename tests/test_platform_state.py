@@ -93,6 +93,14 @@ async def test_the_running_turn_is_named_so_the_engine_can_stamp_its_caller(prox
     assert "genfleet.caller" not in in_turn
 
 
+async def test_a_turn_missing_its_session_still_names_itself(proxy):
+    """Sent as is, so the engine refuses it instead of reading it as background work."""
+    store = PlatformStateStore(proxy, "spawn-token")
+    await sdk_turn.call_within({"session_id": "", "turn_id": "t-1"}, store.create("agent-name", "o", {}))
+    (_, body, _), = Proxy.calls
+    assert (body["session_id"], body["turn_id"]) == ("", "t-1")
+
+
 async def test_a_second_agent_name_is_refused_rather_than_sharing_runs(proxy):
     store = PlatformStateStore(proxy, "spawn-token")
     await store.create("orders", "c", {})
