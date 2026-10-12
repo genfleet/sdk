@@ -203,12 +203,30 @@ def test_the_card_lists_the_output_types() -> None:
     ]
 
 
-def test_an_override_on_an_agent_that_cannot_take_it_is_refused() -> None:
+def test_an_override_leaves_the_agent_unchanged() -> None:
     class Frozen:
-        __slots__ = ()
+        __slots__ = ("inputs",)
 
-        async def run(self, input):  # pragma: no cover
-            yield AgentOutput(content="", done=True)
+        def __init__(self) -> None:
+            self.inputs = []
 
-    with pytest.raises(TypeError):
-        create_app(Frozen(), accepted_input_types=["image/*"])
+        async def run(self, input):
+            self.inputs.append(input)
+            yield AgentOutput(content="ok", done=True)
+
+    agent = Frozen()
+    app = TestClient(create_app(agent, accepted_input_types=["image/*"]))
+    assert not hasattr(agent, "accepted_input_types")
+    app.post("/", json=_rpc("SendMessage", [{"raw": B64, "mediaType": "image/png"}]))
+    assert agent.inputs[0]._served_input_types == ("image/*",)
+
+
+def test_served_types_never_come_from_the_request() -> None:
+    agent = Recorder(["image/*"])
+    TestClient(create_app(agent)).post("/", json=_rpc("SendMessage", [{"text": "hi"}], metadata={
+        "_served_input_types": ["*/*"], "served_input_types": ["*/*"],
+    }))
+    turn = agent.inputs[0]
+    assert turn._served_input_types == ("image/*",)
+    assert "_served_input_types" not in turn.model_dump()
+    assert AgentInput.model_validate({"message": "x", "_served_input_types": ["*/*"]})._served_input_types is None

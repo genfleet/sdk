@@ -193,7 +193,9 @@ def _build_v1_input(
     context_id = message.get("contextId")
     if isinstance(context_id, str) and context_id:
         metadata["session_id"] = context_id
-    return AgentInput(parts=parts, history=history, metadata=metadata)
+    turn = AgentInput(parts=parts, history=history, metadata=metadata)
+    turn._served_input_types = accepted
+    return turn
 
 
 def _v1_part_out(part: MediaPart) -> dict[str, Any]:
@@ -320,22 +322,15 @@ async def _read_body(request: Request, limit: int) -> bytes | None:
 
 
 def _accepted_types(agent: AgentProtocol, declared: Iterable[str] | None) -> tuple[str, ...]:
-    """The file types ``agent`` accepts: ``declared``, else its attribute, validated.
+    """The file types this app admits: ``declared``, else the agent's attribute, validated.
 
-    One source of truth: an explicit ``declared`` is also set on the agent
-    (``accepted_input_types``), so an agent that checks its own turn
-    (``Agent.run``) accepts exactly what ``serve`` admitted.
+    The agent is never changed: each turn carries the app's types to it
+    (``AgentInput._served_input_types``), so two apps over one agent each
+    keep their own.
     """
     if declared is None:
-        return mime_patterns(getattr(agent, ACCEPTED_INPUT_TYPES_ATTR, None))
-    accepted = mime_patterns(declared)
-    try:
-        setattr(agent, ACCEPTED_INPUT_TYPES_ATTR, accepted)
-    except AttributeError as exc:
-        raise TypeError(
-            "accepted_input_types was given, but the agent's own accepted_input_types can't be set"
-        ) from exc
-    return accepted
+        declared = getattr(agent, ACCEPTED_INPUT_TYPES_ATTR, None)
+    return mime_patterns(declared)
 
 
 def _output_types(agent: AgentProtocol, declared: Iterable[str] | None) -> tuple[str, ...]:
@@ -556,8 +551,9 @@ def create_app(
     ``accepted_input_types``: the MIME types (``"image/*"``,
     ``"application/pdf"``, ``"*/*"``) of the files the agent takes, besides
     text. Defaults to the agent's own ``accepted_input_types`` attribute
-    (``Agent(accepts=…)`` sets it), else none. When given, it is also set as
-    the agent's attribute, so ``Agent.run`` accepts the same types. The card lists them as
+    (``Agent(accepts=…)`` sets it), else none. When given, it applies to this
+    app only: the agent is not changed, and ``Agent.run`` accepts what this
+    app admitted. The card lists them as
     ``defaultInputModes``; a request with a file of any other type is
     answered ContentTypeNotSupported (-32005), naming the type and what is
     accepted. Files arrive as ``AgentInput.parts``: inline (``raw``, at most
@@ -673,6 +669,7 @@ def create_app(
             message_text = msg
 
         agent_input = _build_agent_input(message_text, v0_parts, params, accept_history=accept_history)
+        agent_input._served_input_types = accepted
         task_id = params.get("id", str(uuid.uuid4()))
 
         if method == "tasks/send":

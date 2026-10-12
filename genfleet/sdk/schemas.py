@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, Required, TypedDict
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from .parts import Part, TextPart, text_of
 
@@ -46,6 +46,13 @@ class AgentInput(BaseModel):
     history: list[Message] = Field(default_factory=list)
     tool_schemas: list[ToolSchema] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    #: The file types ``serve`` admitted this turn under (its effective
+    #: ``accepted_input_types``), set by ``serve`` only. Private: never
+    #: serialised, never read from a request. ``Agent.run`` checks against it
+    #: instead of its own types, so an app's override needs no change to the
+    #: shared agent.
+    _served_input_types: tuple[str, ...] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _text_and_parts(self) -> "AgentInput":

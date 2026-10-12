@@ -251,7 +251,7 @@ def test_serve_override_reaches_a_real_agent() -> None:
     client = FakeModelClient(["ok"])
     agent = Agent(role="r", model={"model": "general-fast"}, model_client=client)  # no accepts=
     app = TestClient(create_app(agent, accepted_input_types=["Image/*"]))
-    assert agent.accepted_input_types == ("image/*",)
+    assert agent.accepted_input_types == ()  # the app's override doesn't change the agent
     assert app.get("/.well-known/agent-card.json").json()["defaultInputModes"] == ["text/plain", "image/*"]
     body = app.post("/", json={"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {"message": {
         "messageId": "m", "role": "ROLE_USER",
@@ -262,3 +262,72 @@ def test_serve_override_reaches_a_real_agent() -> None:
         "messageId": "m", "role": "ROLE_USER", "parts": [{"url": "genfleet-file://f", "mediaType": "application/pdf"}],
     }}}).json()
     assert refused["error"]["code"] == -32005
+
+
+def test_two_apps_over_one_agent_keep_their_own_types() -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from genfleet.sdk.serve import create_app
+
+    agent = Agent(role="r", model={"model": "general-fast"}, model_client=FakeModelClient(["a", "b", "c"]))
+    images = TestClient(create_app(agent, accepted_input_types=["image/*"]))
+    pdfs = TestClient(create_app(agent, accepted_input_types=["application/pdf"]))
+    plain = TestClient(create_app(agent))
+
+    def send(app, mime: str) -> dict:
+        return app.post("/", json={"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {"message": {
+            "messageId": "m", "role": "ROLE_USER", "parts": [{"url": "genfleet-file://f", "mediaType": mime}],
+        }}}).json()
+
+    assert "result" in send(images, "image/png")
+    assert "result" in send(pdfs, "application/pdf")
+    assert send(images, "application/pdf")["error"]["code"] == -32005
+    assert send(pdfs, "image/png")["error"]["code"] == -32005
+    assert send(plain, "image/png")["error"]["code"] == -32005
+    assert plain.get("/.well-known/agent-card.json").json()["defaultInputModes"] == ["text/plain"]
+
+
+async def test_a_direct_call_still_uses_the_agents_own_types() -> None:
+    agent, client = _agent(accepts=["application/pdf"])
+    with pytest.raises(UnsupportedInput):
+        await _run(agent, AgentInput(parts=[part_for("image/png", data=PNG)]))
+    assert client.calls == []
+
+
+async def test_a_repeated_mislabelled_reference_is_read_once() -> None:
+    files = CountingResolver()
+    agent, client = _agent(vision=True, files=files)
+    bad = files.put(b"not an image" * 1000, mime_type="image/png")
+    await _run(agent, AgentInput(parts=[bad] * 50))
+    assert files.reads == 1
+    text = client.calls[0][-1]["content"]
+    assert text.count("(unavailable: content does not match its type)") == 50
+
+
+async def test_unreadable_references_count_toward_the_cap() -> None:
+    files = CountingResolver()
+    agent, client = _agent(vision=True, files=files, max_images_per_turn=3)
+    parts = [part_for("image/png", uri=f"mem://missing-{i}") for i in range(100)]
+    await _run(agent, AgentInput(parts=parts))
+    assert files.reads == 3
+    text = client.calls[0][-1]["content"]
+    assert text.count("(unavailable: not found or not accessible)") == 3
+    assert text.count("(not shown: image limit for this turn reached)") == 97
+
+
+async def test_a_good_image_after_the_cap_of_failures_is_not_read() -> None:
+    files = CountingResolver()
+    agent, client = _agent(vision=True, files=files, max_images_per_turn=2)
+    good = files.put(PNG, mime_type="image/png")
+    parts = [part_for("image/png", uri="mem://gone-1"), part_for("image/png", uri="mem://gone-2"), good]
+    await _run(agent, AgentInput(parts=parts))
+    assert files.reads == 2
+    assert isinstance(client.calls[0][-1]["content"], str)
+
+
+async def test_non_image_files_never_touch_the_resolver() -> None:
+    files = CountingResolver()
+    agent, _ = _agent(vision=True, files=files)
+    await _run(agent, AgentInput(parts=[part_for("application/pdf", uri=f"mem://{i}") for i in range(100)]))
+    assert files.reads == 0

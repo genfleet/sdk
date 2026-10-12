@@ -169,8 +169,8 @@ class Agent:
         # The file types this agent takes besides text (`serve` advertises
         # and enforces them). Images go to the model as images when the model
         # config says ``vision``; every other file is described, never sent.
-        # `serve(accepted_input_types=…)` sets this attribute too, so the two
-        # checks never disagree.
+        # A `serve(accepted_input_types=…)` override doesn't change this: it
+        # rides on each turn it admits (`AgentInput._served_input_types`).
         self.accepted_input_types: tuple[str, ...] = mime_patterns(accepts)
         self._files = files
         if max_images_per_turn < 0 or max_image_bytes_per_turn < 0:
@@ -229,9 +229,13 @@ class Agent:
         auditor = self._auditor
         total_usage = TokenUsage()
 
-        refused = [p.mime_type for p in media_of(input.parts) if not _accepts(p.mime_type, self.accepted_input_types)]
+        # `serve` stamps the types its app admitted; a direct call uses ours.
+        accepted = input._served_input_types
+        if accepted is None:
+            accepted = self.accepted_input_types
+        refused = [p.mime_type for p in media_of(input.parts) if not _accepts(p.mime_type, accepted)]
         if refused:
-            raise UnsupportedInput(refused, self.accepted_input_types)
+            raise UnsupportedInput(refused, accepted)
 
         if self._mcp_configs and not self._mcp_ready:
             await self._init_mcp()
@@ -574,9 +578,11 @@ class Agent:
         With ``vision`` in the model config, an image of a common type is
         also sent as image content (OpenAI ``image_url`` form, a data URL;
         each provider converts it), within the turn's limits: at most
-        ``max_images_per_turn`` images and ``max_image_bytes_per_turn`` bytes
-        in all, each at most ``MAX_MODEL_IMAGE_BYTES``. A repeated image (the
-        same reference, or the same inline bytes) is read and sent once. An
+        ``max_images_per_turn`` read attempts (sent or failed, so also at most
+        that many resolver calls) and ``max_image_bytes_per_turn`` bytes in
+        all, each at most ``MAX_MODEL_IMAGE_BYTES``. A repeated image (the
+        same reference, or the same inline bytes) is read once, and its
+        outcome, sent or failed, is reused. An
         image past the limits, one that can't be read, or one whose bytes are
         not its declared type is described, with the reason, instead.
         """
@@ -585,20 +591,30 @@ class Agent:
             return input.message, input.message
         lines = [input.message] if input.message else []
         images: list[dict] = []
-        sent: set[str] = set()
+        # One outcome per distinct image (reference or bytes): None when it
+        # was sent, else the reason it wasn't. A repeat is never read again.
+        outcomes: dict[str, str | None] = {}
+        attempts = 0
         budget = self._max_image_bytes_per_turn
         vision = bool(self._model_config.get("vision"))
         for part in media:
+            # Only images a vision model takes are read; every other file
+            # is described without touching the resolver.
             if not (vision and isinstance(part, ImagePart) and part.mime_type in MODEL_IMAGE_TYPES):
                 lines.append(part.describe())
                 continue
             key = part.uri or "sha256:" + hashlib.sha256(part.data or b"").hexdigest()
-            if key in sent:
-                lines.append(f"{part.describe()} (repeated; shown once)")
+            if key in outcomes:
+                reason = outcomes[key]
+                lines.append(f"{part.describe()} " + ("(repeated; shown once)" if reason is None else f"(unavailable: {reason})"))
                 continue
-            if len(images) >= self._max_images_per_turn or budget <= 0:
+            # Every attempt counts, failed or not: at most this many reads
+            # (resolver calls) per turn, whatever the request carries.
+            if attempts >= self._max_images_per_turn or budget <= 0:
                 lines.append(f"{part.describe()} (not shown: image limit for this turn reached)")
                 continue
+            attempts += 1
+            reason = None
             try:
                 data = await read_part(
                     part,
@@ -607,14 +623,15 @@ class Agent:
                     resolver=self._files,
                 )
             except FileAccessError as exc:
-                log.info("image not sent to the model: %s", exc.reason)
-                lines.append(f"{part.describe()} (unavailable: {exc.reason})")
+                reason = exc.reason
+            else:
+                if not looks_like(part.mime_type, data):
+                    reason = "content does not match its type"
+            outcomes[key] = reason
+            if reason is not None:
+                log.info("image not sent to the model: %s", reason)
+                lines.append(f"{part.describe()} (unavailable: {reason})")
                 continue
-            if not looks_like(part.mime_type, data):
-                log.info("image not sent to the model: bytes are not %s", part.mime_type)
-                lines.append(f"{part.describe()} (unavailable: content does not match its type)")
-                continue
-            sent.add(key)
             budget -= len(data)
             lines.append(part.describe())
             url = f"data:{part.mime_type};base64,{base64.b64encode(data).decode()}"
