@@ -18,7 +18,7 @@ from .parts import (
     UnsupportedInput,
     accepts,
     media_of,
-    normalize_mime_type,
+    mime_patterns,
     part_for,
 )
 from .protocol import AgentProtocol
@@ -87,6 +87,9 @@ class _PartError(Exception):
 #: The attribute an agent declares the MIME types of the files it accepts on
 #: (``"image/*"``, ``"application/pdf"``). Text is always accepted.
 ACCEPTED_INPUT_TYPES_ATTR = "accepted_input_types"
+#: The attribute an agent declares the MIME types of the files it may return
+#: on; the card lists them as ``defaultOutputModes`` beside text.
+OUTPUT_TYPES_ATTR = "output_types"
 _JSON_MIME = "application/json"
 
 
@@ -317,25 +320,27 @@ async def _read_body(request: Request, limit: int) -> bytes | None:
 
 
 def _accepted_types(agent: AgentProtocol, declared: Iterable[str] | None) -> tuple[str, ...]:
-    """The file types ``agent`` accepts: ``declared``, else its attribute, validated."""
+    """The file types ``agent`` accepts: ``declared``, else its attribute, validated.
+
+    One source of truth: an explicit ``declared`` is also set on the agent
+    (``accepted_input_types``), so an agent that checks its own turn
+    (``Agent.run``) accepts exactly what ``serve`` admitted.
+    """
     if declared is None:
-        declared = getattr(agent, ACCEPTED_INPUT_TYPES_ATTR, None) or ()
-    if isinstance(declared, str):
-        raise TypeError("accepted_input_types must be a list of MIME types, not a string")
-    return tuple(_mime_pattern(p) for p in declared)
+        return mime_patterns(getattr(agent, ACCEPTED_INPUT_TYPES_ATTR, None))
+    accepted = mime_patterns(declared)
+    try:
+        setattr(agent, ACCEPTED_INPUT_TYPES_ATTR, accepted)
+    except AttributeError as exc:
+        raise TypeError(
+            "accepted_input_types was given, but the agent's own accepted_input_types can't be set"
+        ) from exc
+    return accepted
 
 
-def _mime_pattern(pattern: str) -> str:
-    """``pattern`` normalised: ``type/subtype``, ``type/*`` or ``*/*``."""
-    if not isinstance(pattern, str):
-        raise TypeError("accepted input types must be strings")
-    value = pattern.strip().lower()
-    if value in ("*", "*/*"):
-        return "*/*"
-    if value.endswith("/*"):
-        normalize_mime_type(value[:-1] + "x")
-        return value
-    return normalize_mime_type(value)
+def _output_types(agent: AgentProtocol, declared: Iterable[str] | None) -> tuple[str, ...]:
+    """The file types ``agent`` may return: ``declared``, else its ``output_types`` attribute."""
+    return mime_patterns(declared if declared is not None else getattr(agent, OUTPUT_TYPES_ATTR, None))
 
 
 def _jsonrpc_result(req_id: Any, result: Any) -> JSONResponse:
@@ -515,6 +520,7 @@ def create_app(
     public_url: str | None = None,
     accept_history: bool = False,
     accepted_input_types: Iterable[str] | None = None,
+    output_types: Iterable[str] | None = None,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
 ) -> FastAPI:
     """Build a FastAPI app that serves an agent over A2A v1.0 (JSON-RPC binding).
@@ -550,7 +556,8 @@ def create_app(
     ``accepted_input_types``: the MIME types (``"image/*"``,
     ``"application/pdf"``, ``"*/*"``) of the files the agent takes, besides
     text. Defaults to the agent's own ``accepted_input_types`` attribute
-    (``Agent(accepts=…)`` sets it), else none. The card lists them as
+    (``Agent(accepts=…)`` sets it), else none. When given, it is also set as
+    the agent's attribute, so ``Agent.run`` accepts the same types. The card lists them as
     ``defaultInputModes``; a request with a file of any other type is
     answered ContentTypeNotSupported (-32005), naming the type and what is
     accepted. Files arrive as ``AgentInput.parts``: inline (``raw``, at most
@@ -559,10 +566,15 @@ def create_app(
     file results (``AgentOutput.parts``) go out as file parts of the
     ``result`` artifact.
 
+    ``output_types``: the MIME types of files the agent may return, listed in
+    the card's ``defaultOutputModes`` after ``text/plain``. Defaults to the
+    agent's ``output_types`` attribute, else none.
+
     ``max_body_bytes``: the largest request body read (8 MiB, as the
     platform's A2A server); a larger one is refused before it is parsed.
     """
     accepted = _accepted_types(agent, accepted_input_types)
+    produced = _output_types(agent, output_types)
     if public_url is not None:
         parts = urlsplit(public_url)
         if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
@@ -579,7 +591,7 @@ def create_app(
             "version": "1.0.0",
             "capabilities": {"streaming": True, "pushNotifications": False, "extendedAgentCard": False},
             "defaultInputModes": ["text/plain", *accepted],
-            "defaultOutputModes": ["text/plain"],
+            "defaultOutputModes": ["text/plain", *produced],
             "skills": [],
         }
 
@@ -695,6 +707,7 @@ def serve(
     public_url: str | None = None,
     accept_history: bool = False,
     accepted_input_types: Iterable[str] | None = None,
+    output_types: Iterable[str] | None = None,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
 ) -> None:
     """Run an agent as an A2A server (blocking).
@@ -711,6 +724,7 @@ def serve(
         public_url=public_url,
         accept_history=accept_history,
         accepted_input_types=accepted_input_types,
+        output_types=output_types,
         max_body_bytes=max_body_bytes,
     )
     uvicorn.run(app, host=host, port=port)

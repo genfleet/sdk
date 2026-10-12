@@ -84,6 +84,43 @@ def mime_matches(mime_type: str, pattern: str) -> bool:
     return mime_type == pattern
 
 
+def mime_patterns(patterns: Iterable[str] | None) -> tuple[str, ...]:
+    """``patterns`` validated and normalised: each ``type/subtype``, ``type/*`` or ``*/*``."""
+    if isinstance(patterns, str):
+        raise TypeError("MIME types must be a list, not a string")
+    normalised = []
+    for pattern in patterns or ():
+        if not isinstance(pattern, str):
+            raise TypeError("MIME types must be strings")
+        value = pattern.strip().lower()
+        if value in ("*", "*/*"):
+            normalised.append("*/*")
+        elif value.endswith("/*"):
+            normalize_mime_type(value[:-1] + "x")
+            normalised.append(value)
+        else:
+            normalised.append(normalize_mime_type(value))
+    return tuple(normalised)
+
+
+_IMAGE_SIGNATURES: dict[str, tuple[bytes, ...]] = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/gif": (b"GIF87a", b"GIF89a"),
+}
+
+
+def looks_like(mime_type: str, data: bytes) -> bool:
+    """Whether ``data`` starts like a ``mime_type`` image (PNG, JPEG, GIF, WebP).
+
+    ``True`` for any other type: only these are checked.
+    """
+    if mime_type == "image/webp":
+        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    signatures = _IMAGE_SIGNATURES.get(mime_type)
+    return signatures is None or data.startswith(signatures)
+
+
 def accepts(mime_type: str, patterns: Iterable[str]) -> bool:
     """Whether any of ``patterns`` matches ``mime_type``."""
     return any(mime_matches(mime_type, p) for p in patterns)
@@ -239,7 +276,9 @@ __all__ = [
     "VideoPart",
     "accepts",
     "media_of",
+    "looks_like",
     "mime_matches",
+    "mime_patterns",
     "normalize_mime_type",
     "part_for",
     "safe_name",

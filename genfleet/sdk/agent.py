@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import time
@@ -56,7 +57,7 @@ from .confirmations import (
     _sensitive_flags_of,
 )
 from .files import FileAccessError, FileResolver, read_part
-from .parts import ImagePart, UnsupportedInput, media_of
+from .parts import ImagePart, UnsupportedInput, looks_like, media_of, mime_patterns
 from .parts import accepts as _accepts
 from .tool import ToolWrapper, wrap_tool
 from .skills import Skill, load_skills, pinned_revision
@@ -70,6 +71,9 @@ MODEL_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/we
 #: The largest image sent to a model (Anthropic's per-image limit). A larger
 #: one is described to the model instead.
 MAX_MODEL_IMAGE_BYTES = 5 * 1024 * 1024
+#: Default limits on the images one turn sends to a model (``Agent`` args).
+DEFAULT_MAX_IMAGES_PER_TURN = 8
+DEFAULT_MAX_IMAGE_BYTES_PER_TURN = 20 * 1024 * 1024
 
 
 def _wrap_tool(fn: Callable) -> ToolWrapper:
@@ -158,13 +162,21 @@ class Agent:
         state: StateStore | Literal["platform"] | None = None,
         accepts: list[str] | None = None,
         files: FileResolver | None = None,
+        max_images_per_turn: int = DEFAULT_MAX_IMAGES_PER_TURN,
+        max_image_bytes_per_turn: int = DEFAULT_MAX_IMAGE_BYTES_PER_TURN,
     ) -> None:
         self._role = role
         # The file types this agent takes besides text (`serve` advertises
         # and enforces them). Images go to the model as images when the model
         # config says ``vision``; every other file is described, never sent.
-        self.accepted_input_types: tuple[str, ...] = tuple(accepts or ())
+        # `serve(accepted_input_types=…)` sets this attribute too, so the two
+        # checks never disagree.
+        self.accepted_input_types: tuple[str, ...] = mime_patterns(accepts)
         self._files = files
+        if max_images_per_turn < 0 or max_image_bytes_per_turn < 0:
+            raise ValueError("image limits must not be negative")
+        self._max_images_per_turn = max_images_per_turn
+        self._max_image_bytes_per_turn = max_image_bytes_per_turn
         self._context = context
         self._model_config = model
 
@@ -559,29 +571,51 @@ class Agent:
 
         Without files both are ``input.message``. Each file adds a line that
         names it (``describe``): kind, name, type and size, never its bytes.
-        With ``vision`` in the model config, an image of a common type, up
-        to ``MAX_MODEL_IMAGE_BYTES``, is also sent as image content (OpenAI
-        ``image_url`` form, a data URL; each provider converts it). An image
-        that can't be read is described with the reason.
+        With ``vision`` in the model config, an image of a common type is
+        also sent as image content (OpenAI ``image_url`` form, a data URL;
+        each provider converts it), within the turn's limits: at most
+        ``max_images_per_turn`` images and ``max_image_bytes_per_turn`` bytes
+        in all, each at most ``MAX_MODEL_IMAGE_BYTES``. A repeated image (the
+        same reference, or the same inline bytes) is read and sent once. An
+        image past the limits, one that can't be read, or one whose bytes are
+        not its declared type is described, with the reason, instead.
         """
         media = media_of(input.parts)
         if not media:
             return input.message, input.message
         lines = [input.message] if input.message else []
         images: list[dict] = []
+        sent: set[str] = set()
+        budget = self._max_image_bytes_per_turn
         vision = bool(self._model_config.get("vision"))
         for part in media:
             if not (vision and isinstance(part, ImagePart) and part.mime_type in MODEL_IMAGE_TYPES):
                 lines.append(part.describe())
                 continue
+            key = part.uri or "sha256:" + hashlib.sha256(part.data or b"").hexdigest()
+            if key in sent:
+                lines.append(f"{part.describe()} (repeated; shown once)")
+                continue
+            if len(images) >= self._max_images_per_turn or budget <= 0:
+                lines.append(f"{part.describe()} (not shown: image limit for this turn reached)")
+                continue
             try:
                 data = await read_part(
-                    part, max_bytes=MAX_MODEL_IMAGE_BYTES, metadata=input.metadata, resolver=self._files
+                    part,
+                    max_bytes=min(MAX_MODEL_IMAGE_BYTES, budget),
+                    metadata=input.metadata,
+                    resolver=self._files,
                 )
             except FileAccessError as exc:
                 log.info("image not sent to the model: %s", exc.reason)
                 lines.append(f"{part.describe()} (unavailable: {exc.reason})")
                 continue
+            if not looks_like(part.mime_type, data):
+                log.info("image not sent to the model: bytes are not %s", part.mime_type)
+                lines.append(f"{part.describe()} (unavailable: content does not match its type)")
+                continue
+            sent.add(key)
+            budget -= len(data)
             lines.append(part.describe())
             url = f"data:{part.mime_type};base64,{base64.b64encode(data).decode()}"
             images.append({"type": "image_url", "image_url": {"url": url}})

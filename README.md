@@ -76,6 +76,8 @@ Agent(
     audit:   AuditConfig | None = None, # structured audit logging
     accepts: list[str] | None = None,  # file types taken besides text, e.g. ["image/*", "application/pdf"]
     files:   FileResolver | None = None, # reads file references (the platform supplies one when hosted)
+    max_images_per_turn: int = 8,      # vision: images sent to the model per turn
+    max_image_bytes_per_turn: int = 20 * 1024 * 1024,  # vision: their total bytes
 )
 ```
 
@@ -311,9 +313,9 @@ agent = Agent(
 serve(agent, name="invoices")
 ```
 
-- An agent declares the file types it takes (`accepts=`; for your own `AgentProtocol`, an `accepted_input_types` attribute or `serve(accepted_input_types=…)`). Text is always accepted; files are refused unless declared. `serve` lists them as the card's `defaultInputModes` and answers a file of any other type with ContentTypeNotSupported (`-32005`), naming it and what is accepted. `Agent.run` raises `UnsupportedInput` for the same turn.
+- An agent declares the file types it takes (`accepts=`; for your own `AgentProtocol`, an `accepted_input_types` attribute or `serve(accepted_input_types=…)`, which also sets the attribute). Text is always accepted; files are refused unless declared. File types an agent returns go in an `output_types` attribute (or `serve(output_types=…)`) and the card's `defaultOutputModes`. `serve` lists them as the card's `defaultInputModes` and answers a file of any other type with ContentTypeNotSupported (`-32005`), naming it and what is accepted. `Agent.run` raises `UnsupportedInput` for the same turn.
 - `serve` maps A2A file parts (`raw` / `url`, and 0.x `file` with `bytes` / `uri`) and data parts (as `application/json` files) into `AgentInput.parts`. A file-only request is a turn with an empty `message`. File parts in `AgentOutput.parts` go back out on the `result` artifact. Request bodies are capped at 8 MiB (`max_body_bytes`).
-- `Agent` with `"vision": True` in the model config sends PNG, JPEG, GIF and WebP images up to 5 MiB to the model as images. Every other file is described to the model in one line (kind, name, type, size); its bytes are never put in the prompt or in memory.
+- `Agent` with `"vision": True` in the model config sends PNG, JPEG, GIF and WebP images up to 5 MiB to the model as images: at most `max_images_per_turn` per turn and `max_image_bytes_per_turn` in all, each repeated image once, and only when the bytes match the declared type. Anything else is described. Every other file is described to the model in one line (kind, name, type, size); its bytes are never put in the prompt or in memory.
 - A reference is read through a `FileResolver`, which checks access and expiry for the running turn. The SDK never fetches a URL itself. `InMemoryFileResolver` stores files locally for tests (`put(data, mime_type=…, ttl=…, session_id=…)`).
 
 ### With audit logging

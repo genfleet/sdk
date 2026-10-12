@@ -188,3 +188,27 @@ def test_v0_file_and_data_parts_are_typed_and_files_go_back_out() -> None:
     assert parts[0] == {"type": "text", "text": "Here it is."}
     assert parts[1] == {"type": "file", "file": {"mimeType": "text/csv", "bytes": base64.b64encode(b"a,b\n1,2").decode(), "name": "out.csv"}}
     assert parts[2] == {"type": "file", "file": {"mimeType": "image/png", "uri": "genfleet-file://f/1", "name": "chart.png"}}
+
+
+def test_the_card_lists_the_output_types() -> None:
+    class Producer(Recorder):
+        output_types = ["text/csv", "image/*"]
+
+    card = TestClient(create_app(Producer())).get("/.well-known/agent-card.json").json()
+    assert card["defaultOutputModes"] == ["text/plain", "text/csv", "image/*"]
+    card = TestClient(create_app(Recorder(), output_types=["application/pdf"])).get("/.well-known/agent-card.json").json()
+    assert card["defaultOutputModes"] == ["text/plain", "application/pdf"]
+    assert TestClient(create_app(Recorder())).get("/.well-known/agent-card.json").json()["defaultOutputModes"] == [
+        "text/plain"
+    ]
+
+
+def test_an_override_on_an_agent_that_cannot_take_it_is_refused() -> None:
+    class Frozen:
+        __slots__ = ()
+
+        async def run(self, input):  # pragma: no cover
+            yield AgentOutput(content="", done=True)
+
+    with pytest.raises(TypeError):
+        create_app(Frozen(), accepted_input_types=["image/*"])

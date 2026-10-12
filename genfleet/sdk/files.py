@@ -57,10 +57,17 @@ class UnsupportedReference(FileAccessError):
 class FileResolver(Protocol):
     """Reads the file a reference names, for the running turn.
 
-    ``metadata`` is the turn's ``AgentInput.metadata``: whatever the resolver
-    needs to check access (the caller, the session, a turn token) comes from
-    it. Raise ``FileNotFound``, ``FileExpired`` or ``FileTooLarge``; never
-    return more than ``max_bytes`` bytes.
+    **Access is decided by the platform, never here.** A resolver forwards
+    the turn's platform credential (the per-spawn token, the engine-verified
+    caller) to the platform, which checks the file against the caller and
+    tenant it authenticated, and its expiry. ``metadata`` is the turn's
+    ``AgentInput.metadata``, and much of it is caller-supplied: under
+    ``serve``, request metadata passes through and ``contextId`` becomes
+    ``session_id``. Never grant access from ids in it.
+
+    Raise ``FileNotFound`` (also for no access), ``FileExpired`` or
+    ``FileTooLarge``; never return more than ``max_bytes`` bytes, and stop
+    reading past them rather than reading and then checking.
     """
 
     def handles(self, uri: str) -> bool: ...
@@ -98,11 +105,13 @@ class _Stored:
 
 
 class InMemoryFileResolver:
-    """Files kept in this process, under ``mem://`` references. For tests and examples.
+    """Files kept in this process, under ``mem://`` references. **For tests only.**
 
     ``put`` stores bytes and returns a part that references them. A file put
-    with a ``session_id`` is readable only on a turn of that session; one put
-    with a ``ttl`` (seconds) expires after it.
+    with a ``ttl`` (seconds) expires after it. A file put with a
+    ``session_id`` is readable only on a turn whose ``metadata["session_id"]``
+    matches: that exercises the "not accessible" path in tests, and is not
+    access control (a ``serve`` caller sets ``session_id`` via ``contextId``).
     """
 
     SCHEME = "mem://"
