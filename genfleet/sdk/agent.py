@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import time
@@ -54,12 +55,21 @@ from .confirmations import (
     _is_sensitive,
     _sensitive_flags_of,
 )
+from .files import FileAccessError, FileResolver, read_part
+from .parts import ImagePart, UnsupportedInput, media_of
+from .parts import accepts as _accepts
 from .tool import ToolWrapper, wrap_tool
 from .skills import Skill, load_skills, pinned_revision
 
 log = logging.getLogger("genfleet.sdk.agent")
 SKILL_TOOL_NAME = "read_skill"
 SKILL_MEMORY_MARKER = "[skill body omitted; call read_skill again to use it]"
+
+#: Image types sent to a vision model as images; every provider takes these.
+MODEL_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+#: The largest image sent to a model (Anthropic's per-image limit). A larger
+#: one is described to the model instead.
+MAX_MODEL_IMAGE_BYTES = 5 * 1024 * 1024
 
 
 def _wrap_tool(fn: Callable) -> ToolWrapper:
@@ -146,8 +156,15 @@ class Agent:
         model_client: ModelClient | None = None,
         skills: list[Skill | str | Path] | None = None,
         state: StateStore | Literal["platform"] | None = None,
+        accepts: list[str] | None = None,
+        files: FileResolver | None = None,
     ) -> None:
         self._role = role
+        # The file types this agent takes besides text (`serve` advertises
+        # and enforces them). Images go to the model as images when the model
+        # config says ``vision``; every other file is described, never sent.
+        self.accepted_input_types: tuple[str, ...] = tuple(accepts or ())
+        self._files = files
         self._context = context
         self._model_config = model
 
@@ -200,6 +217,10 @@ class Agent:
         auditor = self._auditor
         total_usage = TokenUsage()
 
+        refused = [p.mime_type for p in media_of(input.parts) if not _accepts(p.mime_type, self.accepted_input_types)]
+        if refused:
+            raise UnsupportedInput(refused, self.accepted_input_types)
+
         if self._mcp_configs and not self._mcp_ready:
             await self._init_mcp()
 
@@ -248,7 +269,8 @@ class Agent:
             messages: list[dict] = [{"role": "system", "content": "\n\n".join(system_parts)}]
             for msg in history:
                 messages.append(self._message_to_dict(msg))
-            messages.append({"role": "user", "content": input.message})
+            turn_text, user_content = await self._user_content(input)
+            messages.append({"role": "user", "content": user_content})
 
             # The tools this caller may use (ADR-0028): by each tool's
             # audience, the platform's per-tool setting first. A tool left out
@@ -387,7 +409,7 @@ class Agent:
                     # ``async for`` — which closes this generator at the yield
                     # below, so anything after it never runs.
                     await self._persist_turn(
-                        session_id, input, history, new_messages, invocation_id
+                        session_id, input, turn_text, history, new_messages, invocation_id
                     )
                     # Same reason as the persist: after the ``done`` yield this
                     # generator may already be closed, and the audit trail
@@ -477,6 +499,7 @@ class Agent:
         self,
         session_id: str,
         input: AgentInput,
+        turn_text: str,
         history: list[Message],
         new_messages: list[dict],
         invocation_id: str,
@@ -487,7 +510,8 @@ class Agent:
         """
         if not self._memory or input.metadata.get(MEMORY_METADATA_KEY) == "off":
             return
-        turn = [Message(role="user", content=input.message)]
+        # The turn's text with its files described: memory never holds file bytes.
+        turn = [Message(role="user", content=turn_text)]
         skill_call_ids = {
             tool_call["id"]
             for message in new_messages if message["role"] == "assistant"
@@ -529,6 +553,42 @@ class Agent:
             )
         else:
             await self._memory.save(session_id, list(history) + turn)
+
+    async def _user_content(self, input: AgentInput) -> tuple[str, str | list[dict]]:
+        """The turn as text (files described), and the user message for the model.
+
+        Without files both are ``input.message``. Each file adds a line that
+        names it (``describe``): kind, name, type and size, never its bytes.
+        With ``vision`` in the model config, an image of a common type, up
+        to ``MAX_MODEL_IMAGE_BYTES``, is also sent as image content (OpenAI
+        ``image_url`` form, a data URL; each provider converts it). An image
+        that can't be read is described with the reason.
+        """
+        media = media_of(input.parts)
+        if not media:
+            return input.message, input.message
+        lines = [input.message] if input.message else []
+        images: list[dict] = []
+        vision = bool(self._model_config.get("vision"))
+        for part in media:
+            if not (vision and isinstance(part, ImagePart) and part.mime_type in MODEL_IMAGE_TYPES):
+                lines.append(part.describe())
+                continue
+            try:
+                data = await read_part(
+                    part, max_bytes=MAX_MODEL_IMAGE_BYTES, metadata=input.metadata, resolver=self._files
+                )
+            except FileAccessError as exc:
+                log.info("image not sent to the model: %s", exc.reason)
+                lines.append(f"{part.describe()} (unavailable: {exc.reason})")
+                continue
+            lines.append(part.describe())
+            url = f"data:{part.mime_type};base64,{base64.b64encode(data).decode()}"
+            images.append({"type": "image_url", "image_url": {"url": url}})
+        text = "\n".join(lines)
+        if not images:
+            return text, text
+        return text, [{"type": "text", "text": text}, *images]
 
     def _offered_tools(self, caller: Caller | None, overrides: dict[str, frozenset[Audience]]) -> set[str]:
         """Names of the tools offered on this caller's turn, by ``effective_audiences``."""

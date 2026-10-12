@@ -6,6 +6,7 @@ import logging
 from typing import AsyncIterator
 
 from ..schemas import AgentOutput, ModelConfig, TokenUsage, ToolCall, ToolSchema
+from .base import split_data_url
 
 log = logging.getLogger("genfleet.sdk.providers.gemini")
 
@@ -101,9 +102,19 @@ def _to_gemini_messages(messages: list[dict]) -> tuple[str, list[dict]]:
                     "response": {"result": content},
                 }}],
             })
+        elif isinstance(content, list):
+            contents.append({"role": "user", "parts": [_gemini_part(block) for block in content]})
         else:
             contents.append({"role": "user", "parts": [{"text": content}]})
     return system, contents
+
+
+def _gemini_part(block: dict) -> dict:
+    """An OpenAI ``text`` / ``image_url`` (data URL) content block as a Gemini part."""
+    if block.get("type") == "image_url":
+        mime_type, data = split_data_url(block["image_url"]["url"])
+        return {"inline_data": {"mime_type": mime_type, "data": base64.b64decode(data)}}
+    return {"text": block.get("text", "")}
 
 
 class GeminiProvider:

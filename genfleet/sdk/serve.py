@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import uuid
 from urllib.parse import urlsplit
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Iterable
+
+from pydantic import ValidationError
 
 from ._redaction import safe_arguments
+from .parts import (
+    MAX_INLINE_BYTES,
+    MediaPart,
+    Part,
+    TextPart,
+    UnsupportedInput,
+    accepts,
+    media_of,
+    normalize_mime_type,
+    part_for,
+)
 from .protocol import AgentProtocol
 from .schemas import TOOL_EVENT_KEY, AgentInput, AgentOutput, Message
 
@@ -36,6 +50,7 @@ LEGACY_CARD_PATH = "/.well-known/agent.json"
 HISTORY_METADATA_KEY = "genfleet.history"
 _RESULT_ARTIFACT = "result"
 
+_INVALID_REQUEST = -32600
 _INVALID_PARAMS = -32602
 _CONTENT_TYPE_NOT_SUPPORTED = -32005
 _UNSUPPORTED_OPERATION = -32004
@@ -61,10 +76,102 @@ def _history(raw: Any) -> list[Message]:
         return []
 
 
-def _build_v1_input(params: dict[str, Any], *, accept_history: bool = False) -> AgentInput | None:
+class _PartError(Exception):
+    """A request part the agent can't take: answered as a JSON-RPC error."""
+
+    def __init__(self, code: int, message: str, data: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.code, self.message, self.data = code, message, data
+
+
+#: The attribute an agent declares the MIME types of the files it accepts on
+#: (``"image/*"``, ``"application/pdf"``). Text is always accepted.
+ACCEPTED_INPUT_TYPES_ATTR = "accepted_input_types"
+_JSON_MIME = "application/json"
+
+
+def _part_kind(raw: dict[str, Any]) -> str | None:
+    """The 0.x discriminator (``type``, or ``kind`` in A2A 0.3), if any."""
+    kind = raw.get("type", raw.get("kind"))
+    return kind if isinstance(kind, str) else None
+
+
+def _media_part(mime: Any, *, data: Any = None, uri: Any = None, name: Any = None, size: Any = None) -> MediaPart:
+    if isinstance(data, str) and len(data) > (MAX_INLINE_BYTES * 4) // 3 + 4:
+        raise _PartError(
+            _INVALID_PARAMS,
+            f"An inline file part is larger than {MAX_INLINE_BYTES} bytes; send it by reference (url).",
+        )
+    try:
+        return part_for(
+            mime if isinstance(mime, str) else None,
+            data=data,
+            uri=uri if isinstance(uri, str) else None,
+            name=name if isinstance(name, str) else None,
+            size=size if isinstance(size, int) and not isinstance(size, bool) and size >= 0 else None,
+        )
+    except (ValidationError, ValueError) as exc:
+        detail = "larger than the inline limit; send it by reference (url)" if "exceeds" in str(exc) else "malformed"
+        raise _PartError(_INVALID_PARAMS, f"Invalid file part: {detail}.") from exc
+
+
+def _json_part(value: Any, mime: Any) -> MediaPart:
+    encoded = json.dumps(value, separators=(",", ":")).encode()
+    if len(encoded) > MAX_INLINE_BYTES:
+        raise _PartError(_INVALID_PARAMS, f"A data part is larger than {MAX_INLINE_BYTES} bytes.")
+    return _media_part(mime if isinstance(mime, str) and mime else _JSON_MIME, data=encoded)
+
+
+def _part_in(raw: Any) -> Part | None:
+    """One A2A part (v1.0 or 0.x) as a typed part; ``None`` for one with no content."""
+    if not isinstance(raw, dict):
+        raise _PartError(_INVALID_PARAMS, "Invalid request parameters: a part must be an object.")
+    kind = _part_kind(raw)
+    metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+    if kind == "file":  # 0.x FilePart
+        file = raw.get("file")
+        if not isinstance(file, dict):
+            raise _PartError(_INVALID_PARAMS, "Invalid file part: malformed.")
+        return _media_part(
+            file.get("mimeType"), data=file.get("bytes"), uri=file.get("uri"),
+            name=file.get("name"), size=metadata.get("size"),
+        )
+    if kind == "data":  # 0.x DataPart
+        return _json_part(raw.get("data"), raw.get("mediaType"))
+    if isinstance(raw.get("text"), str):
+        return TextPart(text=raw["text"])
+    if kind == "text":
+        return None
+    # v1.0: exactly one of raw, url, data, with mediaType and filename beside it.
+    if "raw" in raw or "url" in raw:
+        return _media_part(
+            raw.get("mediaType"), data=raw.get("raw"), uri=raw.get("url"),
+            name=raw.get("filename"), size=metadata.get("size"),
+        )
+    if "data" in raw:
+        return _json_part(raw["data"], raw.get("mediaType"))
+    raise _PartError(_INVALID_PARAMS, "Invalid request parameters: unrecognised part.")
+
+
+def _parts_in(raw_parts: list[Any], accepted: tuple[str, ...]) -> list[Part]:
+    """The request's parts, typed; raises ``_PartError`` for one the agent does not accept."""
+    parts = [p for p in (_part_in(raw) for raw in raw_parts) if p is not None]
+    refused = sorted({p.mime_type for p in media_of(parts) if not accepts(p.mime_type, accepted)})
+    if refused:
+        error = UnsupportedInput(refused, accepted)
+        raise _PartError(
+            _CONTENT_TYPE_NOT_SUPPORTED, str(error), {"unsupported": error.unsupported, "accepted": error.accepted}
+        )
+    return parts
+
+
+def _build_v1_input(
+    params: dict[str, Any], *, accepted: tuple[str, ...] = (), accept_history: bool = False
+) -> AgentInput | None:
     """A v1.0 ``SendMessageRequest`` as the agent's turn, or ``None`` if malformed.
 
-    The message's text parts are the turn's text; request ``metadata`` passes
+    The message's parts are the turn's parts (text, and the files the agent
+    accepts; ``_PartError`` for one it does not); request ``metadata`` passes
     through; the message's ``contextId`` is ``metadata["session_id"]``, over
     any ``session_id`` in the metadata (a gateway in front may scope
     ``contextId`` per caller; metadata must not route around it), which is
@@ -75,7 +182,7 @@ def _build_v1_input(params: dict[str, Any], *, accept_history: bool = False) -> 
     message = params.get("message")
     if not isinstance(message, dict) or not isinstance(message.get("parts"), list):
         return None
-    text = "".join(p["text"] for p in message["parts"] if isinstance(p, dict) and isinstance(p.get("text"), str))
+    parts = _parts_in(message["parts"], accepted)
     metadata = params.get("metadata")
     metadata = dict(metadata) if isinstance(metadata, dict) else {}
     raw_history = metadata.pop(HISTORY_METADATA_KEY, None)
@@ -83,13 +190,39 @@ def _build_v1_input(params: dict[str, Any], *, accept_history: bool = False) -> 
     context_id = message.get("contextId")
     if isinstance(context_id, str) and context_id:
         metadata["session_id"] = context_id
-    return AgentInput(message=text, history=history, metadata=metadata)
+    return AgentInput(parts=parts, history=history, metadata=metadata)
 
 
-def _no_text(params: dict[str, Any]) -> bool:
-    """Parts, but no text part: the agent would run on an empty turn."""
-    parts = params["message"]["parts"]
-    return bool(parts) and not any(isinstance(p, dict) and isinstance(p.get("text"), str) for p in parts)
+def _v1_part_out(part: MediaPart) -> dict[str, Any]:
+    out: dict[str, Any] = {"mediaType": part.mime_type}
+    if part.data is not None:
+        out["raw"] = base64.b64encode(part.data).decode()
+    else:
+        out["url"] = part.uri
+    if part.name:
+        out["filename"] = part.name
+    if part.size is not None:
+        out["metadata"] = {"size": part.size}
+    return out
+
+
+def _v0_part_out(part: MediaPart) -> dict[str, Any]:
+    file: dict[str, Any] = {"mimeType": part.mime_type}
+    if part.data is not None:
+        file["bytes"] = base64.b64encode(part.data).decode()
+    else:
+        file["uri"] = part.uri
+    if part.name:
+        file["name"] = part.name
+    return {"type": "file", "file": file}
+
+
+def _v1_parts_out(text: str | None, media: list[MediaPart]) -> list[dict[str, Any]]:
+    return ([{"text": text}] if text else []) + [_v1_part_out(p) for p in media]
+
+
+def _v0_parts_out(text: str | None, media: list[MediaPart]) -> list[dict[str, Any]]:
+    return ([{"type": "text", "text": text}] if text else []) + [_v0_part_out(p) for p in media]
 
 
 def _v1_ids(params: dict[str, Any]) -> tuple[str, str]:
@@ -106,7 +239,9 @@ def _supported_version(value: str | None) -> bool:
     return not value or value.strip().split(".", 1)[0] in ("0", "1")
 
 
-def _build_agent_input(message_text: str, params: dict[str, Any], *, accept_history: bool = False) -> AgentInput:
+def _build_agent_input(
+    message_text: str, parts: list[Part], params: dict[str, Any], *, accept_history: bool = False
+) -> AgentInput:
     """Build an AgentInput from A2A params, forwarding session and state.
 
     - ``params.metadata`` (dict) is passed through as ``AgentInput.metadata``.
@@ -125,7 +260,7 @@ def _build_agent_input(message_text: str, params: dict[str, Any], *, accept_hist
         metadata["session_id"] = session_id
 
     history = _history(params.get("history")) if accept_history else []
-    return AgentInput(message=message_text, history=history, metadata=metadata)
+    return AgentInput(message=message_text, parts=parts, history=history, metadata=metadata)
 
 
 #: What a caller is told when the agent raised. Deliberately fixed text: the
@@ -152,12 +287,55 @@ def _opaque_failure(context: str) -> str:
     return f"{OPAQUE_FAILURE_MESSAGE} (error id: {error_id})"
 
 
-def _jsonrpc_error(req_id: Any, code: int, message: str) -> JSONResponse:
+def _jsonrpc_error(req_id: Any, code: int, message: str, data: dict[str, Any] | None = None) -> JSONResponse:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if data:
+        error["data"] = data
     return JSONResponse({
         "jsonrpc": "2.0",
         "id": req_id,
-        "error": {"code": code, "message": message},
+        "error": error,
     })
+
+
+#: The largest request body ``POST /`` reads, as the platform's A2A server.
+#: Inline file parts make bodies large; past this, files go by reference.
+DEFAULT_MAX_BODY_BYTES = 8 * 1024 * 1024
+
+
+async def _read_body(request: Request, limit: int) -> bytes | None:
+    """The request body, or ``None`` once it is longer than ``limit`` (read no further)."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        return None
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
+def _accepted_types(agent: AgentProtocol, declared: Iterable[str] | None) -> tuple[str, ...]:
+    """The file types ``agent`` accepts: ``declared``, else its attribute, validated."""
+    if declared is None:
+        declared = getattr(agent, ACCEPTED_INPUT_TYPES_ATTR, None) or ()
+    if isinstance(declared, str):
+        raise TypeError("accepted_input_types must be a list of MIME types, not a string")
+    return tuple(_mime_pattern(p) for p in declared)
+
+
+def _mime_pattern(pattern: str) -> str:
+    """``pattern`` normalised: ``type/subtype``, ``type/*`` or ``*/*``."""
+    if not isinstance(pattern, str):
+        raise TypeError("accepted input types must be strings")
+    value = pattern.strip().lower()
+    if value in ("*", "*/*"):
+        return "*/*"
+    if value.endswith("/*"):
+        normalize_mime_type(value[:-1] + "x")
+        return value
+    return normalize_mime_type(value)
 
 
 def _jsonrpc_result(req_id: Any, result: Any) -> JSONResponse:
@@ -202,18 +380,22 @@ def _relayable_tool_event(output: AgentOutput) -> dict[str, Any] | None:
 
 
 async def _collect_output(agent: AgentProtocol, agent_input: AgentInput) -> AgentOutput:
+    """The whole reply: every chunk's text joined, and every chunk's files in order."""
     content_parts: list[str] = []
+    media: list[MediaPart] = []
     last_output: AgentOutput | None = None
     async for output in agent.run(agent_input):
         last_output = output
         if output.content:
             content_parts.append(output.content)
+        media.extend(media_of(output.parts))
         if output.done:
             break
     if last_output is None:
         return AgentOutput(content="", done=True)
     return AgentOutput(
         content="".join(content_parts),
+        parts=media,
         tool_calls=last_output.tool_calls,
         done=True,
         metadata=last_output.metadata,
@@ -242,10 +424,10 @@ async def _stream_output(
                     "metadata": {TOOL_EVENT_KEY: tool_event},
                 })
                 continue
-            if output.content:
+            if output.content or media_of(output.parts):
                 yield _event({
                     "id": task_id,
-                    "artifact": {"parts": [{"type": "text", "text": output.content}]},
+                    "artifact": {"parts": _v0_parts_out(output.content, media_of(output.parts))},
                     "final": False,
                 })
             if output.done:
@@ -296,13 +478,13 @@ async def _v1_stream(
 
     chunks = 0
 
-    def _chunk(text: str, *, last: bool) -> dict[str, str]:
+    def _chunk(parts: list[dict[str, Any]], *, last: bool) -> dict[str, str]:
         nonlocal chunks
         chunks += 1
         return _event({"artifactUpdate": {
             "taskId": task_id,
             "contextId": context_id,
-            "artifact": {"artifactId": _RESULT_ARTIFACT, "parts": [{"text": text}]},
+            "artifact": {"artifactId": _RESULT_ARTIFACT, "parts": parts},
             "append": chunks > 1,
             "lastChunk": last,
         }})
@@ -314,8 +496,9 @@ async def _v1_stream(
             if tool_event is not None:
                 yield _status("TASK_STATE_WORKING", metadata={TOOL_EVENT_KEY: tool_event})
                 continue
-            if output.content:
-                yield _chunk(output.content, last=output.done)
+            parts = _v1_parts_out(output.content, media_of(output.parts))
+            if parts:
+                yield _chunk(parts, last=output.done)
             if output.done:
                 yield _status("TASK_STATE_COMPLETED")
                 return
@@ -331,6 +514,8 @@ def create_app(
     description: str = "",
     public_url: str | None = None,
     accept_history: bool = False,
+    accepted_input_types: Iterable[str] | None = None,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
 ) -> FastAPI:
     """Build a FastAPI app that serves an agent over A2A v1.0 (JSON-RPC binding).
 
@@ -361,7 +546,23 @@ def create_app(
     as its history. Off by default: whoever can call the app could otherwise
     put words in the agent's earlier turns. Turn it on only for a trusted
     caller that keeps the conversation itself.
+
+    ``accepted_input_types``: the MIME types (``"image/*"``,
+    ``"application/pdf"``, ``"*/*"``) of the files the agent takes, besides
+    text. Defaults to the agent's own ``accepted_input_types`` attribute
+    (``Agent(accepts=…)`` sets it), else none. The card lists them as
+    ``defaultInputModes``; a request with a file of any other type is
+    answered ContentTypeNotSupported (-32005), naming the type and what is
+    accepted. Files arrive as ``AgentInput.parts``: inline (``raw``, at most
+    ``MAX_INLINE_BYTES``) or by reference (``url``), which the agent reads
+    through a ``FileResolver``; ``serve`` never fetches one. An agent's
+    file results (``AgentOutput.parts``) go out as file parts of the
+    ``result`` artifact.
+
+    ``max_body_bytes``: the largest request body read (8 MiB, as the
+    platform's A2A server); a larger one is refused before it is parsed.
     """
+    accepted = _accepted_types(agent, accepted_input_types)
     if public_url is not None:
         parts = urlsplit(public_url)
         if parts.scheme not in ("http", "https") or not parts.netloc or parts.query or parts.fragment:
@@ -377,7 +578,7 @@ def create_app(
             ],
             "version": "1.0.0",
             "capabilities": {"streaming": True, "pushNotifications": False, "extendedAgentCard": False},
-            "defaultInputModes": ["text/plain"],
+            "defaultInputModes": ["text/plain", *accepted],
             "defaultOutputModes": ["text/plain"],
             "skills": [],
         }
@@ -393,12 +594,17 @@ def create_app(
 
     @app.post("/")
     async def jsonrpc(request: Request):  # type: ignore[return]
+        raw = await _read_body(request, max_body_bytes)
+        if raw is None:
+            return _jsonrpc_error(
+                None, _INVALID_REQUEST, f"Request body larger than {max_body_bytes} bytes; send files by reference."
+            )
         try:
-            body = await request.json()
+            body = json.loads(raw)
         except Exception:
             return _jsonrpc_error(None, -32700, "Parse error")
         if not isinstance(body, dict):
-            return _jsonrpc_error(None, -32600, "Invalid Request")
+            return _jsonrpc_error(None, _INVALID_REQUEST, "Invalid Request")
 
         req_id = body.get("id")
         method = body.get("method", "")
@@ -409,11 +615,12 @@ def create_app(
         if not _supported_version(request.headers.get(VERSION_HEADER)):
             return _jsonrpc_error(req_id, _VERSION_NOT_SUPPORTED, "Supported A2A versions: 1.0.")
         if method in ("SendMessage", "SendStreamingMessage"):
-            v1_input = _build_v1_input(params, accept_history=accept_history)
+            try:
+                v1_input = _build_v1_input(params, accepted=accepted, accept_history=accept_history)
+            except _PartError as exc:
+                return _jsonrpc_error(req_id, exc.code, exc.message, exc.data)
             if v1_input is None:
                 return _jsonrpc_error(req_id, _INVALID_PARAMS, "Invalid request parameters: check message.")
-            if _no_text(params):
-                return _jsonrpc_error(req_id, _CONTENT_TYPE_NOT_SUPPORTED, "Only text parts are supported.")
             task_id, context_id = _v1_ids(params)
             if method == "SendStreamingMessage":
                 return EventSourceResponse(_v1_stream(agent, v1_input, req_id, task_id, context_id))
@@ -426,7 +633,9 @@ def create_app(
                 "contextId": context_id,
                 "status": {"state": "TASK_STATE_COMPLETED"},
                 "artifacts": (
-                    [{"artifactId": _RESULT_ARTIFACT, "parts": [{"text": output.content}]}] if output.content else []
+                    [{"artifactId": _RESULT_ARTIFACT, "parts": result_parts}]
+                    if (result_parts := _v1_parts_out(output.content, media_of(output.parts)))
+                    else []
                 ),
             }})
         if method in _TASK_STORE_METHODS:
@@ -438,14 +647,20 @@ def create_app(
 
         # 0.x, for one minor release.
         message_text = ""
+        v0_parts: list[Part] = []
         msg = params.get("message", {})
         if isinstance(msg, dict):
-            parts = msg.get("parts", [])
-            message_text = " ".join(p.get("text", "") for p in parts if p.get("type") == "text")
+            raw_parts = msg.get("parts", [])
+            raw_parts = raw_parts if isinstance(raw_parts, list) else []
+            try:
+                v0_parts = _parts_in(raw_parts, accepted)
+            except _PartError as exc:
+                return _jsonrpc_error(req_id, exc.code, exc.message, exc.data)
+            message_text = " ".join(p.text for p in v0_parts if isinstance(p, TextPart))
         elif isinstance(msg, str):
             message_text = msg
 
-        agent_input = _build_agent_input(message_text, params, accept_history=accept_history)
+        agent_input = _build_agent_input(message_text, v0_parts, params, accept_history=accept_history)
         task_id = params.get("id", str(uuid.uuid4()))
 
         if method == "tasks/send":
@@ -458,8 +673,8 @@ def create_app(
             return _jsonrpc_result(req_id, {
                 "id": task_id,
                 "status": {"state": "completed"},
-                "artifacts": [{"parts": [{"type": "text", "text": output.content or ""}]}]
-                if output.content else [],
+                "artifacts": [{"parts": result_parts}]
+                if (result_parts := _v0_parts_out(output.content, media_of(output.parts))) else [],
             })
 
         if method == "tasks/sendSubscribe":
@@ -479,6 +694,8 @@ def serve(
     port: int = 8000,
     public_url: str | None = None,
     accept_history: bool = False,
+    accepted_input_types: Iterable[str] | None = None,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
 ) -> None:
     """Run an agent as an A2A server (blocking).
 
@@ -488,6 +705,12 @@ def serve(
     import uvicorn
 
     app = create_app(
-        agent, name=name, description=description, public_url=public_url, accept_history=accept_history
+        agent,
+        name=name,
+        description=description,
+        public_url=public_url,
+        accept_history=accept_history,
+        accepted_input_types=accepted_input_types,
+        max_body_bytes=max_body_bytes,
     )
     uvicorn.run(app, host=host, port=port)

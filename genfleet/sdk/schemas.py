@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, Required, TypedDict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from .parts import Part, TextPart, text_of
 
 
 class Message(BaseModel):
@@ -30,10 +32,29 @@ class ToolSchema(BaseModel):
 
 
 class AgentInput(BaseModel):
-    message: str
+    """One turn for an agent.
+
+    ``message`` is the turn's text. ``parts`` is the whole turn, text and
+    files (``genfleet.sdk.parts``). Either may be given: an empty ``message``
+    is the text parts joined, and a ``message`` with no text part in
+    ``parts`` is added to them as the first part. A text-only agent reads
+    ``message`` and never looks at ``parts``.
+    """
+
+    message: str = ""
+    parts: list[Part] = Field(default_factory=list)
     history: list[Message] = Field(default_factory=list)
     tool_schemas: list[ToolSchema] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _text_and_parts(self) -> "AgentInput":
+        texts = [p for p in self.parts if isinstance(p, TextPart)]
+        if not self.message and texts:
+            self.message = text_of(texts)
+        elif self.message and not texts:
+            self.parts = [TextPart(text=self.message), *self.parts]
+        return self
 
 
 class TokenUsage(BaseModel):
@@ -43,11 +64,26 @@ class TokenUsage(BaseModel):
 
 
 class AgentOutput(BaseModel):
+    """One chunk of an agent's reply.
+
+    ``content`` is text. ``parts`` carries typed results — files, images —
+    alongside it; ``serve`` sends them as A2A file parts. When ``content`` is
+    left out it is the text parts joined; when it is set, it is the text and
+    the text parts are not sent again.
+    """
+
     content: str | None = None
+    parts: list[Part] = Field(default_factory=list)
     tool_calls: list[ToolCall] = Field(default_factory=list)
     done: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
     token_usage: TokenUsage | None = None
+
+    @model_validator(mode="after")
+    def _content_from_parts(self) -> "AgentOutput":
+        if self.content is None and any(isinstance(p, TextPart) for p in self.parts):
+            self.content = text_of(self.parts)
+        return self
 
 
 #: ``AgentOutput.metadata`` key of a tool event: an output that reports a
@@ -77,6 +113,7 @@ class ModelConfig(TypedDict, total=False):
     base_url: str             # optional — for OpenAI-compatible endpoints
     default_headers: dict[str, str]  # optional — sent on every request (OpenAI-compatible providers)
     options: dict[str, Any]   # optional — passed to the model client unchanged; the SDK never reads it
+    vision: bool              # optional — the model takes images; `Agent` then sends image parts as images
 
 
 class MemoryConfig(TypedDict, total=False):

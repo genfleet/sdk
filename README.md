@@ -74,6 +74,8 @@ Agent(
     skills:  list[Skill | str] | None = None,  # Skill objects or Git repositories
     context: str | None = None,        # extra context appended to system prompt
     audit:   AuditConfig | None = None, # structured audit logging
+    accepts: list[str] | None = None,  # file types taken besides text, e.g. ["image/*", "application/pdf"]
+    files:   FileResolver | None = None, # reads file references (the platform supplies one when hosted)
 )
 ```
 
@@ -296,6 +298,24 @@ agent = Agent(
 `serve(...)` / `create_app(...)` options for an agent you host yourself: `public_url="https://…/"` fixes the URL the agent card advertises (otherwise it follows the request's `Host` and is not cached), and `accept_history=True` lets a trusted caller send prior turns in `metadata["genfleet.history"]` (off by default).
 
 
+### Files: images, audio, video and documents
+
+A turn is a list of typed parts: `AgentInput.parts` and `AgentOutput.parts` hold `TextPart`, `ImagePart`, `AudioPart`, `VideoPart` and `FilePart`. `message` and `content` stay the turn's text, so a text agent needs no change. A file part has `mime_type`, `name` (a display name: directories and control characters are stripped), `size`, and its bytes either inline (`data`, at most 1 MiB, `MAX_INLINE_BYTES`) or by reference (`uri`). Use `part_for(mime_type, data=… | uri=…)` to build the right kind.
+
+```python
+agent = Agent(
+    role="You read invoices.",
+    model={"model": "openai/gpt-4o-mini", "api_key": "...", "vision": True},
+    accepts=["image/*", "application/pdf"],
+)
+serve(agent, name="invoices")
+```
+
+- An agent declares the file types it takes (`accepts=`; for your own `AgentProtocol`, an `accepted_input_types` attribute or `serve(accepted_input_types=…)`). Text is always accepted; files are refused unless declared. `serve` lists them as the card's `defaultInputModes` and answers a file of any other type with ContentTypeNotSupported (`-32005`), naming it and what is accepted. `Agent.run` raises `UnsupportedInput` for the same turn.
+- `serve` maps A2A file parts (`raw` / `url`, and 0.x `file` with `bytes` / `uri`) and data parts (as `application/json` files) into `AgentInput.parts`. A file-only request is a turn with an empty `message`. File parts in `AgentOutput.parts` go back out on the `result` artifact. Request bodies are capped at 8 MiB (`max_body_bytes`).
+- `Agent` with `"vision": True` in the model config sends PNG, JPEG, GIF and WebP images up to 5 MiB to the model as images. Every other file is described to the model in one line (kind, name, type, size); its bytes are never put in the prompt or in memory.
+- A reference is read through a `FileResolver`, which checks access and expiry for the running turn. The SDK never fetches a URL itself. `InMemoryFileResolver` stores files locally for tests (`put(data, mime_type=…, ttl=…, session_id=…)`).
+
 ### With audit logging
 
 ```python
@@ -373,6 +393,10 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 | `ToolCall` | Model | Tool invocation request |
 | `ToolSchema` | Model | Tool JSON Schema description |
 | `TokenUsage` | Model | Token counts (input, output, total) |
+| `Part`, `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `FilePart` | Models | Typed parts of a turn (`AgentInput.parts`, `AgentOutput.parts`) |
+| `part_for` | Function | The part of the kind a MIME type names |
+| `FileResolver` / `InMemoryFileResolver` / `read_part` | Protocol / Class / Function | Read a file part's bytes, inline or by reference |
+| `UnsupportedInput` | Exception | A turn carries a file type the agent does not accept |
 | `TOOL_EVENT_KEY` | Constant | `AgentOutput.metadata` key on the outputs `Agent` yields to report a tool call and its result |
 | `AuditEvent` | Model | Structured audit event |
 | `ModelConfig` | TypedDict | Provider + credentials config |
