@@ -318,6 +318,8 @@ serve(agent, name="invoices")
 - `Agent` with `"vision": True` in the model config sends PNG, JPEG, GIF and WebP images up to 5 MiB to the model as images: at most `max_images_per_turn` per turn and `max_image_bytes_per_turn` in all, each repeated image once, and only when the bytes match the declared type. Anything else is described. Every other file is described to the model in one line (kind, name, type, size); its bytes are never put in the prompt or in memory.
 - A reference is read through a `FileResolver`, which checks access and expiry for the running turn. The SDK never fetches a URL itself. `InMemoryFileResolver` stores files locally for tests (`put(data, mime_type=…, ttl=…, session_id=…)`).
 
+Try it without an API key: [`examples/rich_io.ipynb`](examples/rich_io.ipynb) walks through parts, accepted types, references and `serve`.
+
 ### With audit logging
 
 ```python
