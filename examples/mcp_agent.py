@@ -5,7 +5,7 @@ MCP tool schemas are fetched from the server on first run() and merged
 with any local tools. Both stdio and SSE transports are supported.
 
 Requires:
-    pip install 'agentinc-sdk[openai,mcp,serve]'
+    pip install 'genfleet-sdk[openai,mcp,serve]'
     npx -y @modelcontextprotocol/server-filesystem /tmp   # example MCP server
 
 Run:
@@ -14,20 +14,19 @@ Run:
 
 Test:
     curl -s -X POST http://localhost:8000 \
-      -H "Content-Type: application/json" \
+      -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
       -d '{
-        "jsonrpc": "2.0", "id": 1, "method": "tasks/send",
+        "jsonrpc": "2.0", "id": 1, "method": "SendMessage",
         "params": {
-          "id": "t1",
-          "message": {"role": "user", "parts": [{"type": "text", "text": "List the files in /tmp"}]}
+          "message": {"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "List the files in /tmp"}]}
         }
       }' | python -m json.tool
 """
 
 import os
 
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from genfleet.sdk import Agent
+from genfleet.sdk.serve import serve
 
 
 # ── stdio MCP server (spawns a subprocess) ────────────────────────────────

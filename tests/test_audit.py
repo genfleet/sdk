@@ -10,9 +10,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agentinc.sdk import Agent, AgentInput, AgentOutput, AuditConfig, AuditEvent, TokenUsage, ToolCall
-from agentinc.sdk.audit import Auditor, audit_for, _truncate
-from agentinc.sdk.audit.backends import (
+from genfleet.sdk import Agent, AgentInput, AgentOutput, AuditConfig, AuditEvent, TokenUsage, ToolCall
+from genfleet.sdk.audit import Auditor, audit_for, _truncate
+from genfleet.sdk.audit.backends import (
     CallbackAuditBackend,
     ConsoleAuditBackend,
     FileAuditBackend,
@@ -99,12 +99,12 @@ def test_audit_for_unknown_backend_raises():
 @pytest.mark.asyncio
 async def test_console_backend_emits(caplog):
     import logging
-    logging.getLogger("agentinc.audit").setLevel(logging.INFO)
+    logging.getLogger("genfleet.audit").setLevel(logging.INFO)
 
     backend = ConsoleAuditBackend()
     event = AuditEvent(event_type="test.event", data={"key": "value"})
 
-    with caplog.at_level(logging.INFO, logger="agentinc.audit"):
+    with caplog.at_level(logging.INFO, logger="genfleet.audit"):
         await backend.emit(event)
 
     assert "test.event" in caplog.text
@@ -265,6 +265,29 @@ async def test_agent_emits_audit_events_on_text_response():
 
     for e in received:
         assert e.agent_name == "test-agent"
+
+
+@pytest.mark.asyncio
+async def test_invocation_end_is_emitted_for_a_consumer_that_stops_at_done():
+    """`serve` breaks out at the first ``done`` chunk, closing the generator
+    at that yield. An end emitted after it never ran: every served turn had
+    an `invocation.start` and no `invocation.end`."""
+    received: list[AuditEvent] = []
+    agent = _make_agent(audit={"backend": "callback", "callback": lambda e: received.append(e)})
+    agent._provider = _mock_provider([
+        AgentOutput(content="Hello", done=False),
+        AgentOutput(content="", done=True),
+    ])
+
+    gen = agent.run(AgentInput(message="hi"))
+    async for out in gen:
+        if out.done:
+            break
+    await gen.aclose()
+
+    types = [e.event_type for e in received]
+    assert types.count("invocation.end") == 1
+    assert types.index("invocation.end") > types.index("llm.response")
 
 
 @pytest.mark.asyncio
