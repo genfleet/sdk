@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 import time
@@ -54,12 +56,24 @@ from .confirmations import (
     _is_sensitive,
     _sensitive_flags_of,
 )
+from .files import FileAccessError, FileResolver, read_part
+from .parts import ImagePart, UnsupportedInput, looks_like, media_of, mime_patterns
+from .parts import accepts as _accepts
 from .tool import ToolWrapper, wrap_tool
 from .skills import Skill, load_skills, pinned_revision
 
 log = logging.getLogger("genfleet.sdk.agent")
 SKILL_TOOL_NAME = "read_skill"
 SKILL_MEMORY_MARKER = "[skill body omitted; call read_skill again to use it]"
+
+#: Image types sent to a vision model as images; every provider takes these.
+MODEL_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+#: The largest image sent to a model (Anthropic's per-image limit). A larger
+#: one is described to the model instead.
+MAX_MODEL_IMAGE_BYTES = 5 * 1024 * 1024
+#: Default limits on the images one turn sends to a model (``Agent`` args).
+DEFAULT_MAX_IMAGES_PER_TURN = 8
+DEFAULT_MAX_IMAGE_BYTES_PER_TURN = 20 * 1024 * 1024
 
 
 def _wrap_tool(fn: Callable) -> ToolWrapper:
@@ -146,8 +160,23 @@ class Agent:
         model_client: ModelClient | None = None,
         skills: list[Skill | str | Path] | None = None,
         state: StateStore | Literal["platform"] | None = None,
+        accepts: list[str] | None = None,
+        files: FileResolver | None = None,
+        max_images_per_turn: int = DEFAULT_MAX_IMAGES_PER_TURN,
+        max_image_bytes_per_turn: int = DEFAULT_MAX_IMAGE_BYTES_PER_TURN,
     ) -> None:
         self._role = role
+        # The file types this agent takes besides text (`serve` advertises
+        # and enforces them). Images go to the model as images when the model
+        # config says ``vision``; every other file is described, never sent.
+        # A `serve(accepted_input_types=…)` override doesn't change this: it
+        # rides on each turn it admits (`AgentInput._served_input_types`).
+        self.accepted_input_types: tuple[str, ...] = mime_patterns(accepts)
+        self._files = files
+        if max_images_per_turn < 0 or max_image_bytes_per_turn < 0:
+            raise ValueError("image limits must not be negative")
+        self._max_images_per_turn = max_images_per_turn
+        self._max_image_bytes_per_turn = max_image_bytes_per_turn
         self._context = context
         self._model_config = model
 
@@ -200,6 +229,14 @@ class Agent:
         auditor = self._auditor
         total_usage = TokenUsage()
 
+        # `serve` stamps the types its app admitted; a direct call uses ours.
+        accepted = input._served_input_types
+        if accepted is None:
+            accepted = self.accepted_input_types
+        refused = [p.mime_type for p in media_of(input.parts) if not _accepts(p.mime_type, accepted)]
+        if refused:
+            raise UnsupportedInput(refused, accepted)
+
         if self._mcp_configs and not self._mcp_ready:
             await self._init_mcp()
 
@@ -248,7 +285,8 @@ class Agent:
             messages: list[dict] = [{"role": "system", "content": "\n\n".join(system_parts)}]
             for msg in history:
                 messages.append(self._message_to_dict(msg))
-            messages.append({"role": "user", "content": input.message})
+            turn_text, user_content = await self._user_content(input)
+            messages.append({"role": "user", "content": user_content})
 
             # The tools this caller may use: by each tool's
             # audience, the platform's per-tool setting first. A tool left out
@@ -387,7 +425,7 @@ class Agent:
                     # ``async for`` — which closes this generator at the yield
                     # below, so anything after it never runs.
                     await self._persist_turn(
-                        session_id, input, history, new_messages, invocation_id
+                        session_id, input, turn_text, history, new_messages, invocation_id
                     )
                     # Same reason as the persist: after the ``done`` yield this
                     # generator may already be closed, and the audit trail
@@ -477,6 +515,7 @@ class Agent:
         self,
         session_id: str,
         input: AgentInput,
+        turn_text: str,
         history: list[Message],
         new_messages: list[dict],
         invocation_id: str,
@@ -487,7 +526,8 @@ class Agent:
         """
         if not self._memory or input.metadata.get(MEMORY_METADATA_KEY) == "off":
             return
-        turn = [Message(role="user", content=input.message)]
+        # The turn's text with its files described: memory never holds file bytes.
+        turn = [Message(role="user", content=turn_text)]
         skill_call_ids = {
             tool_call["id"]
             for message in new_messages if message["role"] == "assistant"
@@ -529,6 +569,77 @@ class Agent:
             )
         else:
             await self._memory.save(session_id, list(history) + turn)
+
+    async def _user_content(self, input: AgentInput) -> tuple[str, str | list[dict]]:
+        """The turn as text (files described), and the user message for the model.
+
+        Without files both are ``input.message``. Each file adds a line that
+        names it (``describe``): kind, name, type and size, never its bytes.
+        With ``vision`` in the model config, an image of a common type is
+        also sent as image content (OpenAI ``image_url`` form, a data URL;
+        each provider converts it), within the turn's limits: at most
+        ``max_images_per_turn`` read attempts (sent or failed, so also at most
+        that many resolver calls) and ``max_image_bytes_per_turn`` bytes in
+        all, each at most ``MAX_MODEL_IMAGE_BYTES``. A repeated image (the
+        same reference, or the same inline bytes) is read once, and its
+        outcome, sent or failed, is reused. An
+        image past the limits, one that can't be read, or one whose bytes are
+        not its declared type is described, with the reason, instead.
+        """
+        media = media_of(input.parts)
+        if not media:
+            return input.message, input.message
+        lines = [input.message] if input.message else []
+        images: list[dict] = []
+        # One outcome per distinct image (reference or bytes): None when it
+        # was sent, else the reason it wasn't. A repeat is never read again.
+        outcomes: dict[str, str | None] = {}
+        attempts = 0
+        budget = self._max_image_bytes_per_turn
+        vision = bool(self._model_config.get("vision"))
+        for part in media:
+            # Only images a vision model takes are read; every other file
+            # is described without touching the resolver.
+            if not (vision and isinstance(part, ImagePart) and part.mime_type in MODEL_IMAGE_TYPES):
+                lines.append(part.describe())
+                continue
+            key = part.uri or "sha256:" + hashlib.sha256(part.data or b"").hexdigest()
+            if key in outcomes:
+                reason = outcomes[key]
+                lines.append(f"{part.describe()} " + ("(repeated; shown once)" if reason is None else f"(unavailable: {reason})"))
+                continue
+            # Every attempt counts, failed or not: at most this many reads
+            # (resolver calls) per turn, whatever the request carries.
+            if attempts >= self._max_images_per_turn or budget <= 0:
+                lines.append(f"{part.describe()} (not shown: image limit for this turn reached)")
+                continue
+            attempts += 1
+            reason = None
+            try:
+                data = await read_part(
+                    part,
+                    max_bytes=min(MAX_MODEL_IMAGE_BYTES, budget),
+                    metadata=input.metadata,
+                    resolver=self._files,
+                )
+            except FileAccessError as exc:
+                reason = exc.reason
+            else:
+                if not looks_like(part.mime_type, data):
+                    reason = "content does not match its type"
+            outcomes[key] = reason
+            if reason is not None:
+                log.info("image not sent to the model: %s", reason)
+                lines.append(f"{part.describe()} (unavailable: {reason})")
+                continue
+            budget -= len(data)
+            lines.append(part.describe())
+            url = f"data:{part.mime_type};base64,{base64.b64encode(data).decode()}"
+            images.append({"type": "image_url", "image_url": {"url": url}})
+        text = "\n".join(lines)
+        if not images:
+            return text, text
+        return text, [{"type": "text", "text": text}, *images]
 
     def _offered_tools(self, caller: Caller | None, overrides: dict[str, frozenset[Audience]]) -> set[str]:
         """Names of the tools offered on this caller's turn, by ``effective_audiences``."""
