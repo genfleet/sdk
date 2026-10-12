@@ -1,26 +1,30 @@
-# agentinc-sdk
+# genfleet-sdk
 
-The developer SDK for the [Agentinc](https://withagentinc.com) agent marketplace platform.
+The developer SDK for the [Genfleet](https://genfleet.ai) agent marketplace platform.
 
 Declare an agent with `Agent()` — give it a role, model, tools, memory, or MCP connections — and serve it over [A2A](https://google.github.io/A2A/). The SDK handles provider selection, tool dispatch, session memory, and streaming automatically.
 
 ## Install
 
 ```bash
-pip install agentinc-sdk                    # core (pydantic only)
-pip install 'agentinc-sdk[openai,serve]'    # OpenAI + A2A server
-pip install 'agentinc-sdk[anthropic,serve]' # Anthropic + A2A server
-pip install 'agentinc-sdk[all]'             # everything
+pip install "genfleet-sdk @ git+https://github.com/genfleet/sdk@dev"                    # core (pydantic only)
+pip install "genfleet-sdk[openai,serve] @ git+https://github.com/genfleet/sdk@dev"      # OpenAI + A2A server
+pip install "genfleet-sdk[anthropic,serve] @ git+https://github.com/genfleet/sdk@dev"   # Anthropic + A2A server
+pip install "genfleet-sdk[all] @ git+https://github.com/genfleet/sdk@dev"               # everything
 ```
+
+Installed from GitHub rather than PyPI: the package is not published yet, so
+the git reference is the supported way to get it. Pin a tag or commit instead
+of `@dev` if you need a fixed version.
 
 Requires **Python 3.12+**.
 
 ## Agent Skill
 
-Install the agentinc-sdk skill so your coding agent understands the SDK and can help you build agents:
+Install the genfleet-sdk skill so your coding agent understands the SDK and can help you build agents:
 
 ```bash
-npx skills add agentinc/sdk
+npx skills add genfleet/sdk
 ```
 
 Your coding agent will automatically use it when working with `Agent()`, `AgentProtocol`, `@tool`, `serve()`, and all framework integration patterns.
@@ -29,8 +33,8 @@ Your coding agent will automatically use it when working with `Agent()`, `AgentP
 
 ```python
 import os
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from genfleet.sdk import Agent
+from genfleet.sdk.serve import serve
 
 def get_weather(city: str) -> str:
     """Gets the current weather for a city."""
@@ -47,9 +51,16 @@ serve(agent, name="my-agent", port=8000)
 
 ```bash
 curl -X POST http://localhost:8000 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"What is the weather in Paris?"}]}}}'
+  -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"What is the weather in Paris?"}]}}}'
 ```
+
+## Publish on Genfleet (private beta)
+
+Invited to the beta? The step-by-step guide — write an agent with a tool,
+test it locally, `gf agents push` it, run it in your workspace and chat with
+it — is the **Publish on Genfleet** section of the docs:
+[`docs/index.html#marketplace`](docs/index.html#marketplace).
 
 ## Agent Constructor
 
@@ -59,10 +70,14 @@ Agent(
     model:   ModelConfig,              # provider + credentials
     tools:   list[Callable] = [],      # plain Python functions — auto-wrapped
     mcps:    list[MCPConfig] = [],     # MCP server connections
-    memory:  MemoryConfig | None = None,  # Redis-backed session memory
+    memory:  MemoryConfig | Memory | "platform" | None = None,  # episodic memory (see below)
+    skills:  list[Skill | str] | None = None,  # Skill objects or Git repositories
     context: str | None = None,        # extra context appended to system prompt
-    data:    DataConfig | None = None, # RAG config (reserved, not yet implemented)
     audit:   AuditConfig | None = None, # structured audit logging
+    accepts: list[str] | None = None,  # file types taken besides text, e.g. ["image/*", "application/pdf"]
+    files:   FileResolver | None = None, # reads file references (the platform supplies one when hosted)
+    max_images_per_turn: int = 8,      # vision: images sent to the model per turn
+    max_image_bytes_per_turn: int = 20 * 1024 * 1024,  # vision: their total bytes
 )
 ```
 
@@ -72,8 +87,126 @@ Agent(
 {"model": "openai/gpt-4o-mini",       "api_key": "sk-..."}     # OpenAI
 {"model": "anthropic/claude-sonnet-4-6", "api_key": "sk-ant-..."} # Anthropic
 {"model": "gemini/gemini-1.5-pro",     "api_key": "..."}        # Gemini
+{"model": "openrouter/google/gemini-2.5-flash", "api_key": "sk-or-..."}  # any vendor via OpenRouter
 {"model": "openai/deepseek-chat",      "api_key": "sk-...", "base_url": "https://api.deepseek.com"}  # any OpenAI-compatible
 ```
+
+### Model clients — `genfleet.model_clients`
+
+An agent's model calls go through a *model client*. The direct providers above
+are the default. A package can register its own under the entry-point group
+`genfleet.model_clients`: a factory `(ModelConfig) -> ModelClient | None` that
+returns `None` when it doesn't apply in the current environment. Installed
+factories are tried in name order and the first active one is used (the SDK
+logs which). An explicit `Agent(model_client=...)` wins over both, which is how
+tests use `genfleet.sdk.models.FakeModelClient`.
+
+With a model client installed, `model` may be a plain id (no provider prefix)
+and `api_key` may be left out. `ModelConfig["options"]` is passed to the client
+unchanged; the SDK never reads it. During a turn,
+`genfleet.sdk.turn.current_turn()` returns the turn's `AgentInput.metadata`.
+
+### Memory
+
+Memory is episodic: one thread of messages per `session_id`, loaded before a
+turn and appended to after it.
+
+- **On the platform** you need not name a backend. A hosted agent is given
+  `GENFLEET_MEMORY_URL` / `GENFLEET_MEMORY_TOKEN` by its sandbox and uses the
+  platform's store, scoped to that agent instance. `memory="platform"` says so
+  explicitly and fails fast outside a sandbox. `agent.memory.search(subject, query)`
+  and `agent.memory.purge(subject)` are available on it.
+- **Anywhere else** pass your own Redis, or nothing for a stateless agent.
+- Both sandbox variables travel together. With only `GENFLEET_MEMORY_URL` set,
+  the agent raises at construction; with only `GENFLEET_MEMORY_TOKEN`, there is
+  nothing to dial, so it runs stateless and logs a warning.
+- A retried turn is appended twice unless the caller names it: `turn_id`,
+  `request_id` or `message_id` in the request metadata is passed to the store
+  as the turn's idempotency key.
+
+### Workflow state (checkpoints, pause/resume, effect claims)
+
+Workflow state is separate from conversation memory. Two backends implement
+one async `StateStore` interface:
+
+- **Hosted:** an `Agent` selects `PlatformStateStore` when its sandbox
+  receives `GENFLEET_STATE_URL` and `GENFLEET_STATE_TOKEN`; `agent.state` then
+  goes through the engine proxy to a PostgreSQL store. `Agent(state="platform")`
+  requires that pair and fails, naming the missing variable, without it.
+- **Local/self-hosted:** `LocalStateStore(path)` wraps `SQLiteStateStore` on a
+  worker thread. It refuses to open in a hosted sandbox, whose files don't
+  survive a restart.
+
+**Who a run belongs to.** Every call takes `agent` and `owner`.
+
+- Locally, both are yours to choose: pass a stable agent id and the caller id
+  your ingress verified (for example `caller_of(input.metadata).id`).
+- Hosted, the platform stamps the scope and the SDK sends neither. Tenant and
+  agent instance come from the sandbox's token. The owner is the **verified
+  caller of the running turn**, role included (`customer` and `operator` runs
+  never mix), which the SDK names by the turn's `session_id`/`turn_id` (set by
+  `Agent` while a tool or the model client runs; other code can wrap a call in
+  `genfleet.sdk.turn.call_within(input.metadata, ...)`). A call made outside
+  any turn uses the agent's background scope, which no customer turn can read;
+  a call naming a turn that has ended is refused. So `owner` is ignored when
+  hosted, and one store keeps one `agent` value (a second one raises
+  `StateError` instead of silently sharing runs). `purge` deletes the current
+  scope's runs; `purge_subject` is refused on a customer's turn.
+
+**Pause/resume is not an approval.** A paused run is resumed by whoever holds
+its resume token within the same owner scope, so the requester can resume it
+themselves. Don't build an approval gate on it: an approval by someone other
+than the requester (an owner or admin) goes through the platform's sensitive
+tool confirmations (ADR-0028 §8a), and durable resume after a human approval is
+tracked in [genfleet/sdk#59](https://github.com/genfleet/sdk/issues/59).
+
+```python
+from genfleet.sdk import LocalStateStore
+
+store = LocalStateStore("/var/lib/my-agent/runs.sqlite3")
+run = await store.create("orders-agent", verified_caller_id, {"order_id": order_id}, subject=customer_id)
+# Save progress before waiting for an external event (not an approval).
+run, resume_token = await store.pause(
+    run.run_id, agent="orders-agent", owner=verified_caller_id,
+    version=run.version, state={"order_id": order_id, "step": "waiting"},
+    ttl_seconds=3600,
+)
+# A later process can atomically consume the token once.
+run = await store.resume(
+    run.run_id, agent="orders-agent", owner=verified_caller_id,
+    token=resume_token,
+)
+effect = await store.claim_effect(
+    run.run_id, "charge-order", agent="orders-agent", owner=verified_caller_id,
+)
+receipt = payment_client.charge(order_id, idempotency_key=effect.idempotency_key)
+await store.complete_effect(
+    run.run_id, "charge-order", agent="orders-agent",
+    owner=verified_caller_id, result={"receipt": receipt.id},
+)
+run = await store.complete(
+    run.run_id, agent="orders-agent", owner=verified_caller_id,
+    version=run.version, state={"order_id": order_id, "step": "done"},
+)
+```
+
+`checkpoint` updates a running run without pausing. State writes require the
+last returned `version`; effect claims are separately deduplicated by
+`effect_id`. Keep resume tokens private. A pause lasts at most 30 days on both
+backends. `cancel` closes an expired or abandoned run, and `purge` removes the
+owner's runs and effect records. `purge_subject` deletes one subject's runs
+within the agent. State and result payloads are limited to 64 KiB
+(`StateTooLarge`). Hosted, the platform also caps runs per agent, effects per
+run, stored bytes and the request rate, and answers over a cap with
+`StateQuotaExceeded`. Every failure is a `StateError` (a hosted one is also a
+`PlatformStateError` with the HTTP `status`, 0 when unreachable). For an
+external side effect, `claim_effect` records intent before the call and gives
+a stable idempotency key to pass to a remote API that supports it. A second
+claim is rejected, including after a restart. If a worker dies between the
+claim and `complete_effect`, `get_effect` reports `claimed`: the remote outcome
+is uncertain and must be reconciled before proceeding. The store never
+silently replays that call. No checkpoint can make a remote side effect and
+its state commit one atomic transaction.
 
 ### With Redis memory
 
@@ -88,12 +221,67 @@ agent = Agent(
 )
 ```
 
-Pass `session_id` in request metadata to persist history across turns:
+Send the same `contextId` on each message to persist history across turns (it becomes the agent's `session_id`):
 
 ```bash
-curl -X POST http://localhost:8000 \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","metadata":{"session_id":"user-123"},"message":{"role":"user","parts":[{"type":"text","text":"My name is Alice"}]}}}'
+curl -X POST http://localhost:8000 -H 'A2A-Version: 1.0' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","contextId":"user-123","parts":[{"text":"My name is Alice"}]}}}'
 ```
+
+### Runtime skills
+
+`Skill` holds versioned instructions. The model sees each skill's name and description, then can call `read_skill` to load its full instructions for that turn. Skill bodies are not copied into audit results, tool events, or saved conversation memory. Skills never grant access to tools; the existing tool audience rules still apply. Do not put secrets in skill instructions.
+
+```python
+from genfleet.sdk import Agent, Skill
+
+agent = Agent(
+    role="You are a helpful assistant.",
+    model={"model": "openai/gpt-4o-mini", "api_key": "..."},
+    skills=[Skill(
+        name="concise",
+        version="1",
+        description="Give short answers",
+        instructions="Answer in one sentence unless the user asks for detail.",
+    )],
+)
+```
+
+`Skill.from_file("SKILL.md")` reads `name`, `description`, and optional `version` from simple frontmatter, followed by the Markdown instructions. The version is author-defined; file contents are captured when the agent is constructed. For a local, credential-free walkthrough of skills, tools, and memory, use [`examples/skills_memory.ipynb`](examples/skills_memory.ipynb).
+
+To load all skills from a repository, pass its GitHub handle or HTTPS Git URL. The SDK discovers `SKILL.md` in root skill folders and under `skills/`, `.agents/skills/`, `.claude/skills/`, `.cursor/skills/`, and `agent/skills/` (up to three nested directories), plus text files under each skill's `references/`. It clones once when `Agent` is constructed and records the source commit on each `Skill.source_revision`.
+
+```python
+from genfleet.sdk import Agent
+
+agent = Agent(
+    role="You are a helpful assistant.",
+    model={"model": "openai/gpt-4o-mini", "api_key": "..."},
+    skills=["vercel-labs/agent-skills@<40-character-commit>"],
+)
+```
+
+To see the choices first and select a subset:
+
+```python
+from genfleet.sdk import Agent, discover_skills, load_skills
+
+repo = "mmedhat1910/skills"
+for option in discover_skills(repo):
+    print(option.name, "—", option.description)
+
+selected = load_skills(repo, names=["handoff", "handoff-proceed"])
+agent = Agent(
+    role="You are a helpful assistant.",
+    model={"model": "openai/gpt-4o-mini", "api_key": "..."},
+    skills=selected,
+)
+# Omit names to load every skill: load_skills(repo)
+```
+
+Pass a selected list as `skills=selected`; combine it with other sources using `skills=[*selected, other]`. Direct repository sources in `Agent(skills=...)` must end in `@<40-character-commit>` so published agents use a fixed revision. For deployment, load and package the selected `Skill` objects during the build to avoid a Git fetch at agent startup. Use `discover_skills` and `load_skills` for interactive selection; pass a `Path` for a local repository. Discovery logs and skips invalid skill files, then returns valid skills in the repository.
+
+The model uses `read_skill(name)` for instructions and `read_skill(name, path="references/guide.md")` for a text reference. Skills default to the `operator` audience; set `Skill(audiences={"operator", "customer"}, ...)` to offer one to customers. The platform can override each skill through the `skill:<name>` audience key and can disable the `read_skill` tool. Git authentication uses your configured Git credentials. Repository code and scripts are not executed by the loader; a skill can only use tools already offered to the agent.
 
 ### With MCP server
 
@@ -109,6 +297,27 @@ agent = Agent(
 )
 ```
 
+`serve(...)` / `create_app(...)` options for an agent you host yourself: `public_url="https://…/"` fixes the URL the agent card advertises (otherwise it follows the request's `Host` and is not cached), and `accept_history=True` lets a trusted caller send prior turns in `metadata["genfleet.history"]` (off by default).
+
+
+### Files: images, audio, video and documents
+
+A turn is a list of typed parts: `AgentInput.parts` and `AgentOutput.parts` hold `TextPart`, `ImagePart`, `AudioPart`, `VideoPart` and `FilePart`. `message` and `content` stay the turn's text, so a text agent needs no change. A file part has `mime_type`, `name` (a display name: directories and control characters are stripped), `size`, and its bytes either inline (`data`, at most 1 MiB, `MAX_INLINE_BYTES`) or by reference (`uri`). Use `part_for(mime_type, data=… | uri=…)` to build the right kind.
+
+```python
+agent = Agent(
+    role="You read invoices.",
+    model={"model": "openai/gpt-4o-mini", "api_key": "...", "vision": True},
+    accepts=["image/*", "application/pdf"],
+)
+serve(agent, name="invoices")
+```
+
+- An agent declares the file types it takes (`accepts=`; for your own `AgentProtocol`, an `accepted_input_types` attribute or `serve(accepted_input_types=…)`, which applies to that app only and leaves the agent unchanged). Text is always accepted; files are refused unless declared. File types an agent returns go in an `output_types` attribute (or `serve(output_types=…)`) and the card's `defaultOutputModes`. `serve` lists them as the card's `defaultInputModes` and answers a file of any other type with ContentTypeNotSupported (`-32005`), naming it and what is accepted. `Agent.run` raises `UnsupportedInput` for the same turn.
+- `serve` maps A2A file parts (`raw` / `url`, and 0.x `file` with `bytes` / `uri`) and data parts (as `application/json` files) into `AgentInput.parts`. A file-only request is a turn with an empty `message`. File parts in `AgentOutput.parts` go back out on the `result` artifact. Request bodies are capped at 8 MiB (`max_body_bytes`).
+- `Agent` with `"vision": True` in the model config sends PNG, JPEG, GIF and WebP images up to 5 MiB to the model as images: at most `max_images_per_turn` per turn and `max_image_bytes_per_turn` in all, each repeated image once, and only when the bytes match the declared type. Anything else is described. Every other file is described to the model in one line (kind, name, type, size); its bytes are never put in the prompt or in memory.
+- A reference is read through a `FileResolver`, which checks access and expiry for the running turn. The SDK never fetches a URL itself. `InMemoryFileResolver` stores files locally for tests (`put(data, mime_type=…, ttl=…, session_id=…)`).
+
 ### With audit logging
 
 ```python
@@ -122,7 +331,7 @@ agent = Agent(
 )
 ```
 
-**Console backend** — emits structured JSON to the `agentinc.audit` logger:
+**Console backend** — emits structured JSON to the `genfleet.audit` logger:
 
 ```python
 audit={"backend": "console"}
@@ -173,6 +382,11 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 | Export | Type | Description |
 |--------|------|-------------|
 | `Agent` | Class | Main developer-facing class — wires provider, tools, memory, MCP, audit |
+| `Skill` | Class | Versioned instructions loaded by the agent on demand |
+| `SkillOption` | Class | Name, description, version, and source commit returned by discovery |
+| `discover_skills` | Function | List skills available in a Git repository |
+| `load_skills` | Function | Discover and snapshot skills from a Git repository |
+| `Memory` | Protocol | Contract for a caller-provided episodic memory backend |
 | `AgentProtocol` | Protocol | Universal agent contract — implement `run()` |
 | `ToolProtocol` | Protocol | Tool contract — implement `schema()` + `call()` |
 | `AgentInput` | Model | Input to every agent invocation |
@@ -181,12 +395,16 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 | `ToolCall` | Model | Tool invocation request |
 | `ToolSchema` | Model | Tool JSON Schema description |
 | `TokenUsage` | Model | Token counts (input, output, total) |
+| `Part`, `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `FilePart` | Models | Typed parts of a turn (`AgentInput.parts`, `AgentOutput.parts`) |
+| `part_for` | Function | The part of the kind a MIME type names |
+| `FileResolver` / `InMemoryFileResolver` / `read_part` | Protocol / Class / Function | Read a file part's bytes, inline or by reference |
+| `UnsupportedInput` | Exception | A turn carries a file type the agent does not accept |
+| `TOOL_EVENT_KEY` | Constant | `AgentOutput.metadata` key on the outputs `Agent` yields to report a tool call and its result |
 | `AuditEvent` | Model | Structured audit event |
 | `ModelConfig` | TypedDict | Provider + credentials config |
-| `MemoryConfig` | TypedDict | Redis memory config |
+| `MemoryConfig` | TypedDict | Memory config — `{"type": "redis", ...}` or `{"type": "platform"}` |
 | `AuditConfig` | TypedDict | Audit backend config |
 | `MCPConfig` | TypedDict | MCP server connection config |
-| `DataConfig` | TypedDict | RAG config (reserved) |
 | `ToolWrapper` | Class | Wraps any callable as a `ToolProtocol` |
 | `@tool` | Decorator | Function → `ToolWrapper` with auto-generated schema |
 
@@ -195,7 +413,7 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 Plain functions passed to `tools=` are auto-wrapped. Use `@tool` when you want an explicit name or description:
 
 ```python
-from agentinc.sdk import tool, ToolCall
+from genfleet.sdk import tool, ToolCall
 
 @tool(name="add", description="Adds two numbers")
 def add(a: float, b: float) -> str:
@@ -205,13 +423,52 @@ result = await add.call(ToolCall(id="1", name="add", arguments={"a": 3, "b": 4})
 # "7.0"
 ```
 
+### Operators and customers
+
+On a hosted agent the platform tells each turn who is writing, as `AgentInput.metadata["genfleet.caller"]` (`CALLER_METADATA_KEY`, from `genfleet.sdk.caller`): `role` (`"operator"` or `"customer"`), `id` (the verified sender), `channel`, `private` (a one-to-one chat), `legacy_tools`, and `name`. `name` is the sender's own display name and is untrusted; don't base decisions on it. Use `caller_of(input.metadata)` to read it.
+
+Every tool has an **audience**: who it is offered to. Mark it on the tool:
+
+```python
+@tool(audiences=["operator", "customer"])
+def order_status(order_id: str) -> str: ...
+
+@tool(audiences=["customer"])               # customers only: staff shouldn't trigger it
+def start_return(order_id: str) -> str: ...
+```
+
+An unmarked tool is `["operator"]`. An operator in a private chat gets the tools whose audience includes `operator`. A customer, or an operator writing in a group, gets those whose audience includes `customer`. So a `["customer"]` tool is hidden from staff in a private chat. A call to a tool that wasn't offered is refused as "not found". For MCP servers, the config's `customer_safe_tools: [names]` (the 0.17 form) marks tools for both audiences; there is no customer-only form in the config, but the platform's setting can make one by name.
+
+**Your marking is the default, and the platform's setting wins.** The tenant owner sets each tool's audience in the dashboard. The platform sends it as `metadata["genfleet.tool_audiences"]` (`TOOL_AUDIENCES_METADATA_KEY`), keyed by tool name, or by manifest slug for tools from `load_tools()`. Each tool it returns carries its slug, on a fresh proxy that behaves like the original. That setting replaces your marking, and can widen it as well as narrow it. An entry the SDK can't read is offered to no one. `Agent` applies this to every tool it holds: its own functions, `load_tools()` tools, remote tools passed in as `tools=`, and MCP tools. Tools the engine keeps itself are filtered by the engine. Read the effective rule with `may_offer(caller, audiences)`.
+
+`customer_safe=True` (0.17) still works and means both audiences, but it is deprecated and removed in 1.0, as are `may_use` and `Caller.full_toolset`.
+
+**Sensitive tools.** Mark a tool whose call needs a workspace owner's approval:
+
+```python
+@tool(audiences=["operator", "customer"], sensitive=True)
+def issue_refund(order_id: str, amount: float) -> str: ...
+```
+
+When the model calls it, it doesn't run. The model is told the action awaits approval, and the platform shows the owner or admin the exact call to approve. Once approved, a follow-up turn runs that one call, exactly once, and the model tells the user the outcome. The engine signs the approved call with a key only this sandbox knows (`GENFLEET_APPROVAL_KEY`), so another agent or a direct caller can't forge one. On a call from another agent, a sensitive tool is refused. The owner can mark or unmark any tool in the dashboard, and that setting wins.
+
+An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the caller key gets every tool. In a platform sandbox (`GENFLEET_HOSTED` set; on older engines, `GENFLEET_A2A_TOKEN`) a missing caller gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
+
+Declare who the agent serves in `genfleet.toml`:
+
+```toml
+[agent]
+name = "support"
+audiences = ["operator", "customer"]   # default when absent: operators only
+```
+
 ## AgentProtocol — direct implementation
 
 For framework integrations (LangChain, CrewAI) that manage their own LLM calls, implement `AgentProtocol` directly:
 
 ```python
-from agentinc.sdk import AgentInput, AgentOutput, AgentProtocol
-from agentinc.sdk.serve import serve
+from genfleet.sdk import AgentInput, AgentOutput, AgentProtocol
+from genfleet.sdk.serve import serve
 
 class MyAgent:
     async def run(self, input: AgentInput):

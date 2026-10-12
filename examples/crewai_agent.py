@@ -5,7 +5,7 @@ For framework integrations where you manage the LLM call yourself,
 implement AgentProtocol directly (a class with async run()).
 
 Requires:
-    pip install crewai 'agentinc-sdk[serve]'
+    pip install crewai 'genfleet-sdk[serve]'
 
 Run:
     export OPENAI_API_KEY=sk-...
@@ -13,16 +13,16 @@ Run:
 
 Test:
     curl -s -X POST http://localhost:8004 \
-      -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"Research the benefits of TypeScript over JavaScript"}]}}}' | python -m json.tool
+      -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"Research the benefits of TypeScript over JavaScript"}]}}}' | python -m json.tool
 """
 
 import asyncio
 
 from crewai import Agent as CrewAgent, Crew, Task
 
-from agentinc.sdk import AgentInput, AgentOutput
-from agentinc.sdk.serve import serve
+from genfleet.sdk import AgentInput, AgentOutput
+from genfleet.sdk.serve import serve
 
 
 researcher = CrewAgent(

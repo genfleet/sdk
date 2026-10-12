@@ -7,14 +7,14 @@ Run:
 
 Test (streaming):
     curl -N -X POST http://localhost:8001 \
-      -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tasks/sendSubscribe","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"tell me a story"}]}}}'
+      -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"SendStreamingMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"tell me a story"}]}}}'
 """
 
 import asyncio
 
-from agentinc.sdk import AgentInput, AgentOutput
-from agentinc.sdk.serve import serve
+from genfleet.sdk import AgentInput, AgentOutput
+from genfleet.sdk.serve import serve
 
 
 class StorytellerAgent:

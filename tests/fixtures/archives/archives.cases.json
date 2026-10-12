@@ -1,0 +1,168 @@
+{
+  "contract": "agent/tool archive members, v1 (engine#175)",
+  "keep_in_sync": "Source of truth: genfleet/sdk tests/fixtures/archives/ (this file, the .tar files and build_fixtures.py). Copied byte-identical into the engine (delivery tests) and the backend (submit-time archive parse).",
+  "notes": [
+    "Every reader refuses an archive whose `valid` is false, for the stated `reason`: link | name | duplicate | type.",
+    "Member types are an allow-list: regular file (REGTYPE/AREGTYPE) or directory.",
+    "Names: refuse a leading `/`, any `..` segment and a backslash; fold only empty and `.` segments; a name that is only the root (`./`) is skipped if it is a directory and refused otherwise.",
+    "Duplicates are counted after folding, directories included."
+  ],
+  "cases": [
+    {
+      "file": "plain.tar",
+      "valid": true,
+      "reason": null,
+      "note": "an ordinary agent archive"
+    },
+    {
+      "file": "dot-root.tar",
+      "valid": true,
+      "reason": null,
+      "note": "`tar -C dir .` style: the `./` root entry is skipped, `./pkg/x` is `pkg/x`"
+    },
+    {
+      "file": "gnu-longname.tar",
+      "valid": true,
+      "reason": null,
+      "note": "a GNU long name on a regular file (the CLI writes GNU format)"
+    },
+    {
+      "file": "pax-longname.tar",
+      "valid": true,
+      "reason": null,
+      "note": "a long name from a pax `path` header (tarfile's default format)"
+    },
+    {
+      "file": "dot-root-file.tar",
+      "valid": false,
+      "reason": "name",
+      "note": "only a directory may be the root entry; a file named `./` is refused"
+    },
+    {
+      "file": "symlink-inside.tar",
+      "valid": false,
+      "reason": "link",
+      "note": "the engine#175 alias: review reads A, extraction leaves B"
+    },
+    {
+      "file": "symlink-outside.tar",
+      "valid": false,
+      "reason": "link",
+      "note": "a link out of the tree"
+    },
+    {
+      "file": "hardlink.tar",
+      "valid": false,
+      "reason": "link",
+      "note": "an in-tree hardlink"
+    },
+    {
+      "file": "gnu-longlink-symlink.tar",
+      "valid": false,
+      "reason": "link",
+      "note": "a GNU long link on a symlink is still a link"
+    },
+    {
+      "file": "absolute-name.tar",
+      "valid": false,
+      "reason": "name",
+      "note": "a leading slash is refused, never re-rooted"
+    },
+    {
+      "file": "dotdot-inside.tar",
+      "valid": false,
+      "reason": "name",
+      "note": "`..` is refused even when it stays inside"
+    },
+    {
+      "file": "dotdot-escape.tar",
+      "valid": false,
+      "reason": "name",
+      "note": "`..` out of the tree"
+    },
+    {
+      "file": "backslash.tar",
+      "valid": false,
+      "reason": "name",
+      "note": "a backslash is a separator to some readers"
+    },
+    {
+      "file": "pax-dotdot.tar",
+      "valid": false,
+      "reason": "name",
+      "note": "the real name in a pax `path` header is checked like any name"
+    },
+    {
+      "file": "pax-absolute.tar",
+      "valid": false,
+      "reason": "name",
+      "note": "a pax `path` header with a leading slash"
+    },
+    {
+      "file": "duplicate-file.tar",
+      "valid": false,
+      "reason": "duplicate",
+      "note": "last-one-wins without any link"
+    },
+    {
+      "file": "duplicate-dot-spelling.tar",
+      "valid": false,
+      "reason": "duplicate",
+      "note": "`./pkg/x` and `pkg/x` are one name"
+    },
+    {
+      "file": "duplicate-empty-segment.tar",
+      "valid": false,
+      "reason": "duplicate",
+      "note": "`pkg//x` and `pkg/x` are one name"
+    },
+    {
+      "file": "duplicate-dir.tar",
+      "valid": false,
+      "reason": "duplicate",
+      "note": "a repeated directory entry is a duplicate too"
+    },
+    {
+      "file": "dir-file-same-name.tar",
+      "valid": false,
+      "reason": "duplicate",
+      "note": "a directory and a file with one name"
+    },
+    {
+      "file": "pax-duplicate.tar",
+      "valid": false,
+      "reason": "duplicate",
+      "note": "a pax `path` header naming an earlier member"
+    },
+    {
+      "file": "fifo.tar",
+      "valid": false,
+      "reason": "type",
+      "note": "FIFO"
+    },
+    {
+      "file": "chrdev.tar",
+      "valid": false,
+      "reason": "type",
+      "note": "character device"
+    },
+    {
+      "file": "blkdev.tar",
+      "valid": false,
+      "reason": "type",
+      "note": "block device"
+    },
+    {
+      "file": "contiguous.tar",
+      "valid": false,
+      "reason": "type",
+      "note": "contiguous file: `TarInfo.isreg()` accepts it, the allow-list must not"
+    },
+    {
+      "file": "sparse.tar",
+      "valid": false,
+      "reason": "type",
+      "note": "GNU sparse"
+    }
+  ]
+}

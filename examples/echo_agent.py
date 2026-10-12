@@ -7,14 +7,14 @@ Run:
 
 Test:
     curl -s -X POST http://localhost:8000 \
-      -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"hello world"}]}}}' | python -m json.tool
+      -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello world"}]}}}' | python -m json.tool
 
-    curl -s http://localhost:8000/.well-known/agent.json | python -m json.tool
+    curl -s http://localhost:8000/.well-known/agent-card.json | python -m json.tool
 """
 
-from agentinc.sdk import AgentInput, AgentOutput, AgentProtocol
-from agentinc.sdk.serve import serve
+from genfleet.sdk import AgentInput, AgentOutput, AgentProtocol
+from genfleet.sdk.serve import serve
 
 
 class EchoAgent:

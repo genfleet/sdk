@@ -2,7 +2,7 @@
 Agent with audit logging — demonstrates all three audit backends.
 
 Requires:
-    pip install 'agentinc-sdk[openai,serve]'
+    pip install 'genfleet-sdk[openai,serve]'
 
 Run:
     export OPENAI_API_KEY=sk-...
@@ -10,8 +10,8 @@ Run:
 
 Test:
     curl -s -X POST http://localhost:8000 \
-      -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"What is the weather in Tokyo?"}]}}}' | python -m json.tool
+      -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"What is the weather in Tokyo?"}]}}}' | python -m json.tool
 
 Check audit output:
     cat audit.jsonl | python -m json.tool --json-lines
@@ -20,8 +20,8 @@ Check audit output:
 import logging
 import os
 
-from agentinc.sdk import Agent, AuditEvent
-from agentinc.sdk.serve import serve
+from genfleet.sdk import Agent, AuditEvent
+from genfleet.sdk.serve import serve
 from dotenv import load_dotenv
 
 load_dotenv()

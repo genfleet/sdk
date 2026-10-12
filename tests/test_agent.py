@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agentinc.sdk import Agent, AgentInput, AgentOutput, AgentProtocol, ToolCall, tool
-from agentinc.sdk.agent import _wrap_tool
-from agentinc.sdk.schemas import ToolSchema
+from genfleet.sdk import TOOL_EVENT_KEY, Agent, AgentInput, AgentOutput, AgentProtocol, ToolCall, tool
+from genfleet.sdk.agent import _wrap_tool
+from genfleet.sdk.schemas import ToolSchema
 
 
 # ---------------------------------------------------------------------------
@@ -63,9 +63,31 @@ def test_agent_context_optional():
     assert agent_with_ctx._context == "extra context"
 
 
-def test_agent_data_ignored_no_error():
-    agent = _make_agent(data={"type": "lightrag", "storage_dir": "/tmp"})
-    assert agent is not None
+def test_agent_data_parameter_is_gone():
+    # Reserved for RAG since 0.1 and never implemented; ADR-0018 folds RAG
+    # into memory. A silent no-op parameter is worse than a TypeError.
+    with pytest.raises(TypeError):
+        _make_agent(data={"type": "lightrag", "storage_dir": "/tmp"})
+
+
+def test_agent_without_memory_stays_stateless_outside_a_sandbox(monkeypatch):
+    monkeypatch.delenv("GENFLEET_MEMORY_URL", raising=False)
+    assert _make_agent().memory is None
+
+
+def test_agent_without_memory_gets_the_platform_store_inside_a_sandbox(monkeypatch):
+    from genfleet.sdk.memory import PlatformMemory
+
+    monkeypatch.setenv("GENFLEET_MEMORY_URL", "http://127.0.0.1:1/memory")
+    monkeypatch.setenv("GENFLEET_MEMORY_TOKEN", "spawn-token")
+    assert isinstance(_make_agent().memory, PlatformMemory)
+    assert isinstance(_make_agent(memory="platform").memory, PlatformMemory)
+
+
+def test_platform_memory_outside_a_sandbox_names_the_missing_variable(monkeypatch):
+    monkeypatch.delenv("GENFLEET_MEMORY_URL", raising=False)
+    with pytest.raises(RuntimeError, match="GENFLEET_MEMORY_URL"):
+        _make_agent(memory="platform")
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +237,144 @@ async def test_agent_tool_not_found_returns_error_string():
     assert call_count == 2
 
 
+def _scripted_provider(*rounds: list[AgentOutput]):
+    """A fake model: each completion yields the next round's chunks."""
+    remaining = list(rounds)
+
+    async def _complete(messages, tools, stream=True) -> AsyncIterator[AgentOutput]:
+        for chunk in remaining.pop(0):
+            yield chunk
+
+    provider = MagicMock()
+    provider.complete = _complete
+    return provider
+
+
+def _tool_events(outputs: list[AgentOutput]) -> list[dict]:
+    return [o.metadata[TOOL_EVENT_KEY] for o in outputs if TOOL_EVENT_KEY in o.metadata]
+
+
+@pytest.mark.asyncio
+async def test_agent_reports_each_tool_call_and_its_result():
+    def multiply(a: int, b: int) -> str:
+        return str(a * b)
+
+    agent = _make_agent(tools=[multiply])
+    agent._provider = _scripted_provider(
+        [AgentOutput(tool_calls=[ToolCall(id="tc1", name="multiply", arguments={"a": 3, "b": 4})])],
+        [AgentOutput(content="It is 12"), AgentOutput(content="", done=True)],
+    )
+
+    outputs = [o async for o in agent.run(AgentInput(message="3*4?"))]
+
+    assert _tool_events(outputs) == [
+        {"type": "tool_call", "id": "tc1", "name": "multiply", "arguments": {"a": 3, "b": 4}},
+        {"type": "tool_result", "id": "tc1", "name": "multiply", "ok": True, "output": "12"},
+    ]
+    events = [o for o in outputs if TOOL_EVENT_KEY in o.metadata]
+    assert all(o.content == "" and not o.done and not o.tool_calls for o in events)
+    # A reader that only concatenates content sees the same text as before.
+    assert "".join(o.content or "" for o in outputs) == "It is 12"
+    assert outputs[-1].done is True
+
+
+def add_one(x: int) -> str:
+    return str(x + 1)
+
+
+def negate(x: int) -> str:
+    return str(-x)
+
+
+@pytest.mark.asyncio
+async def test_agent_reports_every_call_of_a_round_before_the_results():
+    agent = _make_agent(tools=[add_one, negate])
+    agent._provider = _scripted_provider(
+        [AgentOutput(tool_calls=[
+            ToolCall(id="a", name="add_one", arguments={"x": 1}),
+            ToolCall(id="b", name="negate", arguments={"x": 1}),
+        ])],
+        [AgentOutput(content="", done=True)],
+    )
+
+    events = _tool_events([o async for o in agent.run(AgentInput(message="go"))])
+
+    assert [(e["type"], e["id"]) for e in events] == [
+        ("tool_call", "a"), ("tool_call", "b"), ("tool_result", "a"), ("tool_result", "b"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_tool_is_reported_as_a_failed_result():
+    agent = _make_agent()
+    agent._provider = _scripted_provider(
+        [AgentOutput(tool_calls=[ToolCall(id="tc1", name="ghost", arguments={})])],
+        [AgentOutput(content="OK", done=True)],
+    )
+
+    result = _tool_events([o async for o in agent.run(AgentInput(message="x"))])[-1]
+
+    assert result["type"] == "tool_result"
+    assert result["ok"] is False
+    assert "not found" in result["output"]
+
+
+def _mcp_agent(config: dict) -> Agent:
+    """An agent whose one MCP tool, ``query``, is already discovered on ``config``."""
+    agent = _make_agent()
+    agent._mcp_tools = {"query": {"description": "", "parameters": {}, "config": config}}
+    agent._mcp_ready = True
+    agent._provider = _scripted_provider(
+        [AgentOutput(tool_calls=[ToolCall(id="m1", name="query", arguments={})])],
+        [AgentOutput(content="Sorry", done=True)],
+    )
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_an_mcp_result_flagged_as_an_error_is_reported_as_failed():
+    pytest.importorskip("mcp")
+    from mcp.types import CallToolResult, TextContent
+
+    session = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=False)
+    session.initialize = AsyncMock()
+    session.call_tool = AsyncMock(return_value=CallToolResult(
+        content=[TextContent(type="text", text="connection to postgres://u:pw@db failed")],
+        isError=True,
+    ))
+    transport = MagicMock()
+    transport.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+    transport.__aexit__ = AsyncMock(return_value=False)
+    agent = _mcp_agent({"type": "sse", "url": "http://mcp.test/sse"})
+
+    with patch("mcp.client.sse.sse_client", return_value=transport), \
+            patch("mcp.ClientSession", return_value=session):
+        result = _tool_events([o async for o in agent.run(AgentInput(message="x"))])[-1]
+
+    assert result["type"] == "tool_result"
+    assert result["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_an_unsupported_mcp_transport_is_reported_as_failed():
+    agent = _mcp_agent({"type": "carrier-pigeon"})
+
+    result = _tool_events([o async for o in agent.run(AgentInput(message="x"))])[-1]
+
+    assert result["ok"] is False
+    assert result["output"] == "Error: unsupported MCP transport"
+
+
+@pytest.mark.asyncio
+async def test_a_turn_without_tools_yields_no_tool_events():
+    agent = _make_agent()
+    agent._provider = _scripted_provider([AgentOutput(content="hi", done=True)])
+
+    assert _tool_events([o async for o in agent.run(AgentInput(message="x"))]) == []
+
+
 # ---------------------------------------------------------------------------
 # run() — system prompt construction
 # ---------------------------------------------------------------------------
@@ -262,7 +422,7 @@ async def test_agent_system_prompt_includes_context():
 
 @pytest.mark.asyncio
 async def test_agent_loads_and_saves_memory():
-    from agentinc.sdk.schemas import Message
+    from genfleet.sdk.schemas import Message
 
     stored: dict[str, list] = {}
 
@@ -287,3 +447,141 @@ async def test_agent_loads_and_saves_memory():
     assert "sess-1" in stored
     messages = stored["sess-1"]
     assert any(m.role == "user" for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_agent_appends_one_turn_when_the_backend_can():
+    """An appendable backend gets only this turn — never the thread it already holds."""
+    from genfleet.sdk.schemas import Message
+
+    class FakeAppendable:
+        def __init__(self):
+            self.loaded = [Message(role="user", content="earlier"), Message(role="assistant", content="ok")]
+            self.appended = []
+            self.saved = []
+
+        async def load(self, session_id):
+            return list(self.loaded)
+
+        async def save(self, session_id, history):
+            self.saved.append(history)
+
+        async def clear(self, session_id):
+            pass
+
+        async def append(self, session_id, messages, *, subject=None, metadata=None, turn_id=None):
+            self.appended.append((session_id, messages, subject, metadata, turn_id))
+
+    mem = FakeAppendable()
+    agent = _make_agent()
+    agent._memory = mem
+    agent._provider = _mock_provider([AgentOutput(content="Hi!", done=True)])
+
+    async for _ in agent.run(AgentInput(
+        message="hello",
+        metadata={"session_id": "whatsapp:1", "subject": "cust-1", "channel": "whatsapp", "request_id": "r9"},
+    )):
+        pass
+
+    assert mem.saved == []
+    (session_id, messages, subject, metadata, turn_id), = mem.appended
+    assert session_id == "whatsapp:1"
+    assert [m.role for m in messages] == ["user", "assistant"]
+    assert messages[0].content == "hello"
+    assert subject == "cust-1"
+    assert metadata == {"channel": "whatsapp"}  # request_id is per turn, not per session
+    assert turn_id == "r9"  # the caller's id, so a retry of it is recognisable
+
+
+
+@pytest.mark.asyncio
+async def test_the_turn_is_persisted_even_when_the_caller_stops_at_done():
+    """``serve`` breaks out of the ``async for`` on ``done``, which closes the
+    generator. Anything written after that yield is never written at all."""
+
+    class FakeAppendable:
+        def __init__(self):
+            self.appended = []
+
+        async def load(self, session_id):
+            return []
+
+        async def save(self, session_id, history):  # pragma: no cover — appendable
+            raise AssertionError("save must not be used on an appendable backend")
+
+        async def clear(self, session_id):
+            pass
+
+        async def append(self, session_id, messages, *, subject=None, metadata=None, turn_id=None):
+            self.appended.append(messages)
+
+    mem = FakeAppendable()
+    agent = _make_agent()
+    agent._memory = mem
+    agent._provider = _mock_provider([AgentOutput(content="Hi!", done=True)])
+
+    async for output in agent.run(AgentInput(message="hello", metadata={"session_id": "s"})):
+        if output.done:
+            break
+
+    assert [m.role for m in mem.appended[0]] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_nobody_named_falls_back_to_the_invocation_id():
+    from genfleet.sdk.agent import _turn_id
+
+    assert _turn_id({"message_id": "m1"}, "inv") == "m1"
+    assert _turn_id({"request_id": " "}, "inv") == "inv"
+
+
+def test_a_contact_is_not_copied_into_the_session_metadata():
+    # PII: the party is already named by the opaque ``subject``.
+    from genfleet.sdk.agent import _session_metadata
+
+    assert _session_metadata({"channel": "whatsapp", "contact": "+201234"}) == {"channel": "whatsapp"}
+
+
+def test_a_redis_config_without_a_connection_names_the_missing_key():
+    from genfleet.sdk.memory import memory_for
+
+    with pytest.raises(ValueError, match="connection"):
+        memory_for({"type": "redis"})
+
+
+def test_a_token_without_a_url_runs_stateless_and_says_so(monkeypatch, caplog):
+    monkeypatch.delenv("GENFLEET_MEMORY_URL", raising=False)
+    monkeypatch.setenv("GENFLEET_MEMORY_TOKEN", "spawn-token")
+    with caplog.at_level("WARNING", logger="genfleet.sdk.memory"):
+        assert _make_agent().memory is None
+    assert "GENFLEET_MEMORY_URL" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_memory_off_turn_neither_loads_nor_writes_the_session():
+    """ADR-0027 §2c: the platform turns memory off for a public A2A turn."""
+    from genfleet.sdk.schemas import Message
+
+    stored: dict[str, list] = {"sess-1": [Message(role="user", content="a secret from before")]}
+    loads: list[str] = []
+
+    class FakeMemory:
+        async def load(self, session_id):
+            loads.append(session_id)
+            return stored.get(session_id, [])
+
+        async def save(self, session_id, history):
+            stored[session_id] = history
+
+        async def clear(self, session_id):
+            stored.pop(session_id, None)
+
+    agent = _make_agent()
+    agent._memory = FakeMemory()
+    agent._provider = _mock_provider([AgentOutput(content="Hi!", done=True)])
+    turn = AgentInput(message="hello", metadata={"session_id": "sess-1", "genfleet.memory": "off"})
+    async for _ in agent.run(turn):
+        pass
+
+    assert loads == []
+    assert [m.content for m in stored["sess-1"]] == ["a secret from before"]

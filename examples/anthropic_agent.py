@@ -2,7 +2,7 @@
 Agent using Anthropic Claude via Agent(), served over A2A.
 
 Requires:
-    pip install 'agentinc-sdk[anthropic,serve]'
+    pip install 'genfleet-sdk[anthropic,serve]'
 
 Run:
     export ANTHROPIC_API_KEY=sk-ant-...
@@ -10,19 +10,19 @@ Run:
 
 Test:
     curl -s -X POST http://localhost:8002 \
-      -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tasks/send","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"Explain quantum computing in 2 sentences"}]}}}' | python -m json.tool
+      -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"Explain quantum computing in 2 sentences"}]}}}' | python -m json.tool
 
     # Streaming
     curl -N -X POST http://localhost:8002 \
-      -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tasks/sendSubscribe","params":{"id":"t1","message":{"role":"user","parts":[{"type":"text","text":"Write a limerick about Python"}]}}}'
+      -H "Content-Type: application/json" -H 'A2A-Version: 1.0' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"SendStreamingMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"Write a limerick about Python"}]}}}'
 """
 
 import os
 
-from agentinc.sdk import Agent
-from agentinc.sdk.serve import serve
+from genfleet.sdk import Agent
+from genfleet.sdk.serve import serve
 
 
 def lookup(topic: str) -> str:

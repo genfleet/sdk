@@ -1,53 +1,69 @@
 [project]
-name = "agentinc-sdk"
-version = "0.4.2"
-description = "Developer SDK for the Agentinc agent marketplace platform"
+name = "genfleet-sdk"
+version = "0.19.0"
+description = "Developer SDK for the Genfleet agent marketplace platform"
 license = "Apache-2.0"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["pydantic>=2.7"]
 
 [project.optional-dependencies]
-openai     = ["openai>=1.0"]
+openai     = ["openai>=1.0,<3"]
 anthropic  = ["anthropic>=0.25"]
 gemini     = ["google-genai>=1.0"]
 memory     = ["redis>=5.0"]
-mcp        = ["mcp>=1.0"]
+mcp        = ["mcp>=1.28.1"]
 serve      = ["fastapi>=0.115", "uvicorn[standard]>=0.34", "sse-starlette>=2.0"]
 dev        = ["pytest>=9.0", "pytest-asyncio>=1.3", "pytest-mock>=3.0", "build>=1.2"]
 all        = [
-    "openai>=1.0",
+    "openai>=1.0,<3",
     "anthropic>=0.25",
     "google-genai>=1.0",
     "redis>=5.0",
-    "mcp>=1.0",
+    "mcp>=1.28.1",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "sse-starlette>=2.0",
 ]
 
+[tool.uv]
+# `cryptography` reaches us transitively (mcp -> pyjwt[crypto]). The floor is
+# 50.0.0, the first release that fixes every published advisory (GHSA-g6cj-pr64-35w5,
+# GHSA-jwv3-5hgf-82ww, GHSA-m2h6-j472-rp4c). 49+ ship no macOS x86_64 wheel, so an
+# Intel Mac builds from source and needs a recent rustc.
+constraint-dependencies = ["cryptography>=50.0.0"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[project.urls]
+# Shown on the PyPI page. Without these the listing has no route back to the
+# source, the issue tracker or the docs, which for an open-source SDK is most
+# of what a reader arrives wanting.
+Homepage = "https://github.com/genfleet/sdk"
+Repository = "https://github.com/genfleet/sdk"
+Issues = "https://github.com/genfleet/sdk/issues"
+Changelog = "https://github.com/genfleet/sdk/blob/dev/CHANGELOG.md"
+
 [tool.hatch.build.targets.wheel]
-# DO NOT change this to `packages`, and DO NOT add an `agentinc/__init__.py`.
+# DO NOT change this to `packages`, and DO NOT add an `genfleet/__init__.py`.
 #
-# `agentinc` is a PEP 420 implicit namespace package shared with every other
-# agentinc-* distribution (core, engine, loader, runner, adapter, protocols).
+# `genfleet` is a PEP 420 implicit namespace package shared with every other
+# genfleet-* distribution (core, engine, loader, runner, adapter, protocols).
 # Two ways to break consumers, both of which build without a warning:
 #
-#   1. Shipping an `agentinc/__init__.py` makes `agentinc` a *regular* package.
+#   1. Shipping an `genfleet/__init__.py` makes `genfleet` a *regular* package.
 #      Its `__path__` collapses to this one directory and every sibling
-#      distribution becomes unimportable (`ModuleNotFoundError: agentinc.core`).
-#   2. `packages = ["agentinc/sdk"]` looks equivalent but hatchling strips the
+#      distribution becomes unimportable (`ModuleNotFoundError: genfleet.core`).
+#   2. `packages = ["genfleet/sdk"]` looks equivalent but hatchling strips the
 #      parent, producing a wheel with a top-level `sdk/` package — importable
-#      as `import sdk`, never as `agentinc.sdk`.
+#      as `import sdk`, never as `genfleet.sdk`.
 #
-# `only-include` keeps the `agentinc/` prefix without synthesizing an __init__.
+# `only-include` keeps the `genfleet/` prefix without synthesizing an __init__.
 # tests/test_wheel_layout.py builds the wheel and asserts both properties;
 # tests/test_packaging.py guards the source tree and the installed namespace.
-only-include = ["agentinc/sdk"]
+only-include = ["genfleet/sdk"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

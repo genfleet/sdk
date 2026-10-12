@@ -6,7 +6,7 @@ This example shows the current recommended approach: implement AgentProtocol
 directly and inject retrieved context into the system prompt per-query.
 
 Requires:
-    pip install 'agentinc-sdk[openai,serve]' lightrag-hku[openai]
+    pip install 'genfleet-sdk[openai,serve]' lightrag-hku[openai]
 
 Index documents first:
     python -c "
@@ -21,8 +21,8 @@ Run:
 
 Test:
     curl -s -X POST http://localhost:8000 \
-      -H 'Content-Type: application/json' \
-      -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tasks/send\",\"params\":{\"id\":\"t1\",\"message\":{\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"text\":\"What are your business hours?\"}]}}}' \
+      -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
+      -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"SendMessage\",\"params\":{\"message\":{\"messageId\":\"m1\",\"role\":\"ROLE_USER\",\"parts\":[{\"text\":\"What are your business hours?\"}]}}}' \
       | python -m json.tool
 """
 
@@ -34,8 +34,8 @@ from lightrag import LightRAG, QueryParam
 from lightrag.llm.openai import openai_complete_if_cache, openai_embed
 from lightrag.utils import EmbeddingFunc
 
-from agentinc.sdk import AgentInput, AgentOutput
-from agentinc.sdk.serve import serve
+from genfleet.sdk import AgentInput, AgentOutput
+from genfleet.sdk.serve import serve
 
 
 RAG_STORAGE = str(Path(__file__).parent / "rag_storage")
