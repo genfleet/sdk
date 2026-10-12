@@ -4,6 +4,7 @@ import logging
 from typing import AsyncIterator
 
 from ..schemas import AgentOutput, ModelConfig, TokenUsage, ToolCall, ToolSchema
+from .base import split_data_url
 
 log = logging.getLogger("genfleet.sdk.providers.anthropic")
 
@@ -67,10 +68,24 @@ def _convert_messages(messages: list[dict]) -> tuple[str, list[dict]]:
         if m["role"] == "assistant":
             result.append({"role": "assistant", "content": m.get("content", "")})
         else:
-            result.append({"role": "user", "content": m.get("content", "")})
+            result.append({"role": "user", "content": _user_content(m.get("content", ""))})
         i += 1
 
     return system, result
+
+
+def _user_content(content: str | list[dict]) -> str | list[dict]:
+    """A user message's content; OpenAI ``text`` / ``image_url`` (data URL) blocks become Anthropic's."""
+    if isinstance(content, str):
+        return content
+    blocks: list[dict] = []
+    for block in content:
+        if block.get("type") == "image_url":
+            media_type, data = split_data_url(block["image_url"]["url"])
+            blocks.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
+        else:
+            blocks.append({"type": "text", "text": block.get("text", "")})
+    return blocks
 
 
 class AnthropicProvider:

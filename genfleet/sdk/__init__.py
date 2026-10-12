@@ -24,6 +24,16 @@ from .confirmations import (
     canonical_json,
     sign_approved_call,
 )
+from .files import (
+    FileAccessError,
+    FileExpired,
+    FileNotFound,
+    FileResolver,
+    FileTooLarge,
+    InMemoryFileResolver,
+    UnsupportedReference,
+    read_part,
+)
 from .manifest import (
     AgentManifest,
     ConfigField,
@@ -35,6 +45,18 @@ from .manifest import (
     load_tool_manifest,
 )
 from .memory import Memory
+from .parts import (
+    MAX_INLINE_BYTES,
+    AudioPart,
+    FilePart,
+    ImagePart,
+    MediaPart,
+    Part,
+    TextPart,
+    UnsupportedInput,
+    VideoPart,
+    part_for,
+)
 from .platform_state import PlatformStateError, PlatformStateStore
 from .protocol import AgentFactory, AgentProtocol, ToolProtocol
 from .schemas import (
@@ -88,6 +110,25 @@ __all__ = [
     "ToolSchema",
     "TokenUsage",
     "TOOL_EVENT_KEY",
+    # Rich input and output: typed parts, file references
+    "Part",
+    "TextPart",
+    "ImagePart",
+    "AudioPart",
+    "VideoPart",
+    "FilePart",
+    "MediaPart",
+    "MAX_INLINE_BYTES",
+    "part_for",
+    "UnsupportedInput",
+    "FileResolver",
+    "InMemoryFileResolver",
+    "read_part",
+    "FileAccessError",
+    "FileNotFound",
+    "FileExpired",
+    "FileTooLarge",
+    "UnsupportedReference",
     # Caller roles (ADR-0028)
     "CALLER_METADATA_KEY",
     "Caller",
