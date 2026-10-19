@@ -11,6 +11,14 @@ Everything since 0.19.0: on-demand repository skills (#57), workflow state (#58)
 
 **Upgrade note:** a message with a file or data part now reaches the agent instead of having the extra part dropped. An agent that declares no `accepts` refuses such a part with `-32005` (see "Changed" below).
 
+Also on upgrade:
+
+- `serve` no longer refuses a message that has no text part (0.19.0 answered `-32005`). A file-only request now runs, with an empty `message`.
+- `serve` reads request bodies up to `max_body_bytes` (default 8 MiB) and refuses a larger one unread with `-32600`. There was no cap before; raise `max_body_bytes` if callers send more.
+- `Agent` now raises `ValueError` for a local tool whose name starts with `skill:`, and for a tool named `read_skill` when skills are configured. Rename such a tool before upgrading.
+- `Agent(skills=[...])` takes only pinned repository sources (`owner/repo@<40-character commit>`); an unpinned source is a `ValueError`. Use `load_skills` for interactive discovery.
+- Skills from a repository need `git` on the path and network access to the repository host at load time.
+
 - **Changed: the `openai` extra (and `all`) is capped at `openai<3`** (#63). 3.x is untested with the SDK's OpenAI provider; `openai>=1.0,<3`.
 - **Changed: non-text parts are no longer dropped.** Before, a message with text plus a file or data part ran, and the extra part was silently ignored. Now every part reaches the agent, and **an agent that declares no `accepts` refuses a file or data part with `-32005`** (data parts are `application/json` files). An A2A client that attaches a `DataPart` for context must now target an agent that accepts `application/json`. A part `serve` can't recognise is `-32602`.
 - **Rich input and output** (#61). `AgentInput.parts` and `AgentOutput.parts` carry typed parts: `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `FilePart` (`genfleet.sdk.parts`). A file part has `mime_type`, `name`, `size`, and inline `data` (at most `MAX_INLINE_BYTES`, 1 MiB; base64 in JSON) or a reference `uri`. `message` and `content` keep working: `message` defaults to `""` and is the text parts joined when left out, a `message` without a text part is added as the first part, and `content` is the text parts joined when left out. Part names are display names only (directories and control characters stripped).
