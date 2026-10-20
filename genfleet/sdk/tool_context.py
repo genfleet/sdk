@@ -46,6 +46,8 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
+from .caller import _LEGACY_HOSTED_ENV, HOSTED_ENV
+
 #: Every tool namespace starts with this.
 TOOL_ENV_PREFIX = "GENFLEET_TOOL_"
 
@@ -54,10 +56,9 @@ TOOL_ENV_PREFIX = "GENFLEET_TOOL_"
 CONFIG_SUFFIX = "__CONFIG"
 SECRETS_SUFFIX = "__SECRETS"
 
-# Set by the engine when it mounted tools (see `tools_loader.TOOLS_ROOT_ENV`).
-# Its presence means "the platform supplied these values": the local fallback
-# to bare variable names is then off.
-_TOOLS_ROOT_ENV = "GENFLEET_TOOLS_ROOT"
+# Set by the engine when it has mounted the agent's tools. Defined here and
+# imported by `tools_loader` (the other direction would be circular).
+TOOLS_ROOT_ENV = "GENFLEET_TOOLS_ROOT"
 
 _NON_NAME = re.compile(r"[^A-Z0-9_]")
 
@@ -72,7 +73,7 @@ def tool_env_namespace(slug: str) -> str:
     ``@acme/jira-cloud`` → ``GENFLEET_TOOL_ACME__JIRA_CLOUD``: the ``@`` is
     dropped, ``/`` becomes ``__``, anything else that is not a letter, digit or
     ``_`` becomes ``_``, and the result is uppercased. Two slugs can map to
-    one namespace (``@a/b-c`` and ``@a/b.c``); the runtime refuses to serve an
+    one namespace (``@a/b-c`` and ``@a/b.c``, or ``@a--b/c`` and ``@a/b__c``); the runtime refuses to serve an
     agent whose tools collide rather than letting one read the other's values.
     """
     body = slug.removeprefix("@").upper().replace("/", "__")
@@ -107,8 +108,12 @@ class ToolContext:
 
     @property
     def on_platform(self) -> bool:
-        """Whether the runtime mounted this tool (no local fallbacks then)."""
-        return bool(self._env.get(_TOOLS_ROOT_ENV))
+        """Whether the platform spawned this process (no local fallbacks then).
+
+        Read from this context's env, like `caller.is_hosted` but injectable:
+        a hosted agent with no mounted tools still gets no bare-name fallback.
+        """
+        return any(self._env.get(key) for key in (HOSTED_ENV, _LEGACY_HOSTED_ENV, TOOLS_ROOT_ENV))
 
     @property
     def config(self) -> Mapping[str, Any]:
@@ -130,14 +135,15 @@ class ToolContext:
                 value = self._env.get(candidate)
                 if value is not None:
                     return value
-        where = (
-            "Bind it in the tool's settings, and for a marketplace agent grant it "
-            "the tool's secrets."
-            if self.on_platform
-            else f"Set {self._namespace + SECRETS_SUFFIX if self._namespace else name} "
-            f"or {name} in the environment."
-        )
-        raise ToolSecretError(f"{self.slug or 'tool'}: secret {name!r} is not available. {where}")
+        raise ToolSecretError(f"{self.slug or 'tool'}: secret {name!r} is not available. {self._remedy(name)}")
+
+    def _remedy(self, name: str) -> str:
+        """How to supply ``name``, naming each variable once."""
+        if self.on_platform:
+            return "Bind it in the tool's settings, and for a marketplace agent grant it the tool's secrets."
+        variables = [self._namespace + SECRETS_SUFFIX] if self._namespace else []
+        variables += [v for v in dict.fromkeys((name, name.upper())) if v not in variables]
+        return f"Set {' or '.join(variables)} in the environment."
 
     def __repr__(self) -> str:
         # Never the values: a context ends up in tracebacks and logs.

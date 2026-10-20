@@ -67,6 +67,36 @@ def test_on_the_platform_a_bare_variable_is_not_a_fallback():
     assert "grant" in str(exc.value)
 
 
+@pytest.mark.parametrize("marker", ["GENFLEET_HOSTED", "GENFLEET_A2A_TOKEN"])
+def test_a_hosted_agent_without_mounted_tools_gets_no_bare_fallback(marker):
+    # The engine sets GENFLEET_TOOLS_ROOT only when it mounted tools; an inline
+    # tool of a hosted agent must still not read the agent's own variables.
+    env = {marker: "1", "API_TOKEN": "agent-value"}
+    with pytest.raises(ToolSecretError) as exc:
+        ToolContext("@acme/jira", env).secret("api_token")
+    assert "agent-value" not in str(exc.value)
+    assert "grant" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("slug", "expected"),
+    [
+        (None, "Set api_token or API_TOKEN in the environment."),
+        ("@acme/jira", f"Set {NS}__SECRETS or api_token or API_TOKEN in the environment."),
+    ],
+)
+def test_the_local_error_names_each_variable_once(slug, expected):
+    with pytest.raises(ToolSecretError) as exc:
+        ToolContext(slug, {}).secret("api_token")
+    assert str(exc.value).endswith(expected)
+
+
+def test_an_upper_case_secret_name_is_named_once():
+    with pytest.raises(ToolSecretError) as exc:
+        ToolContext(None, {}).secret("TOKEN")
+    assert str(exc.value).endswith("Set TOKEN in the environment.")
+
+
 def test_locally_a_bare_variable_is_the_fallback():
     assert ToolContext("@acme/jira", {"API_TOKEN": "dev"}).secret("api_token") == "dev"
     assert ToolContext("@acme/jira", {"api_token": "dev2"}).secret("api_token") == "dev2"
@@ -109,7 +139,10 @@ def test_an_optional_or_string_annotation_counts():
     def b(x: str, ctx: "ToolContext") -> str:  # noqa: UP037 - the string form is the case under test
         return x
 
-    for fn in (a, b):
+    def c(x: str, ctx: "Optional[ToolContext]" = None) -> str:  # noqa: F821, UP037 - deliberately unresolvable
+        return x
+
+    for fn in (a, b, c):
         assert set(wrap_tool(fn).schema().parameters["properties"]) == {"x"}
 
 
@@ -130,6 +163,35 @@ async def test_the_context_is_injected_with_the_tools_slug(monkeypatch):
     assert out == "t"
     assert isinstance(seen["ctx"], ToolContext)
     assert seen["ctx"].slug == "@acme/jira"
+
+
+class _CallableTool:
+    def __call__(self, title: str, ctx: ToolContext) -> str:
+        return ctx.secret("api_token")
+
+
+class _Holder:
+    def create(self, title: str, ctx: ToolContext) -> str:
+        return ctx.secret("api_token")
+
+
+async def _async_create(title: str, ctx: ToolContext) -> str:
+    return ctx.secret("api_token")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fn",
+    [_CallableTool(), _Holder().create, _async_create],
+    ids=["callable-instance", "bound-method", "async"],
+)
+async def test_every_tool_style_drops_and_injects_the_context(fn, monkeypatch):
+    monkeypatch.setenv("GENFLEET_TOOLS_ROOT", "/tools")
+    monkeypatch.setenv(f"{NS}__SECRETS", json.dumps({"api_token": "t"}))
+    wrapper = wrap_tool(fn, slug="@acme/jira")
+
+    assert set(wrapper.schema().parameters["properties"]) == {"title"}
+    assert await wrapper.call(ToolCall(id="1", name="create", arguments={"title": "x"})) == "t"
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,8 @@
     {"slug": "@acme-co/jira.v2", "namespace": "GENFLEET_TOOL_ACME_CO__JIRA_V2"},
     {"slug": "@a/b_c", "namespace": "GENFLEET_TOOL_A__B_C"},
     {"slug": "@a/b-c", "namespace": "GENFLEET_TOOL_A__B_C"},
-    {"slug": "github_search", "namespace": "GENFLEET_TOOL_GITHUB_SEARCH"}
+    {"slug": "github_search", "namespace": "GENFLEET_TOOL_GITHUB_SEARCH"},
+    {"slug": "@a--b/c", "namespace": "GENFLEET_TOOL_A__B__C"},
+    {"slug": "@a/b__c", "namespace": "GENFLEET_TOOL_A__B__C"}
   ]
 }

@@ -66,14 +66,24 @@ def _type_hints(fn: Callable[..., Any]) -> dict[str, Any]:
 
 
 def _is_context(annotation: Any) -> bool:
-    """Whether a parameter asks for a `ToolContext` (also ``ToolContext | None``)."""
+    """Whether a parameter asks for a `ToolContext`.
+
+    Also ``ToolContext | None`` and ``Optional[ToolContext]``, resolved or as
+    an unresolvable string hint.
+    """
     if annotation is ToolContext:
         return True
     if isinstance(annotation, str):
         # Unresolvable string hints (a forward reference the module cannot
         # resolve) still count when they plainly name the type.
-        parts = annotation.replace(" ", "").split("|")
-        return any(part.rsplit(".", 1)[-1] == "ToolContext" for part in parts)
+        # Under `from __future__ import annotations` a quoted hint arrives
+        # with its quotes, so they are stripped first.
+        text = annotation.replace(" ", "").strip("'\"")
+        for wrapper in ("typing.Optional[", "Optional["):
+            if text.startswith(wrapper) and text.endswith("]"):
+                text = text[len(wrapper) : -1]
+                break
+        return any(part.rsplit(".", 1)[-1] == "ToolContext" for part in text.split("|"))
     if get_origin(annotation) in (typing.Union, types.UnionType):
         return any(arg is ToolContext for arg in get_args(annotation))
     return False
@@ -179,10 +189,7 @@ class ToolWrapper:
         return {**arguments, **{name: context for name in self._context_params}}
 
     async def call(self, tool_call: ToolCall) -> str:
-        result = self._fn(**self._arguments(tool_call.arguments))
-        if asyncio.iscoroutine(result):
-            result = await result
-        return str(result)
+        return await self(**tool_call.arguments)
 
     async def __call__(self, **kwargs: Any) -> str:
         result = self._fn(**self._arguments(kwargs))
