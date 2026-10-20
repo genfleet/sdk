@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 import types
 import typing
 import warnings
@@ -89,18 +90,45 @@ def _is_context(annotation: Any) -> bool:
     return False
 
 
+_CONTEXT_NAME = re.compile(r"\bToolContext\b")
+
+
+def _mentions_context(annotation: Any) -> bool:
+    """Whether a hint names `ToolContext` anywhere, in any spelling."""
+    if annotation is ToolContext:
+        return True
+    if isinstance(annotation, str):
+        return bool(_CONTEXT_NAME.search(annotation))
+    if isinstance(annotation, typing.ForwardRef):
+        return bool(_CONTEXT_NAME.search(annotation.__forward_arg__))
+    return any(_mentions_context(arg) for arg in get_args(annotation))
+
+
 def _context_params(fn: Callable[..., Any]) -> tuple[str, ...]:
-    """The parameters the wrapper fills with a `ToolContext` at call time."""
+    """The parameters the wrapper fills with a `ToolContext` at call time.
+
+    Raises `TypeError` for a hint that names `ToolContext` in a form this does
+    not recognise (``Optional["ToolContext"]`` unresolved,
+    ``"typing.Union[ToolContext, None]"``, ``list[ToolContext]``): left alone,
+    the parameter would be offered to the model and never filled.
+    """
     try:
         sig = inspect.signature(fn)
     except (TypeError, ValueError):
         return ()
     hints = _type_hints(fn)
-    return tuple(
-        name
-        for name, param in sig.parameters.items()
-        if _is_context(hints.get(name, param.annotation))
-    )
+    names = []
+    for name, param in sig.parameters.items():
+        annotation = hints.get(name, param.annotation)
+        if _is_context(annotation):
+            names.append(name)
+        elif _mentions_context(annotation):
+            raise TypeError(
+                f"parameter {name!r} of {getattr(fn, '__name__', fn)!r} names ToolContext as "
+                f"{annotation!r}, which is not a supported form: use ToolContext, "
+                "ToolContext | None or Optional[ToolContext]"
+            )
+    return tuple(names)
 
 
 def _build_schema(fn: Callable[..., Any], name: str, description: str) -> ToolSchema:

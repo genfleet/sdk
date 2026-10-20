@@ -146,6 +146,25 @@ def test_an_optional_or_string_annotation_counts():
         assert set(wrap_tool(fn).schema().parameters["properties"]) == {"x"}
 
 
+def test_an_unsupported_context_annotation_is_refused_at_wrap_time():
+    # Each names ToolContext but in a form the wrapper does not fill: refusing
+    # beats offering the parameter to the model and never filling it.
+    def a(x: str, ctx: Optional["ToolContext"] = None) -> str:  # noqa: F821, UP037 - the quoted inner hint is the case under test
+        return x
+
+    def b(x: str, ctx: "typing.Union[ToolContext, None]" = None) -> str:  # noqa: F821, UP037
+        return x
+
+    def c(x: str, ctxs: list[ToolContext]) -> str:
+        return x
+
+    for fn in (a, b, c):
+        with pytest.raises(TypeError, match="not a supported form"):
+            wrap_tool(fn)
+        with pytest.raises(TypeError, match="not a supported form"):
+            tool(fn)
+
+
 @pytest.mark.asyncio
 async def test_the_context_is_injected_with_the_tools_slug(monkeypatch):
     monkeypatch.setenv("GENFLEET_TOOLS_ROOT", "/tools")
