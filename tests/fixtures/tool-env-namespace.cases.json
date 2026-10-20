@@ -1,5 +1,5 @@
 {
-  "_comment": "The tool env namespace contract (backend#250). The engine keeps a byte-identical copy at tests/sandbox/tool-env-namespace.cases.json; change both in the same pair of PRs.",
+  "_comment": "The tool env namespace contract (backend#250). The SDK keeps a byte-identical copy at tests/fixtures/tool-env-namespace.cases.json and the engine at tests/sandbox/tool-env-namespace.cases.json; change both in the same pair of PRs.",
   "cases": [
     {"slug": "@genfleet/weather", "namespace": "GENFLEET_TOOL_GENFLEET__WEATHER"},
     {"slug": "@acme/jira-cloud", "namespace": "GENFLEET_TOOL_ACME__JIRA_CLOUD"},
