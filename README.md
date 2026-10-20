@@ -450,7 +450,7 @@ def create_issue(title: str, ctx: ToolContext) -> str:
 - **On the platform**, the values are the tenant's installation of the tool. The engine resolves them outside the sandbox and sets them under the tool's own namespace (`tool_env_namespace(slug)`, e.g. `GENFLEET_TOOL_ACME__JIRA__CONFIG` and `…__SECRETS`, each a JSON object). A secret not bound there is not available: there is no fallback to other variables.
 - **Locally** (no `GENFLEET_HOSTED` set), set the same two variables, or a variable with the secret's own name (`api_token` or `API_TOKEN`).
 
-The context is injected into `@tool` functions (sync or async), callable instances and bound methods; annotate it as `ToolContext`, `ToolContext | None` or `Optional[ToolContext]`. A hand-written `ToolProtocol` class is called as-is and gets no context: build one with `ToolContext(slug)` yourself.
+The context is injected into `@tool` functions (sync or async), callable instances and bound methods; annotate it as `ToolContext`, `ToolContext | None` or `Optional[ToolContext]`. Any other hint that names `ToolContext` (such as `list[ToolContext]` or an unresolvable `Optional["ToolContext"]`) raises `TypeError` when the tool is wrapped. A hand-written `ToolProtocol` class is called as-is and gets no context: build one with `ToolContext(slug)` yourself.
 
 A tool from `load_tools()` runs in your agent's process, so its settings and secrets are readable by the agent's code and its other tools. The namespace keeps tools from colliding; it is not an isolation boundary.
 
