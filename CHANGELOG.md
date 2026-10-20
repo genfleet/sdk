@@ -5,6 +5,10 @@ All notable changes to `genfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- **Added: `ToolContext`** (, sdk#27). A tool parameter annotated `ToolContext` is left out of the tool's schema and filled in at call time with the tool's own `config` (read-only mapping) and `secret(name)`. On the platform the values are the tenant's installation, set by the engine under the tool's namespace (`tool_env_namespace(slug)`: `<NS>__CONFIG` and `<NS>__SECRETS`, JSON objects); locally the same variables work, and a secret also falls back to a variable with its own name. Additive: a tool without the parameter is unchanged. `ToolSecretError` names a missing secret, never a value.
+
 ## 0.20.0
 
 Everything since 0.19.0: on-demand repository skills (#57), workflow state (#58), rich input and output (#61), and the `openai<3` cap (#63).
