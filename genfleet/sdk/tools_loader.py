@@ -15,8 +15,10 @@ look:
   SDK names no particular package.
 * **mounted** — tool artifacts the engine already fetched, verified and
   mounted read-only next to the agent. What runs inside a sandbox.
-* **platform** — config and secrets from the tenant's installation. Supplied
-  by the runtime, not from here.
+* **platform** — config and secrets from the tenant's installation. The
+  runtime resolves them outside the sandbox and puts them in the environment
+  under the tool's own namespace; a tool reads them through `ToolContext`
+  (`genfleet.sdk.tool_context`), which is only an environment lookup.
 
 The mounted resolver is here rather than in the engine because it is only a
 filesystem lookup: it reads directories and knows nothing about the registry

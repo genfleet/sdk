@@ -407,6 +407,7 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 | `MCPConfig` | TypedDict | MCP server connection config |
 | `ToolWrapper` | Class | Wraps any callable as a `ToolProtocol` |
 | `@tool` | Decorator | Function → `ToolWrapper` with auto-generated schema |
+| `ToolContext` | Class | A tool's own config and secrets, injected by annotation |
 
 ## @tool decorator
 
@@ -422,6 +423,34 @@ def add(a: float, b: float) -> str:
 result = await add.call(ToolCall(id="1", name="add", arguments={"a": 3, "b": 4}))
 # "7.0"
 ```
+
+### Tool settings and secrets (`ToolContext`)
+
+A tool that needs settings or a credential declares them in its own `genfleet.toml` and asks for a `ToolContext` by annotation. The parameter is left out of the tool's schema, so the model never sees it, and the wrapper fills it in on every call:
+
+```toml
+# the tool's genfleet.toml
+[config.project]
+description = "Jira project key"
+
+[secrets.api_token]
+description = "Jira API token"
+```
+
+```python
+from genfleet.sdk import ToolContext
+
+def create_issue(title: str, ctx: ToolContext) -> str:
+    client = Jira(project=ctx.config["project"], token=ctx.secret("api_token"))
+    ...
+```
+
+`ctx.config` is a read-only mapping. `ctx.secret(name)` returns the value or raises `ToolSecretError` naming the secret, never a value.
+
+- **On the platform**, the values are the tenant's installation of the tool. The engine resolves them outside the sandbox and sets them under the tool's own namespace (`tool_env_namespace(slug)`, e.g. `GENFLEET_TOOL_ACME__JIRA__CONFIG` and `…__SECRETS`, each a JSON object). A secret not bound there is not available: there is no fallback to other variables.
+- **Locally**, set the same two variables, or a variable with the secret's own name (`api_token` or `API_TOKEN`).
+
+A tool from `load_tools()` runs in your agent's process, so its settings and secrets are readable by the agent's code and its other tools. The namespace keeps tools from colliding; it is not an isolation boundary.
 
 ### Operators and customers
 

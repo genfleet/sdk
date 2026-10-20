@@ -10,6 +10,7 @@ from typing import Any, get_args, get_origin
 
 from .caller import EVERYONE, OPERATOR_ONLY, ROLES, Audience, _audiences_of, marked
 from .schemas import ToolCall, ToolSchema
+from .tool_context import ToolContext
 
 _SIMPLE: dict[Any, dict[str, str]] = {
     str: {"type": "string"},
@@ -51,7 +52,10 @@ def _type_hints(fn: Callable[..., Any]) -> dict[str, Any]:
     A builtin or an ``operator.itemgetter`` has none, and an unresolvable one
     is left untyped rather than failing the whole tool.
     """
-    for target in (fn, getattr(type(fn), "__call__", None)):
+    # `inspect.unwrap` first: `load_tools` hands back a `functools.wraps` proxy,
+    # whose annotations are the tool's but whose globals are the loader's, so
+    # a string annotation only resolves against the original function.
+    for target in (inspect.unwrap(fn), fn, getattr(type(fn), "__call__", None)):
         if target is None:
             continue
         try:
@@ -61,15 +65,46 @@ def _type_hints(fn: Callable[..., Any]) -> dict[str, Any]:
     return {}
 
 
+def _is_context(annotation: Any) -> bool:
+    """Whether a parameter asks for a `ToolContext` (also ``ToolContext | None``)."""
+    if annotation is ToolContext:
+        return True
+    if isinstance(annotation, str):
+        # Unresolvable string hints (a forward reference the module cannot
+        # resolve) still count when they plainly name the type.
+        parts = annotation.replace(" ", "").split("|")
+        return any(part.rsplit(".", 1)[-1] == "ToolContext" for part in parts)
+    if get_origin(annotation) in (typing.Union, types.UnionType):
+        return any(arg is ToolContext for arg in get_args(annotation))
+    return False
+
+
+def _context_params(fn: Callable[..., Any]) -> tuple[str, ...]:
+    """The parameters the wrapper fills with a `ToolContext` at call time."""
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return ()
+    hints = _type_hints(fn)
+    return tuple(
+        name
+        for name, param in sig.parameters.items()
+        if _is_context(hints.get(name, param.annotation))
+    )
+
+
 def _build_schema(fn: Callable[..., Any], name: str, description: str) -> ToolSchema:
     sig = inspect.signature(fn)
     hints = _type_hints(fn)
+    # Never offered to the model: the wrapper supplies it, and a model that
+    # could fill it in could name another tool's settings.
+    context = set(_context_params(fn))
 
     properties: dict[str, Any] = {}
     required: list[str] = []
 
     for param_name, param in sig.parameters.items():
-        if param_name == "self":
+        if param_name == "self" or param_name in context:
             continue
         annotation = hints.get(param_name, inspect.Parameter.empty)
         prop = _annotation_to_json_schema(annotation)
@@ -108,6 +143,8 @@ class ToolWrapper:
         #: ADR-0028 §8a: the author's marking. A sensitive call doesn't run
         #: until an owner or admin approves it; the platform's flag wins.
         self.sensitive = sensitive
+        #: Parameters annotated `ToolContext`, filled at call time.
+        self._context_params = _context_params(fn)
 
     @property
     def customer_safe(self) -> bool:
@@ -130,14 +167,25 @@ class ToolWrapper:
     def schema(self) -> ToolSchema:
         return self._schema
 
+    def _arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """``arguments`` with each `ToolContext` parameter filled in.
+
+        Always overwritten: a model-supplied value under that name is the
+        model trying to choose the context, and is not a context anyway.
+        """
+        if not self._context_params:
+            return arguments
+        context = ToolContext(self.slug)
+        return {**arguments, **{name: context for name in self._context_params}}
+
     async def call(self, tool_call: ToolCall) -> str:
-        result = self._fn(**tool_call.arguments)
+        result = self._fn(**self._arguments(tool_call.arguments))
         if asyncio.iscoroutine(result):
             result = await result
         return str(result)
 
     async def __call__(self, **kwargs: Any) -> str:
-        result = self._fn(**kwargs)
+        result = self._fn(**self._arguments(kwargs))
         if asyncio.iscoroutine(result):
             result = await result
         return str(result)
