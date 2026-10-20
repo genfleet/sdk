@@ -1,0 +1,13 @@
+{
+  "_comment": "The tool env namespace contract. The SDK keeps a byte-identical copy at tests/fixtures/tool-env-namespace.cases.json and the engine at tests/sandbox/tool-env-namespace.cases.json; change both in the same pair of PRs.",
+  "cases": [
+    {"slug": "@genfleet/weather", "namespace": "GENFLEET_TOOL_GENFLEET__WEATHER"},
+    {"slug": "@acme/jira-cloud", "namespace": "GENFLEET_TOOL_ACME__JIRA_CLOUD"},
+    {"slug": "@acme-co/jira.v2", "namespace": "GENFLEET_TOOL_ACME_CO__JIRA_V2"},
+    {"slug": "@a/b_c", "namespace": "GENFLEET_TOOL_A__B_C"},
+    {"slug": "@a/b-c", "namespace": "GENFLEET_TOOL_A__B_C"},
+    {"slug": "github_search", "namespace": "GENFLEET_TOOL_GITHUB_SEARCH"},
+    {"slug": "@a--b/c", "namespace": "GENFLEET_TOOL_A__B__C"},
+    {"slug": "@a/b__c", "namespace": "GENFLEET_TOOL_A__B__C"}
+  ]
+}

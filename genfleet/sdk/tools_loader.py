@@ -15,8 +15,10 @@ look:
   SDK names no particular package.
 * **mounted** — tool artifacts the engine already fetched, verified and
   mounted read-only next to the agent. What runs inside a sandbox.
-* **platform** — config and secrets from the tenant's installation. Supplied
-  by the runtime, not from here.
+* **platform** — config and secrets from the tenant's installation. The
+  runtime resolves them outside the sandbox and puts them in the environment
+  under the tool's own namespace; a tool reads them through `ToolContext`
+  (`genfleet.sdk.tool_context`), which is only an environment lookup.
 
 The mounted resolver is here rather than in the engine because it is only a
 filesystem lookup: it reads directories and knows nothing about the registry
@@ -49,6 +51,7 @@ from .manifest import (
     load_tool_manifest,
 )
 from .tool import TOOL_SLUG_ATTR, ToolWrapper, wrap_tool
+from .tool_context import TOOLS_ROOT_ENV
 
 # Set by whatever unpacked the agent — the engine, a sandbox, a test harness.
 # Exists because an agent's own idea of where it lives is computed when the
@@ -130,11 +133,11 @@ def discover_installed_tools() -> dict[str, Any]:
 
 
 
-# Set by the engine when it has mounted the agent's tools alongside its code.
-# Its presence is what selects the mounted resolver over the local one: agent
-# code calls `load_tools()` with no arguments, so the choice cannot be made at
-# the call site, and a tenant cannot know where their artifact was mounted.
-TOOLS_ROOT_ENV = "GENFLEET_TOOLS_ROOT"
+# `TOOLS_ROOT_ENV` (imported from `tool_context`) is set by the engine when it
+# has mounted the agent's tools alongside its code. Its presence is what
+# selects the mounted resolver over the local one: agent code calls
+# `load_tools()` with no arguments, so the choice cannot be made at the call
+# site, and a tenant cannot know where their artifact was mounted.
 
 #: The synthetic package every mounted tool is loaded underneath. A namespace
 #: rather than a real one — it exists only to give the loaded modules a parent.

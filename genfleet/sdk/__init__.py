@@ -75,6 +75,7 @@ from .skills import Skill, SkillOption, discover_skills, load_skills
 from .state import EffectState, RunState, StateError, StateQuotaExceeded, StateTooLarge
 from .state_store import LocalStateStore, StateStore, state_for
 from .tool import ToolWrapper, tool
+from .tool_context import ToolContext, ToolSecretError, tool_env_namespace
 from .tools_loader import (
     LocalToolResolver,
     ToolResolutionError,
@@ -174,6 +175,9 @@ __all__ = [
     "ToolResolutionError",
     "ToolWrapper",
     "tool",
+    "ToolContext",
+    "ToolSecretError",
+    "tool_env_namespace",
     # Channels
     "send_message",
     "send_message_tool",
