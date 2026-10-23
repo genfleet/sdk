@@ -106,6 +106,46 @@ and `api_key` may be left out. `ModelConfig["options"]` is passed to the client
 unchanged; the SDK never reads it. During a turn,
 `genfleet.sdk.turn.current_turn()` returns the turn's `AgentInput.metadata`.
 
+### Testing your agent
+
+`genfleet.sdk.models.ScriptedModelClient` stands in for the model and answers
+each call with the next step of a script: a string is a text reply, a `Step`
+carries tool calls (and optional text). The agent's real tool loop runs the
+calls and sends the results back. `client.calls` records each call's
+`messages`, offered `tool_names` and the `tool_results` that came back; a call
+past the end of the script raises `RuntimeError`.
+
+```python
+from genfleet.sdk import Agent, AgentInput, tool
+from genfleet.sdk.models import ScriptedModelClient, Step
+
+@tool(audiences=["operator", "customer"])
+def order_status(order_id: str) -> str:
+    """Look up an order."""
+    return f"{order_id}: shipped"
+
+@tool  # operator only by default
+def refund(order_id: str) -> str:
+    """Refund an order."""
+    return "refunded"
+
+async def test_customer_order_lookup():  # pytest-asyncio
+    client = ScriptedModelClient([
+        Step(tool_calls=[{"name": "order_status", "arguments": {"order_id": "A1"}}]),
+        "Your order A1 has shipped.",
+    ])
+    agent = Agent(role="Support", model={"model": "test"}, model_client=client, tools=[order_status, refund])
+    customer = {"genfleet.caller": {"role": "customer"}}
+    reply = [c.content async for c in agent.run(AgentInput(message="Where is A1?", metadata=customer))]
+
+    assert "".join(filter(None, reply)) == "Your order A1 has shipped."
+    assert client.calls[0].tool_names == ["order_status"]  # refund not offered
+    assert client.calls[1].tool_results[0]["content"] == "A1: shipped"
+```
+
+A tool call is a `ToolCall` or a mapping with `name`, `arguments` and an
+optional `id` (`call_1`, `call_2`, ... when left out).
+
 ### Memory
 
 Memory is episodic: one thread of messages per `session_id`, loaded before a
