@@ -111,15 +111,12 @@ unchanged; the SDK never reads it. During a turn,
 Memory is episodic: one thread of messages per `session_id`, loaded before a
 turn and appended to after it.
 
-- **On the platform** you need not name a backend. A hosted agent is given
-  `GENFLEET_MEMORY_URL` / `GENFLEET_MEMORY_TOKEN` by its sandbox and uses the
+- **On the platform** you need not name a backend. A hosted agent uses the
   platform's store, scoped to that agent instance. `memory="platform"` says so
-  explicitly and fails fast outside a sandbox. `agent.memory.search(subject, query)`
-  and `agent.memory.purge(subject)` are available on it.
+  explicitly and fails fast when the agent is not running on the platform.
+  `agent.memory.search(subject, query)` and `agent.memory.purge(subject)` are
+  available on it.
 - **Anywhere else** pass your own Redis, or nothing for a stateless agent.
-- Both sandbox variables travel together. With only `GENFLEET_MEMORY_URL` set,
-  the agent raises at construction; with only `GENFLEET_MEMORY_TOKEN`, there is
-  nothing to dial, so it runs stateless and logs a warning.
 - A retried turn is appended twice unless the caller names it: `turn_id`,
   `request_id` or `message_id` in the request metadata is passed to the store
   as the turn's idempotency key.
@@ -129,10 +126,9 @@ turn and appended to after it.
 Workflow state is separate from conversation memory. Two backends implement
 one async `StateStore` interface:
 
-- **Hosted:** an `Agent` selects `PlatformStateStore` when its sandbox
-  receives `GENFLEET_STATE_URL` and `GENFLEET_STATE_TOKEN`; `agent.state` then
-  goes through the engine proxy to a PostgreSQL store. `Agent(state="platform")`
-  requires that pair and fails, naming the missing variable, without it.
+- **Hosted:** an `Agent` running on the platform selects `PlatformStateStore`,
+  and `agent.state` is kept by the platform. `Agent(state="platform")` fails
+  fast when the agent is not running on the platform.
 - **Local/self-hosted:** `LocalStateStore(path)` wraps `SQLiteStateStore` on a
   worker thread. It refuses to open in a hosted sandbox, whose files don't
   survive a restart.
@@ -141,8 +137,8 @@ one async `StateStore` interface:
 
 - Locally, both are yours to choose: pass a stable agent id and the caller id
   your ingress verified (for example `caller_of(input.metadata).id`).
-- Hosted, the platform stamps the scope and the SDK sends neither. Tenant and
-  agent instance come from the sandbox's token. The owner is the **verified
+- Hosted, the platform stamps the scope and the SDK sends neither. Workspace and
+  agent instance come from the platform. The owner is the **verified
   caller of the running turn**, role included (`customer` and `operator` runs
   never mix), which the SDK names by the turn's `session_id`/`turn_id` (set by
   `Agent` while a tool or the model client runs; other code can wrap a call in
@@ -157,8 +153,8 @@ one async `StateStore` interface:
 its resume token within the same owner scope, so the requester can resume it
 themselves. Don't build an approval gate on it: an approval by someone other
 than the requester (an owner or admin) goes through the platform's sensitive
-tool confirmations (ADR-0028 §8a), and durable resume after a human approval is
-tracked in [genfleet/sdk#59](https://github.com/genfleet/sdk/issues/59).
+tool confirmations (see "Sensitive tools" below), and durable resume after a
+human approval is tracked in [genfleet/sdk#59](https://github.com/genfleet/sdk/issues/59).
 
 ```python
 from genfleet.sdk import LocalStateStore
@@ -447,8 +443,8 @@ def create_issue(title: str, ctx: ToolContext) -> str:
 
 `ctx.config` is a read-only mapping. `ctx.secret(name)` returns the value or raises `ToolSecretError` naming the secret, never a value.
 
-- **On the platform**, the values are the tenant's installation of the tool. The engine resolves them outside the sandbox and sets them under the tool's own namespace (`tool_env_namespace(slug)`, e.g. `GENFLEET_TOOL_ACME__JIRA__CONFIG` and `…__SECRETS`, each a JSON object). A secret not bound there is not available: there is no fallback to other variables.
-- **Locally** (no `GENFLEET_HOSTED` set), set the same two variables, or a variable with the secret's own name (`api_token` or `API_TOKEN`).
+- **On the platform**, the values are the tenant's installation of the tool. The platform resolves them and sets them under the tool's own namespace (`tool_env_namespace(slug)`, e.g. `GENFLEET_TOOL_ACME__JIRA__CONFIG` and `…__SECRETS`, each a JSON object). A secret not bound there is not available: there is no fallback to other variables.
+- **Locally** (not on the platform), set the same two variables, or a variable with the secret's own name (`api_token` or `API_TOKEN`).
 
 The context is injected into `@tool` functions (sync or async), callable instances and bound methods; annotate it as `ToolContext`, `ToolContext | None` or `Optional[ToolContext]`. Any other hint that names `ToolContext` (such as `list[ToolContext]` or an unresolvable `Optional["ToolContext"]`) raises `TypeError` when the tool is wrapped. A hand-written `ToolProtocol` class is called as-is and gets no context: build one with `ToolContext(slug)` yourself.
 
@@ -470,7 +466,7 @@ def start_return(order_id: str) -> str: ...
 
 An unmarked tool is `["operator"]`. An operator in a private chat gets the tools whose audience includes `operator`. A customer, or an operator writing in a group, gets those whose audience includes `customer`. So a `["customer"]` tool is hidden from staff in a private chat. A call to a tool that wasn't offered is refused as "not found". For MCP servers, the config's `customer_safe_tools: [names]` (the 0.17 form) marks tools for both audiences; there is no customer-only form in the config, but the platform's setting can make one by name.
 
-**Your marking is the default, and the platform's setting wins.** The tenant owner sets each tool's audience in the dashboard. The platform sends it as `metadata["genfleet.tool_audiences"]` (`TOOL_AUDIENCES_METADATA_KEY`), keyed by tool name, or by manifest slug for tools from `load_tools()`. Each tool it returns carries its slug, on a fresh proxy that behaves like the original. That setting replaces your marking, and can widen it as well as narrow it. An entry the SDK can't read is offered to no one. `Agent` applies this to every tool it holds: its own functions, `load_tools()` tools, remote tools passed in as `tools=`, and MCP tools. Tools the engine keeps itself are filtered by the engine. Read the effective rule with `may_offer(caller, audiences)`.
+**Your marking is the default, and the platform's setting wins.** The tenant owner sets each tool's audience in the dashboard. The platform sends it as `metadata["genfleet.tool_audiences"]` (`TOOL_AUDIENCES_METADATA_KEY`), keyed by tool name, or by manifest slug for tools from `load_tools()`. Each tool it returns carries its slug, on a fresh proxy that behaves like the original. That setting replaces your marking, and can widen it as well as narrow it. An entry the SDK can't read is offered to no one. `Agent` applies this to every tool it holds: its own functions, `load_tools()` tools, remote tools passed in as `tools=`, and MCP tools. Tools the platform keeps itself are filtered by the platform. Read the effective rule with `may_offer(caller, audiences)`.
 
 `customer_safe=True` (0.17) still works and means both audiences, but it is deprecated and removed in 1.0, as are `may_use` and `Caller.full_toolset`.
 
@@ -481,9 +477,9 @@ An unmarked tool is `["operator"]`. An operator in a private chat gets the tools
 def issue_refund(order_id: str, amount: float) -> str: ...
 ```
 
-When the model calls it, it doesn't run. The model is told the action awaits approval, and the platform shows the owner or admin the exact call to approve. Once approved, a follow-up turn runs that one call, exactly once, and the model tells the user the outcome. The engine signs the approved call with a key only this sandbox knows (`GENFLEET_APPROVAL_KEY`), so another agent or a direct caller can't forge one. On a call from another agent, a sensitive tool is refused. The owner can mark or unmark any tool in the dashboard, and that setting wins.
+When the model calls it, it doesn't run. The model is told the action awaits approval, and the platform shows the owner or admin the exact call to approve. Once approved, a follow-up turn runs that one call, exactly once, and the model tells the user the outcome. The platform signs the approved call with a key only this agent instance holds, so another agent or a direct caller can't forge one. On a call from another agent, a sensitive tool is refused. The owner can mark or unmark any tool in the dashboard, and that setting wins.
 
-An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the caller key gets every tool. In a platform sandbox (`GENFLEET_HOSTED` set; on older engines, `GENFLEET_A2A_TOKEN`) a missing caller gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
+An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the caller key gets every tool. On the platform (`is_hosted()` is true) a missing caller gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
 
 Declare who the agent serves in `genfleet.toml`:
 
