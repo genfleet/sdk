@@ -55,7 +55,7 @@ Implements `AgentProtocol`. Pass directly to `serve()` or `create_app()`. Proper
 - `memory` - `"platform"` (the hosted agent's store; fails at construction when not hosted), a [MemoryConfig](#memoryconfig) dict for Redis, or any object implementing the `Memory` protocol (`async load / save / clear`; an optional `append` makes saves incremental). Left out: a hosted agent gets the platform store anyway, anywhere else the agent is stateless and the caller manages history through `AgentInput.history`.
 - `context` - Extra string appended to the system prompt at runtime.
 - `audit` - Structured audit logging. See [AuditConfig](#auditconfig). `None` (default) adds no overhead.
-- `model_client` - Explicit client for the model calls (`ModelClient` from `genfleet.sdk.models`). Wins over an installed client registered under the `genfleet.model_clients` entry-point group, which wins over the direct provider. `genfleet.sdk.models.FakeModelClient(replies)` answers with canned text for tests. With an installed client `model` may be a plain id and `api_key` may be omitted.
+- `model_client` - Explicit client for the model calls (`ModelClient` from `genfleet.sdk.models`). Wins over an installed client registered under the `genfleet.model_clients` entry-point group, which wins over the direct provider. For tests use `genfleet.sdk.models.ScriptedModelClient(steps)`: it answers each call with the next scripted step (plain text, or tool calls that drive the agent's tool loop) and records the calls. With an installed client `model` may be a plain id and `api_key` may be omitted.
 - `skills` - `Skill` objects, or repository sources pinned to a 40-character commit (`"owner/repo@<sha>"`). See [Skills](#skills).
 - `state` - A `StateStore`, or `"platform"` for the hosted store. See [Workflow state](#workflow-state).
 - `accepts` - MIME types the agent takes besides text (`"image/*"`, `"application/pdf"`, `"*/*"`). Becomes the agent's `accepted_input_types`, which `serve` advertises and enforces. Default: text only.
@@ -101,7 +101,7 @@ class MemoryConfig(TypedDict, total=False):
 
 `{"type": "platform"}` equals `memory="platform"`. Redis needs `pip install 'genfleet-sdk[memory] @ git+https://github.com/genfleet/sdk@dev'`; its key pattern is `genfleet:session:{session_id}:history` with a 24h TTL.
 
-Memory is keyed by `input.metadata["session_id"]`; a turn without one gets a per-request UUID (stateless). How `serve` fills `session_id` is in `serve.md` under "Sessions". `metadata["genfleet.memory"] == "off"` makes the Agent neither load nor save for that turn. A retried turn is appended twice unless the request metadata names it with `turn_id`, `request_id` or `message_id`, which becomes the turn's idempotency key. The platform store also has `agent.memory.search(subject, query)` and `agent.memory.purge(subject)`.
+Memory is keyed by `input.metadata["session_id"]`; a turn without one gets a per-request UUID (stateless). How `serve` fills `session_id` is in `serve.md` under "Sessions". `metadata["genfleet.memory"] == "off"` makes the Agent neither load nor save for that turn. On an append-capable store (the platform store, or a custom `Memory` with `append`) a retried turn is stored twice unless the request metadata names it with `turn_id`, `request_id` or `message_id`, which becomes the idempotency key. Redis rewrites the whole thread on each save, so a retry does not duplicate. The platform store also has `agent.memory.search(subject, query)` and `agent.memory.purge(subject)`.
 
 A custom store implements the protocol:
 
@@ -194,7 +194,7 @@ class AgentOutput(BaseModel):
 - `token_usage` - Token counts (input, output, total), on the final chunk of each LLM turn.
 - `metadata["tool_event"]` (`TOOL_EVENT_KEY`) - a *tool event*: `Agent` reports each tool it runs, with `content=""` and `done=False`:
   - `{"type": "tool_call", "id", "name", "arguments"}` once the call's input is complete;
-  - `{"type": "tool_result", "id", "name", "ok", "output"}` when the tool returns (`ok` is false for an unknown tool or a failed MCP call).
+  - `{"type": "tool_result", "id", "name", "ok", "output"}` when the tool returns (`ok` is false for an unknown tool or a failed MCP call). For a `sensitive` call awaiting owner approval the result carries `"status": "pending"` and `ok` is false; the tool did not run.
 
   Values are raw; the platform redacts and truncates before showing them in chat. A consumer that only reads `content` can ignore these outputs. `serve` relays them on `working` status updates under `metadata.tool_event`: `arguments` redacted and capped at 8 KB, a failed result's `output` replaced by `"The tool failed."`, and a successful result's `output` sent **raw**, capped at 4000 chars. A direct caller of a self-hosted `serve` sees that raw output; only the platform scrubs it.
 
@@ -453,4 +453,4 @@ def create_app(agent, *, name="agent", description="", public_url=None,
                output_types=None, max_body_bytes=8 * 1024 * 1024) -> FastAPI: ...
 ```
 
-`serve` blocks (`uvicorn.run`); `create_app` returns a FastAPI app for custom ASGI deployments. Option semantics are in `serve.md`.
+`serve` blocks (`uvicorn.run`) and binds `0.0.0.0` by default. It has no authentication: put your own auth in front before exposing it publicly. `create_app` returns a FastAPI app for custom ASGI deployments. Option semantics are in `serve.md`.

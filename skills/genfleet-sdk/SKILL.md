@@ -1,6 +1,6 @@
 ---
 name: genfleet-sdk
-description: "How to build and serve AI agents using the genfleet-sdk Python package. Use this skill whenever the user is working with genfleet, genfleet-sdk, AgentProtocol, Agent(), RawAdapter, or wants to create agents for the Genfleet marketplace. Also trigger when you see imports from genfleet.sdk, files referencing genfleet agent patterns, Agent() constructor with role=/model=/tools=/mcps=/memory= params, or when the user asks about wrapping OpenAI/Anthropic/Gemini/LangChain/CrewAI agents into a universal protocol. Even if the user doesn't say 'genfleet' explicitly, trigger if they're working in a project that has genfleet-sdk as a dependency or has genfleet/ in its import paths."
+description: "Build, serve and publish AI agents with the genfleet-sdk Python package. Use whenever code imports genfleet.sdk or the user mentions Genfleet, genfleet-sdk, Agent(role=, model=, tools=, mcps=, memory=, skills=, state=, accepts=), @tool with audiences or sensitive, ToolContext, load_tools or build_agent(remote_tools), genfleet.toml, Skill and load_skills, StateStore, send_message, file or image parts and FileResolver, serve() or create_app() and A2A, or AgentProtocol wrappers around LangChain or CrewAI. Also trigger in any project that depends on genfleet-sdk."
 ---
 
 # Genfleet SDK
@@ -18,7 +18,7 @@ pip install "genfleet-sdk[anthropic,serve] @ git+https://github.com/genfleet/sdk
 pip install "genfleet-sdk[all] @ git+https://github.com/genfleet/sdk@dev"               # everything
 ```
 
-Installed from GitHub rather than PyPI: the package is not published yet, so the git reference is the supported way to get it. Pin a tag or commit instead of `@dev` if you need a fixed version. Requires **Python 3.12+**. Extras: `openai`, `anthropic`, `gemini`, `memory` (Redis), `mcp`, `serve`, `all`.
+Installed from GitHub rather than PyPI: the package is not published yet, so the git reference is the supported way to get it. **Pin a tag or commit** (`@<tag-or-sha>`) for anything you ship; `@dev` is the moving latest and can change under you. Requires **Python 3.12+**. Extras: `openai`, `anthropic`, `gemini`, `memory` (Redis), `mcp`, `serve`, `all`.
 
 ## The Core Pattern
 
@@ -56,7 +56,7 @@ Agent(
     memory:  MemoryConfig | Memory | "platform" | None = None,
     context: str | None = None,          # extra text appended to the system prompt
     audit:   AuditConfig | None = None,  # structured audit logging
-    model_client: ModelClient | None = None,   # explicit client (tests: FakeModelClient)
+    model_client: ModelClient | None = None,   # explicit client (tests: genfleet.sdk.models.ScriptedModelClient)
     skills:  list[Skill | str | Path] | None = None,   # runtime skills
     state:   StateStore | "platform" | None = None,    # workflow checkpoints
     accepts: list[str] | None = None,    # file MIME types taken besides text
@@ -79,7 +79,7 @@ Agent(
 {"model": "openai/gpt-4o-mini", "api_key": "...", "vision": True}       # model takes images
 ```
 
-Always the explicit `provider/model-name` form. Optional keys: `base_url`, `default_headers`, `options`, `vision`. Prefixes: `openai/` (also any OpenAI-compatible endpoint), `anthropic/`, `gemini/`, `openrouter/<vendor>/<model>` (the last also needs the `[openai]` extra). For free trial runs use an OpenRouter `:free` model, e.g. `openrouter/nex-agi/nex-n2.5-mini:free`.
+Always the explicit `provider/model-name` form. Optional keys: `base_url`, `default_headers`, `options`, `vision`. Prefixes: `openai/` (also any OpenAI-compatible endpoint), `anthropic/`, `gemini/`, `openrouter/<vendor>/<model>` (the last also needs the `[openai]` extra). For free trial runs use any OpenRouter `:free` model that supports tool calling, e.g. `openrouter/nex-agi/nex-n2.5-mini:free` (free ids rotate, so check the current list).
 
 ### Memory
 
@@ -143,15 +143,23 @@ def issue_refund(order_id: str, amount: float) -> str: ...
 
 ### ToolContext: tool settings and secrets (0.21)
 
-A tool that needs a setting or a credential declares it in its own `genfleet.toml` (`[config.<name>]`, `[secrets.<name>]`) and asks for a `ToolContext` by annotation. The parameter is left out of the tool schema, so the model never sees or fills it.
+A tool package declares the settings and credentials it needs in its own `genfleet.toml` (`[config.<name>]`, `[secrets.<name>]`) and asks for a `ToolContext` by annotation. The parameter is left out of the tool schema, so the model never sees or fills it. The context is built from the tool's manifest slug, so this applies to tools loaded with `load_tools()`:
 
 ```python
 from genfleet.sdk import ToolContext, tool
 
 @tool
-def create_issue(title: str, ctx: ToolContext) -> str:
+def create_issue(title: str, ctx: ToolContext) -> str:      # in the tool package
     client = Jira(project=ctx.config["project"], token=ctx.secret("api_token"))
     ...
+```
+
+A plain `@tool` defined in agent code has no slug: `ctx.config` is empty and `ctx.secret("api_token")` only falls back to a local variable named `API_TOKEN` / `api_token`. To give a tool you build by hand a slug, use `create_issue.with_slug("@acme/jira")` on the wrapper, or in a hand-written `ToolProtocol` class build the context yourself:
+
+```python
+async def call(self, tool_call):
+    ctx = ToolContext("@acme/jira")          # reads the @acme/jira namespace
+    return ctx.secret("api_token")
 ```
 
 - `ctx.config` is a read-only mapping; `ctx.secret(name)` returns the value or raises `ToolSecretError` (naming the secret, never a value).
@@ -247,6 +255,8 @@ curl -X POST http://localhost:8000 -H "Content-Type: application/json" -H 'A2A-V
   -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"hello"}]}}}'
 ```
 
+`serve` has no authentication and binds `0.0.0.0` by default (as these examples do). Do not expose it publicly without your own auth in front; bind `127.0.0.1` for local-only use.
+
 Option meanings, sessions, files on the wire and the error table are in `references/serve.md`.
 
 ## AgentProtocol: direct implementation
@@ -279,7 +289,7 @@ audiences = ["operator", "customer"]   # who the agent serves; absent = operator
 
 ## Key Rules
 
-1. **SDK imports only from itself.** Never import `genfleet.core`, `genfleet.runner`, `genfleet.loader`, `genfleet.engine` or `genfleet.protocols`; those are platform internals.
+1. **Import only from `genfleet.sdk`** (plus `genfleet.sdk.serve`, and `genfleet.sdk.models` for tests). Nothing else under `genfleet` is public.
 2. **Use `Agent()` as the default path.** Implement `AgentProtocol` directly only for frameworks that manage their own LLM calls.
 3. **Entry factory takes `remote_tools`.** For a platform agent write `def build_agent(remote_tools=())` and merge it: `tools=[*load_tools(), *remote_tools]`. `load_tools()` returns the tools the manifest names; `remote_tools` is what the runtime discovered (other agents, remote tool servers) and no manifest can name. Dropping it silently loses those tools.
 4. **Audiences, not `customer_safe`.** Mark tools with `audiences=[...]`, and `sensitive=True` for anything with a consequence. An unmarked tool is operator-only.

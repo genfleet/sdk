@@ -200,7 +200,7 @@ A file whose type is not in the accepted types is refused with `-32005` before t
 
 Files the agent returns in `AgentOutput.parts` go out as file parts of the `result` artifact, beside the text (`raw` for inline bytes, `url` for references; 0.x callers get the `file` form).
 
-`SendMessage` returns the whole reply; `SendStreamingMessage` streams it. In both, `tool_calls` yielded by a custom `AgentProtocol` are **not executed and not returned** - only text, files and tool events (from `Agent`) reach the caller.
+`SendMessage` returns the whole reply (text and files only); `SendStreamingMessage` streams it and is the only method that relays tool events (from `Agent`). In both, `tool_calls` yielded by a custom `AgentProtocol` are **not executed and not returned**.
 
 ## Testing with httpx (unit tests)
 

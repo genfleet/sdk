@@ -4,7 +4,7 @@ For LLM providers supported natively by the SDK (OpenAI, Anthropic, Gemini, and 
 
 For external orchestration frameworks (LangChain, CrewAI) that manage their own LLM calls, implement `AgentProtocol` directly.
 
-**Who runs the tools.** `serve` does not execute `tool_calls` that a custom `AgentProtocol` yields, and it does not return them to the caller: `SendMessage` and `SendStreamingMessage` carry only the text, files and tool events you yield. A custom agent must run its own tools inside `run()` and yield the final text. (`Agent()` does this loop for you.)
+**Who runs the tools.** `serve` does not execute `tool_calls` that a custom `AgentProtocol` yields, and it does not return them to the caller: `SendMessage` carries only the text and files you yield, and `SendStreamingMessage` adds the tool events an `Agent` reports. A custom agent must run its own tools inside `run()` and yield the final text. (`Agent()` does this loop for you.)
 
 ## Table of Contents
 
