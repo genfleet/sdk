@@ -1,4 +1,4 @@
-"""Caller roles (ADR-0028): which tools a turn is offered. Tier 1, no network."""
+"""Caller roles: which tools a turn is offered. Tier 1, no network."""
 
 from __future__ import annotations
 

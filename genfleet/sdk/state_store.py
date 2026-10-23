@@ -6,7 +6,7 @@ ingress as ``owner``. Hosted (:class:`PlatformStateStore`) the platform stamps
 the scope itself (tenant and agent instance from the sandbox, owner from the
 running turn's verified caller), so ``owner`` is ignored there.
 
-Pause/resume is a continuation, not an approval (ADR-0028 §8a, sdk#59).
+Pause/resume is a continuation, not an approval (sdk#59).
 """
 
 from __future__ import annotations

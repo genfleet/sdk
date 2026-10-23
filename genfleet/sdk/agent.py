@@ -241,8 +241,8 @@ class Agent:
             await self._init_mcp()
 
         session_id = input.metadata.get("session_id") or str(uuid.uuid4())
-        # The platform turns memory off for a turn from its public A2A edge
-        # (ADR-0027 §2c): the session is then neither loaded nor written.
+        # The platform turns memory off for a turn from its public A2A edge:
+        # the session is then neither loaded nor written.
         use_memory = self._memory is not None and input.metadata.get(MEMORY_METADATA_KEY) != "off"
 
         if auditor:
@@ -288,7 +288,7 @@ class Agent:
             turn_text, user_content = await self._user_content(input)
             messages.append({"role": "user", "content": user_content})
 
-            # The tools this caller may use (ADR-0028): by each tool's
+            # The tools this caller may use: by each tool's
             # audience, the platform's per-tool setting first. A tool left out
             # here is also refused at dispatch, whatever the model asks for.
             offered = self._offered_tools(caller, audience_overrides)
@@ -313,7 +313,7 @@ class Agent:
                 ))
                 offered.add(SKILL_TOOL_NAME)
 
-            # ADR-0028 §8a: sensitive tools wait for an owner's approval; an
+            # Sensitive tools wait for an owner's approval; an
             # approved call (signed by the engine) runs first, exactly once.
             sensitive = self._sensitive_tools(_sensitive_flags_of(input.metadata))
             peer_turn = _is_peer_turn(input.metadata)
@@ -558,8 +558,8 @@ class Agent:
         if isinstance(self._memory, AppendableMemory):
             # One turn, not the whole thread: the store already holds
             # what ``load`` returned. ``subject`` and the session's
-            # metadata ride on the input — a channel ingress sets them
-            # (ADR-0019 §4); a plain caller may leave them out.
+            # metadata ride on the input — a channel ingress sets them;
+            # a plain caller may leave them out.
             await self._memory.append(
                 session_id,
                 turn,
@@ -765,7 +765,7 @@ class Agent:
                 for name in [n for n in tools if n in self._local_tools or n in self._mcp_tools or (self._skills and n == SKILL_TOOL_NAME)]:
                     log.warning("MCP tool %r skipped: the name is already taken by another tool", name)
                     del tools[name]
-                # A name starting with `@` is a slug key's form (ADR-0028 §5):
+                # A name starting with `@` is a slug key's form:
                 # an MCP tool can't take one and borrow a manifest tool's settings.
                 for name in [n for n in tools if n.startswith(("@", "skill:"))]:
                     log.warning("MCP tool %r skipped: a tool name can't start with '@'", name)
@@ -873,7 +873,7 @@ def _optional_str(value: Any) -> str | None:
 #: Input-metadata keys that describe the *session* rather than the turn, and
 #: are worth keeping with it. Everything else in ``metadata`` is per request.
 #: Deliberately one key: ``channel`` says which ingress a thread arrived on
-#: (ADR-0019 §4) and identifies nobody. The party is already named by
+#: and identifies nobody. The party is already named by
 #: ``subject``, an opaque id; ``contact`` — a phone number or an address — is
 #: customer PII and is not copied into the store until a spec asks for it.
 _SESSION_METADATA_KEYS = ("channel",)

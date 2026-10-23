@@ -5,7 +5,7 @@ verified sender), never from a resume request's unverified payload.
 
 Pause and resume are a continuation, not an approval: whoever holds the resume
 token (and the same ``owner``) can resume. Human approval is a separate
-platform flow (ADR-0028 §8a; genfleet/sdk#59).
+platform flow (genfleet/sdk#59).
 """
 
 from __future__ import annotations

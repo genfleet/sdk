@@ -1,4 +1,4 @@
-"""Sensitive tools and their confirmations (ADR-0028 §8a, SDK 0.19). Tier 1, no network."""
+"""Sensitive tools and their confirmations. Tier 1, no network."""
 
 from __future__ import annotations
 

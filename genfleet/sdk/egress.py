@@ -1,5 +1,5 @@
 """
-`egress` — the hosts an agent or tool says it needs to reach (ADR-0021 §3).
+`egress` — the hosts an agent or tool says it needs to reach.
 
 A hosted agent's sandbox can only leave through the platform's egress proxy,
 which allows a destination when some list names it. A manifest is one of those

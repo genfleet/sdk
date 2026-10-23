@@ -1,4 +1,4 @@
-"""Send a message on one of the agent's channels (ADR-0019 §5).
+"""Send a message on one of the agent's channels.
 
 The reply to an inbound message needs nothing from here: whatever the agent
 returns is sent to the contact by the platform. ``send_message`` is for the

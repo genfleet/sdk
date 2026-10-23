@@ -1,5 +1,5 @@
 """`provider_for` routes by prefix; `openrouter/` is the OpenAI provider
-pointed at the gateway with the vendor id passed through.
+pointed at OpenRouter with the vendor id passed through.
 
 The OpenAI client is stubbed out, so these assert on what the SDK hands the
 client (api_key, base_url, model) rather than on any provider internals.

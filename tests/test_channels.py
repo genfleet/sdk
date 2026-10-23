@@ -1,4 +1,4 @@
-"""send_message talks to the sandbox's channels proxy (ADR-0019 §5).
+"""send_message talks to the sandbox's channels proxy.
 
 A stdlib server stands in for the proxy: what matters is the wire shape
 (path, bearer token, body with no scope in it) and how refusals surface —

@@ -6,7 +6,7 @@ an agent names the tools it wants, a tool declares what it needs to run. The
 parser is here rather than in the platform because developers author these
 files by hand and must be able to validate them offline.
 
-The central rule, from ADR-0007: **an agent's manifest names tools, and the
+The central rule, of the manifest: **an agent's manifest names tools, and the
 publisher records digests.** A developer writes `"@acme/jira" = "*"`; `push`
 resolves that to a concrete version and digest and records both in the
 published artifact. Nobody types a hash, and what ships is still pinned — the
@@ -27,7 +27,7 @@ from .egress import EgressEntryError, parse_egress
 MANIFEST_NAME = "genfleet.toml"
 
 # `@scope/name` — the scope is the publishing tenant's namespace, which the
-# backend already enforces at submit time (backend#74).
+# publishing service already enforces at submit time.
 SLUG_PATTERN = re.compile(r"^@[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$")
 
 AgentKind = Literal["declarative", "code", "native_sdk"]
@@ -46,7 +46,7 @@ def _canonical_egress(entries: list[str]) -> list[str]:
         raise ValueError(str(exc)) from exc
 
 
-#: A platform catalog model id, as the gateway defines it.
+#: A platform model id.
 _CATALOG_MODEL_ID = re.compile(r"[a-z0-9][a-z0-9.-]{1,63}")
 _MAX_MODELS = 20
 
@@ -122,7 +122,7 @@ class AgentManifest(BaseModel):
     entry: str = "agent:build_agent"
     tools: list[ToolRef] = Field(default_factory=list)
     mcps: list[ToolRef] = Field(default_factory=list)
-    #: Hosts the agent itself reaches (ADR-0021 §3). Its tools declare their
+    #: Hosts the agent itself reaches. Its tools declare their
     #: own; the platform allows the union. See `genfleet.sdk.egress`.
     egress: list[str] = Field(default_factory=list)
 
@@ -131,7 +131,7 @@ class AgentManifest(BaseModel):
     def _egress_is_valid(cls, value: list[str]) -> list[str]:
         return _canonical_egress(value)
 
-    #: Who the agent serves on channels (ADR-0028): ``operator`` (tenant staff),
+    #: Who the agent serves on channels: ``operator`` (tenant staff),
     #: ``customer`` (the tenant's customers), or both. ``None`` when the
     #: manifest does not say; the platform then serves operators only.
     audiences: list[Literal["operator", "customer"]] | None = None
@@ -145,7 +145,7 @@ class AgentManifest(BaseModel):
             raise ValueError("audiences: list at least one of 'operator', 'customer', or leave it out")
         return list(dict.fromkeys(value))
 
-    #: Platform catalog model ids the agent calls (``general-fast``). In hosted
+    #: Platform model ids the agent calls. In hosted
     #: execution the platform scopes the agent's model credential to these.
     #: A ``provider/model`` id is the agent's own business and isn't listed.
     models: list[str] = Field(default_factory=list)
@@ -183,9 +183,9 @@ class ToolManifest(BaseModel):
     entry: str
     config: dict[str, ConfigField] = Field(default_factory=dict)
     secrets: dict[str, SecretField] = Field(default_factory=dict)
-    #: Hosts this tool reaches; added to every agent that pins it (ADR-0021 §3).
+    #: Hosts this tool reaches; added to every agent that pins it.
     egress: list[str] = Field(default_factory=list)
-    #: ADR-0028 §8a: the author's marking. A call waits for an owner's
+    #: The author's marking. A call waits for an owner's
     #: approval. The platform reads this at publish as the tool's default and
     #: sends the effective flag on every turn (`genfleet.sensitive_tools`).
     sensitive: bool = False

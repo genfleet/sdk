@@ -205,7 +205,7 @@ def test_failure_carries_an_id_the_operator_can_correlate(
 
 # --------------------------------------------------------------------------
 # Tool events — relayed on working status updates, as the platform's A2A
-# server sends them (genfleet/engine#155)
+# server sends them
 # --------------------------------------------------------------------------
 
 

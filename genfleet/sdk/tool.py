@@ -172,13 +172,13 @@ class ToolWrapper:
     ) -> None:
         self._fn = fn
         self._schema = schema
-        #: Who the author offers the tool to (ADR-0028): the default the
+        #: Who the author offers the tool to: the default the
         #: platform's per-tool setting replaces. ``[operator]`` unless marked.
         self.audiences: frozenset[Audience] = _resolve_audiences(audiences, customer_safe, stacklevel=2)
         #: The manifest slug a mounted tool came from (``load_tools``), so the
         #: platform's setting can name it before its function name is known.
         self.slug = slug
-        #: ADR-0028 §8a: the author's marking. A sensitive call doesn't run
+        #: The author's marking. A sensitive call doesn't run
         #: until an owner or admin approves it; the platform's flag wins.
         self.sensitive = sensitive
         #: Parameters annotated `ToolContext`, filled at call time.
@@ -295,7 +295,7 @@ def tool(
         @tool(audiences=["customer"])
         async def start_return(order_id: str) -> str: ...
 
-    Every tool has an audience (ADR-0028), ``["operator"]`` unless marked. On
+    Every tool has an audience, ``["operator"]`` unless marked. On
     a hosted turn an operator in a private chat gets the tools for
     ``operator``; a customer, or anyone in a group chat, the tools for
     ``customer``. A ``["customer"]`` tool is one staff should not trigger.
@@ -308,7 +308,7 @@ def tool(
     ``customer_safe=True`` (0.17) still means both audiences; it is deprecated
     and removed in 1.0.
 
-    ``sensitive=True`` (ADR-0028 §8a): the call doesn't run when the model
+    ``sensitive=True``: the call doesn't run when the model
     makes it. It waits for a workspace owner or admin to approve it, then runs
     once in a follow-up turn. See :mod:`genfleet.sdk.confirmations`.
     """

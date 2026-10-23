@@ -1,4 +1,4 @@
-"""Who a turn is for: an operator or a customer (ADR-0028).
+"""Who a turn is for: an operator or a customer.
 
 On a hosted turn the platform resolves the caller from the provider-verified
 sender (a Telegram user id, a WhatsApp number, a signed-in dashboard member)
@@ -88,7 +88,7 @@ class Caller:
 
     @property
     def full_toolset(self) -> bool:
-        """Deprecated (0.18): ``may_offer(caller, OPERATOR_ONLY)``. Removed in 1.0 (backend#252)."""
+        """Deprecated (0.18): ``may_offer(caller, OPERATOR_ONLY)``. Removed in 1.0."""
         _deprecated("Caller.full_toolset", "may_offer(caller, OPERATOR_ONLY)")
         return may_offer(self, OPERATOR_ONLY)
 
@@ -214,7 +214,7 @@ def may_offer(caller: Caller | None, audiences: frozenset[Audience]) -> bool:
 def may_use(caller: Caller | None, *, customer_safe: bool) -> bool:
     """Deprecated (0.18): :func:`may_offer` with ``EVERYONE`` or ``OPERATOR_ONLY``.
 
-    Removed in 1.0 (backend#252).
+    Removed in 1.0.
     """
     _deprecated("may_use(caller, customer_safe=…)", "may_offer(caller, EVERYONE | OPERATOR_ONLY)")
     return may_offer(caller, marked(customer_safe))

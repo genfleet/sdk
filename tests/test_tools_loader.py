@@ -128,7 +128,7 @@ def test_one_broken_provider_does_not_hide_the_others(monkeypatch, caplog):
 def test_agent_root_env_overrides_the_hardcoded_path(tmp_path, monkeypatch):
     # An agent computes its root from __file__ when the code is written. Once
     # the runtime unpacks the artifact somewhere else, that path is a stale
-    # guess and the environment is the authority. Raised in review on agents#3.
+    # guess and the environment is the authority.
     relocated = tmp_path / "unpacked"
     relocated.mkdir()
     (relocated / "genfleet.toml").write_text(
