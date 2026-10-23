@@ -175,3 +175,17 @@ def test_a_tool_manifest_ignores_an_egress_key(tmp_path, egress):
     assert manifest.slug == "@acme/weather"
     assert not hasattr(manifest, "egress")
     assert "egress" not in manifest.model_dump()
+
+
+@pytest.mark.parametrize("section", ["tools", "mcps"])
+def test_a_tool_ref_ignores_an_egress_key(tmp_path, section):
+    _write(
+        tmp_path,
+        f'[agent]\nname = "support"\n\n[{section}]\n'
+        '"@acme/x" = { spec = "1.x", egress = ["10.0.0.1"] }\n',
+    )
+    manifest = load_agent_manifest(tmp_path)
+    (ref,) = getattr(manifest, section)
+    assert (ref.slug, ref.spec) == ("@acme/x", "1.x")
+    assert not hasattr(ref, "egress")
+    assert "egress" not in ref.model_dump()

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- **Removed (breaking): `genfleet.sdk.egress` and the manifest `egress` fields.** The `genfleet.sdk.egress` module (`parse_egress`, `parse_egress_entry`, `EgressEntry`, `EgressEntryError`, `MAX_EGRESS_ENTRIES`) is gone, and `AgentManifest` and `ToolManifest` no longer have an `egress` attribute. An `egress` key under `[agent]` or `[tool]` in `genfleet.toml` is now ignored by the SDK: the manifest loads as before and the value is not validated, so an entry that used to be refused no longer fails the load. Code that imported the module or read `manifest.egress` must drop those uses.
+- **Removed (breaking): `genfleet.sdk.egress` and the manifest `egress` fields.** The `genfleet.sdk.egress` module (`parse_egress`, `parse_egress_entry`, `EgressEntry`, `EgressEntryError`, `MAX_EGRESS_ENTRIES`) is gone, and `AgentManifest` and `ToolManifest` no longer have an `egress` attribute. An `egress` key under `[agent]` or `[tool]` in `genfleet.toml` is now ignored by the SDK: the manifest loads as before and the value is not validated, so an entry that used to be refused no longer fails the load. The platform still checks `egress` when an agent or tool is submitted or started. Code that imported the module or read `manifest.egress` must drop those uses.
 
 ## 0.22.0
 
