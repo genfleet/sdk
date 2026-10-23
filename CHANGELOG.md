@@ -5,10 +5,13 @@ All notable changes to `genfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.22.0
+
+Everything since 0.21.0: clearer approval texts (#72), `ScriptedModelClient` for testing tool calls (#76), and a documentation pass (#73, #75, #77, #78).
 
 - **Changed: approval texts the model sees** (#72). They told the model to "tell the user", and small models read "the user" as a third party ("I'll let them know"). Every model-facing approval text now names "the person you are talking to". The pending tool result is now: "Not run yet: this action needs approval from a workspace owner or admin. An approval request was sent; the action runs once it is approved. Let the person you are talking to know it is waiting for approval." The notes for an approval that could not be verified, or can't run for this caller, say the action did not run. An approved call that failed no longer gets the "it has run" note; it is told the call failed and was not confirmed as done (a tool can fail after its side effect), so someone should check before the person asks again. Behaviour is unchanged: only the wording.
 - **Added: `ScriptedModelClient`** (`genfleet.sdk.models`), a test model client that scripts tool calls. Each step is a text reply or one or more tool calls (a `ToolCall`, or a mapping with `name` and optional `arguments`, `id` and `thought_signature`; a missing id becomes `call_<n>`, never one the script already uses), optionally with text and `token_usage`. The script is checked when the client is built: an unknown key, a missing `name` or an id used twice in one step is an error naming the step. It drives the `Agent`'s real tool loop and records every call in `calls` (`RecordedCall`: `messages`, `tools`/`tool_names`, and the `tool_results` sent back), so a test can check which tools a caller was offered and what each tool returned. A call past the end of the script raises `RuntimeError`. `FakeModelClient` is unchanged.
+- **Docs.** New developer guides in `docs/guides/`: the `genfleet.toml` reference, the `build_agent(remote_tools=())` factory, writing connector tools, approvals and messaging, and triggers (#78). The coding-agent skill is refreshed for the current API (#77). The README now says that an owner can mark a tool sensitive but cannot unmark one its author marked, which matches the code.
 
 ## 0.21.0
 
