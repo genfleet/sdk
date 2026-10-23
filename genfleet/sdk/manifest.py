@@ -23,8 +23,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from .egress import EgressEntryError, parse_egress
-
 MANIFEST_NAME = "genfleet.toml"
 
 # `@scope/name` — the scope is the publishing tenant's namespace, which the
@@ -33,18 +31,6 @@ SLUG_PATTERN = re.compile(r"^@[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9._-]*$")
 
 AgentKind = Literal["declarative", "code", "native_sdk"]
 ToolKind = Literal["cli", "http", "mcp_stdio", "mcp_http"]
-
-
-def _canonical_egress(entries: list[str]) -> list[str]:
-    """`egress` as the platform stores it: validated, normalised, deduplicated.
-
-    A plain `ValueError`, so pydantic reports it and the loaders attach the
-    file path like every other field problem.
-    """
-    try:
-        return [entry.canonical for entry in parse_egress(entries)]
-    except EgressEntryError as exc:
-        raise ValueError(str(exc)) from exc
 
 
 #: A platform model id.
@@ -123,15 +109,6 @@ class AgentManifest(BaseModel):
     entry: str = "agent:build_agent"
     tools: list[ToolRef] = Field(default_factory=list)
     mcps: list[ToolRef] = Field(default_factory=list)
-    #: Hosts the agent itself reaches. Its tools declare their
-    #: own; the platform allows the union. See `genfleet.sdk.egress`.
-    egress: list[str] = Field(default_factory=list)
-
-    @field_validator("egress")
-    @classmethod
-    def _egress_is_valid(cls, value: list[str]) -> list[str]:
-        return _canonical_egress(value)
-
     #: Who the agent serves on channels: ``operator`` (tenant staff),
     #: ``customer`` (the tenant's customers), or both. ``None`` when the
     #: manifest does not say; the platform then serves operators only.
@@ -184,17 +161,10 @@ class ToolManifest(BaseModel):
     entry: str
     config: dict[str, ConfigField] = Field(default_factory=dict)
     secrets: dict[str, SecretField] = Field(default_factory=dict)
-    #: Hosts this tool reaches; added to every agent that pins it.
-    egress: list[str] = Field(default_factory=list)
     #: The author's marking. A call waits for an owner's
     #: approval. The platform reads this at publish as the tool's default and
     #: sends the effective flag on every turn (`genfleet.sensitive_tools`).
     sensitive: bool = False
-
-    @field_validator("egress")
-    @classmethod
-    def _egress_is_valid(cls, value: list[str]) -> list[str]:
-        return _canonical_egress(value)
 
     @field_validator("slug")
     @classmethod
