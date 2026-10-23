@@ -68,12 +68,39 @@ ApprovedCallResult = Literal["ran", "failed", "refused"]
 #: Set by the engine in each sandbox: the per-spawn key approved calls are signed with.
 APPROVAL_KEY_ENV = "GENFLEET_APPROVAL_KEY"
 
+# Model-facing texts. They name "the person you are talking to", never "the
+# user" (a small model reads that as a third party to pass a message on to),
+# and none of them lets the model claim an action happened when it did not.
 #: What the model is told instead of a result.
 _PENDING_RESULT = (
-    "This action needs approval by a workspace owner or admin before it runs. "
-    "The request was sent; it runs once approved. Tell the user so."
+    "Not run yet: this action needs approval from a workspace owner or admin. "
+    "An approval request was sent; the action runs once it is approved. "
+    "Let the person you are talking to know it is waiting for approval."
 )
 _PEER_REFUSAL = "Error: this tool needs an owner's approval and can't be used on a call from another agent."
+#: Added to the system prompt: the approval that came with the turn could not be verified.
+_APPROVAL_UNVERIFIED_NOTE = (
+    "An approval arrived with this message but could not be verified, so the action did not run. "
+    "Let the person you are talking to know it did not run."
+)
+#: Added to the system prompt: the approved tool is not offered to this caller now.
+_APPROVAL_UNAVAILABLE_NOTE = (
+    "An approved action can't run for this caller now, so it did not run. "
+    "Let the person you are talking to know it did not run."
+)
+
+
+def _approved_call_note(tool: str, ok: bool) -> str:
+    """Added to the system prompt once the approved call was dispatched."""
+    if ok:
+        return (
+            f"A workspace owner or admin approved `{tool}`, and it has run (its result follows). "
+            "Tell the person you are talking to what the result says."
+        )
+    return (
+        f"A workspace owner or admin approved `{tool}`, but it failed (the error follows), "
+        "so it did not complete. Let the person you are talking to know it did not complete."
+    )
 
 #: The fields an approved call is signed over, in this exact set.
 _SIGNED_FIELDS = ("confirmation_id", "tool", "arguments", "args_hash", "expires_at")
