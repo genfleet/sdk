@@ -99,7 +99,7 @@ def test_as_tool_plain_function():
         """Adds two numbers."""
         return str(a + b)
 
-    wrapper = _as_tool(add)
+    wrapper, _ = _as_tool(add)
     schema = wrapper.schema()
     assert schema.name == "add"
     assert schema.description == "Adds two numbers."
@@ -112,7 +112,7 @@ def test_as_tool_already_wrapped():
     def multiply(a: float, b: float) -> str:
         return str(a * b)
 
-    wrapper = _as_tool(multiply)
+    wrapper, _ = _as_tool(multiply)
     assert wrapper.schema().description == "multiplies two numbers"
 
 

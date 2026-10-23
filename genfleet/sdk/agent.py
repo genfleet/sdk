@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import logging
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal, NamedTuple
 
@@ -65,7 +66,7 @@ from .files import FileAccessError, FileResolver, read_part
 from .parts import ImagePart, UnsupportedInput, looks_like, media_of, mime_patterns
 from .parts import accepts as _accepts
 from .protocol import ToolProtocol
-from .tool import ToolWrapper, is_tool_object, wrap_tool
+from .tool import ToolWrapper, wrap_tool
 from .skills import Skill, load_skills, pinned_revision
 
 log = logging.getLogger("genfleet.sdk.agent")
@@ -82,28 +83,65 @@ DEFAULT_MAX_IMAGES_PER_TURN = 8
 DEFAULT_MAX_IMAGE_BYTES_PER_TURN = 20 * 1024 * 1024
 
 
-def _as_tool(entry: Callable | ToolProtocol) -> ToolProtocol:
-    """A ``tools=`` entry as the tool the agent holds.
+def _is_tool_object(obj: object) -> bool:
+    """Whether ``obj`` is an instance that already implements ToolProtocol:
+    a callable ``schema()`` and a coroutine ``call()``. A class is not one."""
+    if isinstance(obj, type):
+        return False
+    return callable(getattr(obj, "schema", None)) and inspect.iscoroutinefunction(getattr(obj, "call", None))
+
+
+def _as_tool(entry: Callable | ToolProtocol) -> tuple[ToolProtocol, str]:
+    """A ``tools=`` entry as the tool the agent holds, and its name.
 
     A function (plain or ``@tool``) becomes a `ToolWrapper`; an object that
     already implements `ToolProtocol` (``schema()`` and an async ``call()``,
     such as a peer agent in ``remote_tools``) is held as it is.
     """
     if isinstance(entry, ToolWrapper):
-        return entry
-    if is_tool_object(entry):
+        return entry, entry.schema().name
+    if _is_tool_object(entry):
         schema = entry.schema()
         if not isinstance(schema, ToolSchema):
             raise TypeError(f"{entry!r}.schema() must return a ToolSchema, got {schema!r}")
-        return entry
+        return entry, schema.name
     if isinstance(entry, type) and issubclass(entry, ToolProtocol):
         raise TypeError(f"tools entries take a ToolProtocol instance, not the class {entry.__name__}")
     if callable(entry):
-        return wrap_tool(entry)
+        wrapper = wrap_tool(entry)
+        return wrapper, wrapper.schema().name
     raise TypeError(
         "tools entries must be functions, @tool functions or ToolProtocol objects "
         f"(schema() and async call()), got {entry!r}"
     )
+
+
+def _local_tools_of(entries: Iterable[Callable | ToolProtocol]) -> dict[str, ToolProtocol]:
+    """The agent's tools by name.
+
+    Among functions a later one replaces an earlier one with the same name.
+    An unwrapped ToolProtocol object never takes a name a function has, in
+    either order, nor one an earlier object took: dispatch goes by name, so
+    it would otherwise drop that tool's sensitive marking and audience. Like
+    an MCP tool, it can't take a name starting with ``@`` (a slug key's form).
+    Each one skipped is logged.
+    """
+    tools: dict[str, ToolProtocol] = {}
+    unwrapped: list[tuple[str, ToolProtocol]] = []
+    for entry in entries:
+        tool, name = _as_tool(entry)
+        if isinstance(tool, ToolWrapper):
+            tools[name] = tool
+        else:
+            unwrapped.append((name, tool))
+    for name, tool in unwrapped:
+        if name in tools:
+            log.warning("tool %r skipped: the name is already taken by another tool", name)
+        elif name.startswith("@"):
+            log.warning("tool %r skipped: a tool name can't start with '@'", name)
+        else:
+            tools[name] = tool
+    return tools
 
 
 class _Marking(NamedTuple):
@@ -194,8 +232,10 @@ class Agent:
     the peer agents a factory receives in ``remote_tools``. Functions are
     wrapped; a ToolProtocol object is used as it is, operator-only and not
     sensitive unless the platform's per-tool settings say otherwise. Tools
-    are keyed by schema name, and a later one replaces an earlier one with
-    the same name.
+    are keyed by schema name. A function always keeps its name: a
+    ToolProtocol object whose name a function has (in either order) or an
+    earlier object took, or that starts with ``@``, is skipped with a logged
+    warning. Among functions a later one replaces an earlier one.
 
     ``memory`` may be left out: hosted on the platform the agent then gets
     the platform store anyway; on a laptop it runs without memory.
@@ -255,9 +295,7 @@ class Agent:
         self._mcp_configs: list[MCPConfig] = mcps or []
 
         # Functions become ToolWrappers; ToolProtocol objects are held as is.
-        self._local_tools: dict[str, ToolProtocol] = {
-            w.schema().name: w for w in (_as_tool(t) for t in (tools or []))
-        }
+        self._local_tools = _local_tools_of(tools or [])
         if any(name.startswith("skill:") for name in self._local_tools):
             raise ValueError("tool names starting with 'skill:' are reserved")
         resolved_skills = _resolve_skills(skills or [])
@@ -754,7 +792,10 @@ class Agent:
 
     def _sensitive_tools(self, flags: dict[str, bool]) -> set[str]:
         """Names of the sensitive tools: the author's marking, plus the platform's ``true`` (add-only)."""
-        names = {n for n, w in self._local_tools.items() if _is_sensitive(self._key_of(n), _marking_of(w).sensitive, flags)}
+        names = {
+            n for n, w in self._local_tools.items()
+            if _is_sensitive(self._key_of(n), _marking_of(w).sensitive, flags)
+        }
         names |= {
             n for n, spec in self._mcp_tools.items()
             if _is_sensitive(n, n in spec["config"].get("sensitive_tools", []), flags)

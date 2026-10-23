@@ -93,16 +93,76 @@ async def test_a_factory_merging_remote_tools_builds_and_offers_them():
     assert sorted(client.calls[0].tool_names) == ["ask_billing", "ask_sales", "order_status"]
 
 
-def test_a_later_tool_with_the_same_name_replaces_an_earlier_one_as_for_functions():
-    first, second = PeerTool(reply="first"), PeerTool(reply="second")
-    assert _agent([first, second])._local_tools["ask_billing"] is second
-
+def test_a_local_tool_keeps_its_name_whichever_order_a_peer_comes_in(caplog):
     @tool(name="ask_billing")
     def local() -> str:
         return ""
 
-    assert _agent([local, first])._local_tools["ask_billing"] is first
-    assert _agent([first, local])._local_tools["ask_billing"] is local
+    peer = PeerTool()
+    with caplog.at_level("WARNING", logger="genfleet.sdk.agent"):
+        assert _agent([local, peer])._local_tools["ask_billing"] is local
+        assert _agent([peer, local])._local_tools["ask_billing"] is local
+    assert caplog.text.count("tool 'ask_billing' skipped: the name is already taken") == 2
+
+
+def test_a_plain_function_also_keeps_its_name_over_a_peer_listed_first():
+    def ask_billing(message: str) -> str:
+        """Local billing."""
+        return "local"
+
+    agent = _agent([PeerTool(), ask_billing])
+    assert agent._local_tools["ask_billing"].schema().description == "Local billing."
+
+
+@pytest.mark.parametrize("order", ["local_first", "peer_first"])
+def test_a_peer_cannot_shadow_a_sensitive_local_tool(order):
+    @tool(name="ask_billing", sensitive=True)
+    def refund() -> str:
+        return ""
+
+    tools = [refund, PeerTool()] if order == "local_first" else [PeerTool(), refund]
+    agent = _agent(tools)
+    assert agent._local_tools["ask_billing"] is refund
+    assert agent._sensitive_tools({}) == {"ask_billing"}
+
+
+def test_of_two_tool_protocol_objects_with_one_name_the_first_wins(caplog):
+    first, second = PeerTool(reply="first"), PeerTool(reply="second")
+    with caplog.at_level("WARNING", logger="genfleet.sdk.agent"):
+        agent = _agent([first, second])
+    assert agent._local_tools["ask_billing"] is first
+    assert "tool 'ask_billing' skipped: the name is already taken" in caplog.text
+
+
+def test_functions_with_one_name_still_replace_each_other_last_wins():
+    @tool(name="dup")
+    def a() -> str:
+        return "a"
+
+    @tool(name="dup")
+    def b() -> str:
+        return "b"
+
+    assert _agent([a, b])._local_tools["dup"] is b
+
+
+def test_a_tool_protocol_object_named_like_a_slug_key_is_skipped(caplog):
+    with caplog.at_level("WARNING", logger="genfleet.sdk.agent"):
+        agent = _agent([PeerTool("@acme/tickets")])
+    assert agent._local_tools == {}
+    assert "can't start with '@'" in caplog.text
+
+
+def test_schema_is_read_once_per_tool_protocol_object():
+    class Counting(PeerTool):
+        reads = 0
+
+        def schema(self) -> ToolSchema:
+            Counting.reads += 1
+            return super().schema()
+
+    _agent([Counting()])
+    assert Counting.reads == 1
 
 
 def test_a_reserved_name_is_refused_for_a_tool_protocol_object():
