@@ -150,3 +150,42 @@ def test_a_model_entry_must_be_a_plain_catalog_id(tmp_path, model):
     _write(tmp_path, f'[agent]\nname = "support"\nmodels = ["{model}"]\n')
     with pytest.raises(ManifestError, match="models"):
         load_agent_manifest(tmp_path)
+
+
+# A manifest written for an older SDK may still carry an `egress` list. The
+# SDK no longer reads it: the key loads, is ignored, and never fails, even
+# when its value would once have been refused.
+@pytest.mark.parametrize("egress", ['["api.github.com"]', '["10.0.0.1"]', '"not-a-list"'])
+def test_an_agent_manifest_ignores_an_egress_key(tmp_path, egress):
+    _write(tmp_path, f'[agent]\nname = "support"\negress = {egress}\n')
+    manifest = load_agent_manifest(tmp_path)
+    assert manifest.name == "support"
+    assert not hasattr(manifest, "egress")
+    assert "egress" not in manifest.model_dump()
+
+
+@pytest.mark.parametrize("egress", ['["api.open-meteo.com"]', '["10.0.0.1"]', '"not-a-list"'])
+def test_a_tool_manifest_ignores_an_egress_key(tmp_path, egress):
+    _write(
+        tmp_path,
+        f'[tool]\nslug = "@acme/weather"\nversion = "1.0.0"\n'
+        f'entry = "weather:forecast"\negress = {egress}\n',
+    )
+    manifest = load_tool_manifest(tmp_path)
+    assert manifest.slug == "@acme/weather"
+    assert not hasattr(manifest, "egress")
+    assert "egress" not in manifest.model_dump()
+
+
+@pytest.mark.parametrize("section", ["tools", "mcps"])
+def test_a_tool_ref_ignores_an_egress_key(tmp_path, section):
+    _write(
+        tmp_path,
+        f'[agent]\nname = "support"\n\n[{section}]\n'
+        '"@acme/x" = { spec = "1.x", egress = ["10.0.0.1"] }\n',
+    )
+    manifest = load_agent_manifest(tmp_path)
+    (ref,) = getattr(manifest, section)
+    assert (ref.slug, ref.spec) == ("@acme/x", "1.x")
+    assert not hasattr(ref, "egress")
+    assert "egress" not in ref.model_dump()
