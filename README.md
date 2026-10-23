@@ -143,8 +143,10 @@ async def test_customer_order_lookup():  # pytest-asyncio
     assert client.calls[1].tool_results[0]["content"] == "A1: shipped"
 ```
 
-A tool call is a `ToolCall` or a mapping with `name`, `arguments` and an
-optional `id` (`call_1`, `call_2`, ... when left out).
+A tool call is a `ToolCall` or a mapping with `name` and optional
+`arguments`, `id` and `thought_signature`. A missing id becomes `call_<n>`,
+skipping ids the script already uses. The client checks the script when it is
+built and names the step of an unknown key or a missing `name`.
 
 ### Memory
 

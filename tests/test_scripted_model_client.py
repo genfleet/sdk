@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from genfleet.sdk import (
+    APPROVED_CALL_KEY,
     CONFIRMATION_REQUESTS_KEY,
     TOOL_EVENT_KEY,
     Agent,
     AgentInput,
     TokenUsage,
     ToolCall,
+    confirmations,
+    sign_approved_call,
     tool,
 )
 from genfleet.sdk.caller import CALLER_METADATA_KEY, HOSTED_ENV
-from genfleet.sdk.confirmations import _PENDING_RESULT
+from genfleet.sdk.confirmations import (
+    _PEER_REFUSAL,
+    _PENDING_RESULT,
+    APPROVAL_KEY_ENV,
+    PEER_TURN_KEY,
+)
 from genfleet.sdk.models import ModelClient, ScriptedModelClient, Step
 
 ran: list[tuple[str, dict]] = []
@@ -23,7 +33,9 @@ ran: list[tuple[str, dict]] = []
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
     ran.clear()
+    confirmations._RUN.clear()
     monkeypatch.delenv(HOSTED_ENV, raising=False)
+    monkeypatch.delenv(APPROVAL_KEY_ENV, raising=False)
 
 
 @tool(audiences=["operator", "customer"])
@@ -47,8 +59,8 @@ def delete_account(user: str) -> str:
     return "deleted"
 
 
-def _agent(client: ScriptedModelClient, tools: list) -> Agent:
-    return Agent(role="r", model={"model": "m"}, model_client=client, tools=tools)
+def _agent(client: ScriptedModelClient, tools: list, **kwargs) -> Agent:
+    return Agent(role="r", model={"model": "m"}, model_client=client, tools=tools, **kwargs)
 
 
 async def _run(agent: Agent, metadata: dict | None = None) -> tuple[str, list[dict], dict]:
@@ -68,8 +80,48 @@ def test_is_a_model_client():
 
 
 def test_a_step_must_be_text_or_a_step():
-    with pytest.raises(TypeError, match="str or a Step"):
-        ScriptedModelClient([{"name": "order_status"}])
+    with pytest.raises(TypeError, match="script step 1: a step is a str or a Step"):
+        ScriptedModelClient(["hi", {"name": "order_status"}])
+
+
+def test_an_unknown_tool_call_key_is_refused_when_the_script_is_built():
+    with pytest.raises(TypeError, match="script step 1: unknown tool call key 'args'"):
+        ScriptedModelClient(["hi", Step(tool_calls=[{"name": "order_status", "args": {"order_id": "A1"}}])])
+
+
+def test_a_tool_call_needs_a_name():
+    with pytest.raises(TypeError, match="script step 0: a tool call needs a 'name'"):
+        ScriptedModelClient([Step(tool_calls=[{"arguments": {}}])])
+
+
+def test_a_badly_typed_tool_call_is_refused():
+    with pytest.raises(TypeError, match="script step 0: invalid tool call"):
+        ScriptedModelClient([Step(tool_calls=[{"name": "order_status", "arguments": "A1"}])])
+
+
+def test_a_step_keeps_its_own_copy_of_the_calls():
+    calls = [{"name": "order_status", "arguments": {"order_id": "A1"}}]
+    step = Step(tool_calls=calls)
+    calls.append({"name": "refund"})
+    calls[0]["name"] = "changed"
+    assert isinstance(step.tool_calls, tuple)
+    assert [tc["name"] for tc in step.tool_calls] == ["order_status"]
+
+
+async def test_auto_ids_skip_ids_the_script_uses():
+    client = ScriptedModelClient([
+        Step(tool_calls=[{"name": "order_status", "arguments": {"order_id": "A1"}}, {"id": "call_1", "name": "order_status", "arguments": {"order_id": "B2"}}]),
+        Step(tool_calls=[{"name": "order_status", "arguments": {"order_id": "C3"}}, {"id": "call_3", "name": "order_status", "arguments": {"order_id": "D4"}}]),
+        "ok",
+    ])
+    await _run(_agent(client, [order_status]))
+    assert [r["tool_call_id"] for r in client.calls[1].tool_results] == ["call_2", "call_1"]
+    assert [r["tool_call_id"] for r in client.calls[2].tool_results] == ["call_4", "call_3"]
+
+
+def test_an_explicit_id_twice_in_one_step_is_refused():
+    with pytest.raises(ValueError, match="script step 0: tool call id 'x' is used twice"):
+        ScriptedModelClient([Step(tool_calls=[{"id": "x", "name": "a"}, {"id": "x", "name": "b"}])])
 
 
 async def test_one_tool_call_then_text():
@@ -154,17 +206,76 @@ async def test_a_sensitive_tool_does_not_run_and_the_model_sees_it_pending():
     assert final[CONFIRMATION_REQUESTS_KEY] == [{"tool": "delete_account", "arguments": {"user": "u1"}}]
 
 
-async def test_token_usage_is_reported_per_step():
-    client = ScriptedModelClient([
+async def test_token_usage_is_reported_per_step_and_summed_by_the_agent():
+    steps = [
         Step(tool_calls=[{"name": "order_status", "arguments": {"order_id": "A1"}}], token_usage=TokenUsage(total_tokens=3)),
         Step(text="ok", token_usage=TokenUsage(total_tokens=4)),
-    ])
-    chunks = [c async for c in client.complete([], [])]
+    ]
+    client = ScriptedModelClient(steps)
+    events = []
+    await _run(_agent(client, [order_status], audit={"backend": "callback", "callback": events.append}))
+    end = next(e for e in events if e.event_type == "invocation.end")
+    assert end.data["total_token_usage"]["total_tokens"] == 7
+
+    chunks = [c async for c in ScriptedModelClient(steps).complete([], [])]
     assert chunks[-1].tool_calls and not chunks[-1].done
     assert chunks[-1].token_usage == TokenUsage(total_tokens=3)
-    chunks = [c async for c in client.complete([], [])]
+
+
+async def test_a_text_step_ends_the_answer():
+    chunks = [c async for c in ScriptedModelClient([Step(text="ok")]).complete([], [])]
     assert [(c.content, c.done) for c in chunks] == [("ok", False), ("", True)]
-    assert chunks[-1].token_usage == TokenUsage(total_tokens=4)
+
+
+async def test_a_tool_that_was_not_offered_is_refused_and_does_not_run():
+    client = ScriptedModelClient([
+        Step(tool_calls=[{"name": "refund", "arguments": {"order_id": "A1", "amount": 5}}]),
+        "Sorry.",
+    ])
+    await _run(_agent(client, [order_status, refund]), {CALLER_METADATA_KEY: {"role": "customer"}})
+
+    assert client.calls[0].tool_names == ["order_status"]
+    assert ran == []
+    assert client.calls[1].tool_results[0]["content"].startswith("Error:")
+    assert "refund" in client.calls[1].tool_results[0]["content"]
+
+
+async def test_a_peer_turn_is_refused_a_sensitive_tool():
+    client = ScriptedModelClient([Step(tool_calls=[{"name": "delete_account", "arguments": {"user": "u1"}}]), "No."])
+    _, _, final = await _run(_agent(client, [delete_account]), {PEER_TURN_KEY: True})
+
+    assert ran == []
+    assert client.calls[1].tool_results[0]["content"] == _PEER_REFUSAL
+    assert CONFIRMATION_REQUESTS_KEY not in final
+
+
+async def test_a_thought_signature_round_trips():
+    client = ScriptedModelClient([
+        Step(tool_calls=[{"name": "order_status", "arguments": {"order_id": "A1"}, "thought_signature": "c2ln"}]),
+        "ok",
+    ])
+    await _run(_agent(client, [order_status]))
+    assert client.calls[1].messages[-2]["tool_calls"][0]["thought_signature"] == "c2ln"
+
+
+async def test_an_approved_call_result_is_the_first_recorded_result(monkeypatch):
+    monkeypatch.setenv(APPROVAL_KEY_ENV, "k")
+    call = {
+        "confirmation_id": "c-1",
+        "tool": "delete_account",
+        "arguments": {"user": "u1"},
+        "args_hash": "h",
+        "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+    }
+    call["signature"] = sign_approved_call(call, "k")
+    client = ScriptedModelClient(["It is done."])
+    text, _, _ = await _run(_agent(client, [delete_account]), {APPROVED_CALL_KEY: call})
+
+    assert text == "It is done."
+    assert ran == [("delete_account", {"user": "u1"})]
+    assert client.calls[0].tool_results == [
+        {"tool_call_id": "approved-c-1", "name": "delete_account", "content": "deleted"}
+    ]
 
 
 async def test_running_out_of_script_is_a_clear_error():
