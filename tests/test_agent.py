@@ -64,7 +64,7 @@ def test_agent_context_optional():
 
 
 def test_agent_data_parameter_is_gone():
-    # Reserved for RAG since 0.1 and never implemented;  folds RAG
+    # Reserved for RAG since 0.1 and never implemented; platform memory folds RAG
     # into memory. A silent no-op parameter is worse than a TypeError.
     with pytest.raises(TypeError):
         _make_agent(data={"type": "lightrag", "storage_dir": "/tmp"})
@@ -559,7 +559,7 @@ def test_a_token_without_a_url_runs_stateless_and_says_so(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_a_memory_off_turn_neither_loads_nor_writes_the_session():
-    """: the platform turns memory off for a public A2A turn."""
+    """The platform turns memory off for a public A2A turn."""
     from genfleet.sdk.schemas import Message
 
     stored: dict[str, list] = {"sess-1": [Message(role="user", content="a secret from before")]}

@@ -244,8 +244,8 @@ class Agent:
             await self._init_mcp()
 
         session_id = input.metadata.get("session_id") or str(uuid.uuid4())
-        # The platform turns memory off for a turn from its public A2A edge
-        #: the session is then neither loaded nor written.
+        # The platform turns memory off for a turn from its public A2A edge:
+        # the session is then neither loaded nor written.
         use_memory = self._memory is not None and input.metadata.get(MEMORY_METADATA_KEY) != "off"
 
         if auditor:
@@ -316,7 +316,7 @@ class Agent:
                 ))
                 offered.add(SKILL_TOOL_NAME)
 
-            # : sensitive tools wait for an owner's approval; an
+            # Sensitive tools wait for an owner's approval; an
             # approved call (signed by the engine) runs first, exactly once.
             sensitive = self._sensitive_tools(_sensitive_flags_of(input.metadata))
             peer_turn = _is_peer_turn(input.metadata)
@@ -553,8 +553,8 @@ class Agent:
         if isinstance(self._memory, AppendableMemory):
             # One turn, not the whole thread: the store already holds
             # what ``load`` returned. ``subject`` and the session's
-            # metadata ride on the input — a channel ingress sets them
-            #; a plain caller may leave them out.
+            # metadata ride on the input — a channel ingress sets them;
+            # a plain caller may leave them out.
             await self._memory.append(
                 session_id,
                 turn,

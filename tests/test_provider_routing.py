@@ -1,5 +1,5 @@
 """`provider_for` routes by prefix; `openrouter/` is the OpenAI provider
-pointed at the gateway with the vendor id passed through.
+pointed at OpenRouter with the vendor id passed through.
 
 The OpenAI client is stubbed out, so these assert on what the SDK hands the
 client (api_key, base_url, model) rather than on any provider internals.
@@ -58,7 +58,7 @@ async def _drive_one_completion(provider) -> None:
         pass
 
 
-async def test_openrouter_selects_the_openai_provider_at_the_gateway(clients):
+async def test_openrouter_selects_the_openai_provider_at_openrouter(clients):
     provider = provider_for({"model": MODEL, "api_key": "sk-or-k"})
 
     assert isinstance(provider, OpenAIProvider)
@@ -72,14 +72,14 @@ async def test_openrouter_selects_the_openai_provider_at_the_gateway(clients):
 
 
 @pytest.mark.parametrize("base_url", [None, ""], ids=["none", "empty"])
-async def test_a_blank_base_url_still_falls_back_to_the_gateway(clients, base_url):
+async def test_a_blank_base_url_still_falls_back_to_openrouter(clients, base_url):
     # Without this an `sk-or-` key would be sent to api.openai.com or $OPENAI_BASE_URL.
     provider_for({"model": MODEL, "api_key": "sk-or-k", "base_url": base_url})
 
     assert clients[0].init_kwargs["base_url"] == _OPENROUTER_BASE_URL
 
 
-async def test_an_explicit_base_url_beats_the_gateway_default(clients):
+async def test_an_explicit_base_url_beats_the_openrouter_default(clients):
     provider = provider_for(
         {"model": MODEL, "api_key": "k", "base_url": "http://localhost:11434/v1"}
     )

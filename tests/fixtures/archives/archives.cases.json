@@ -42,7 +42,7 @@
       "file": "symlink-inside.tar",
       "valid": false,
       "reason": "link",
-      "note": "the  alias: review reads A, extraction leaves B"
+      "note": "the alias: review reads A, extraction leaves B"
     },
     {
       "file": "symlink-outside.tar",

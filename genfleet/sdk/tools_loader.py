@@ -24,8 +24,8 @@ The mounted resolver is here rather than in the engine because it is only a
 filesystem lookup: it reads directories and knows nothing about the registry
 that filled them. A resolver that reached into tenant installations, or that
 called the registry itself, would drag the platform across the open-source
-boundary — and, inside a sandbox, would need a credential  refused to
-put there.
+boundary — and, inside a sandbox, would need a registry credential that does not belong
+there.
 """
 
 from __future__ import annotations
@@ -149,13 +149,12 @@ class MountedToolResolver:
     Resolve against tool artifacts the engine unpacked and mounted read-only.
 
     The sandbox counterpart to `LocalToolResolver`, and deliberately *only* a
-    filesystem lookup.  rejected giving agent code a registry
-    credential and network reachability — "spending the isolation 
-    just bought" — and a resolver that called the registry from inside the
-    sandbox would spend it again for tools. So the engine resolves each name
-    to a digest on the host, fetches and verifies the bytes there, and mounts
-    them; by the time this class runs there is nothing left to authenticate to
-    and nothing to fetch.
+    filesystem lookup. Agent code is not given a registry credential or
+    network reachability, and a resolver that called the registry from inside
+    the sandbox would hand it both again for tools. So the engine resolves
+    each name to a digest on the host, fetches and verifies the bytes there,
+    and mounts them; by the time this class runs there is nothing left to
+    authenticate to and nothing to fetch.
 
     That keeps this class inside the [[open-source-boundary]]: it reads
     directories, and knows nothing about the registry that filled them.

@@ -34,7 +34,7 @@ verifies, it has not expired, and its ``confirmation_id`` has not already run
 in this process. The key sits in the agent's own environment, so the
 signature stops **other agents and direct callers** from forging an
 approval. It does not stop the agent's own code, which could run any tool
-anyway. For code that does not use ``Agent``, all of this is advisory, as the
+anyway. For code that does not use ``Agent``, all of this is advisory, as a
 caller's role is.
 
 **Peer turns fail closed.** On a turn another agent started

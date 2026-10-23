@@ -178,7 +178,7 @@ class ToolWrapper:
         #: The manifest slug a mounted tool came from (``load_tools``), so the
         #: platform's setting can name it before its function name is known.
         self.slug = slug
-        #: : the author's marking. A sensitive call doesn't run
+        #: The author's marking. A sensitive call doesn't run
         #: until an owner or admin approves it; the platform's flag wins.
         self.sensitive = sensitive
         #: Parameters annotated `ToolContext`, filled at call time.

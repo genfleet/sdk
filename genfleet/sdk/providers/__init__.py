@@ -13,7 +13,7 @@ _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 #: OpenRouter's optional attribution headers (https://openrouter.ai/docs):
 #: they credit the app in OpenRouter's rankings and are harmless anywhere
-#: else. Sent only when the request goes to the gateway, so an explicit
+#: else. Sent only when the request goes to OpenRouter, so an explicit
 #: `base_url` pointing at Groq or Ollama does not carry them.
 _OPENROUTER_HEADERS = {
     "HTTP-Referer": "https://genfleet.ai",
@@ -64,7 +64,7 @@ def provider_for(config: ModelConfig) -> Provider:
         return GeminiProvider(resolved)
 
     if provider_key == "openrouter" and not resolved.get("base_url"):
-        # A missing, None or empty base_url all mean "use the gateway"; without
+        # A missing, None or empty base_url all mean "use OpenRouter"; without
         # this an `sk-or-` key would be sent to api.openai.com or $OPENAI_BASE_URL.
         resolved["base_url"] = _OPENROUTER_BASE_URL
     if provider_key == "openrouter" and resolved.get("base_url") == _OPENROUTER_BASE_URL:
