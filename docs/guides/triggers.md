@@ -21,7 +21,16 @@ that pattern, how to make it safe to run twice, and where its state lives.
    filled in: *"Send the daily report for 2026-10-23."*
 4. **Idempotency on the key.** The tool records the key before it acts and
    does nothing when the key has already been handled, so a retried or
-   duplicated trigger is harmless.
+   duplicated trigger can't repeat the job.
+
+> **Self-served agents have no roles.** On an agent you run with `serve()`,
+> a turn without a verified caller gets every tool, `send_daily_report`
+> included. The example binds to `127.0.0.1` for that reason. If you expose it,
+> put your own authentication in front, and have that proxy strip every
+> `genfleet.*` key from the request's `metadata` (for example
+> `genfleet.caller`, `genfleet.peer_turn`, `genfleet.approved_call`):
+> `serve()` passes request metadata through to the agent unchanged, so a caller
+> who can set those keys can claim a role.
 
 ```python
 # report_agent.py
@@ -30,31 +39,46 @@ import os
 import sqlite3
 from pathlib import Path
 
-from genfleet.sdk import Agent, tool
+from genfleet.sdk import Agent, ModelConfig, tool
 from genfleet.sdk.serve import serve
 
 LEDGER = Path(os.environ.get("REPORT_LEDGER", "reports.sqlite3"))
+DEFAULT_MODEL = "openrouter/nex-agi/nex-n2.5-mini:free"
 
 
-def claim(key: str) -> bool:
-    """Record `key` as handled. False if it already was: the run is a duplicate."""
-    with sqlite3.connect(LEDGER) as db:
-        db.execute("CREATE TABLE IF NOT EXISTS handled (key TEXT PRIMARY KEY, at TEXT)")
-        cursor = db.execute(
-            "INSERT OR IGNORE INTO handled VALUES (?, ?)",
-            (key, dt.datetime.now(dt.UTC).isoformat()),
-        )
-        return cursor.rowcount == 1
+def _db() -> sqlite3.Connection:
+    db = sqlite3.connect(LEDGER)
+    db.execute("CREATE TABLE IF NOT EXISTS jobs (key TEXT PRIMARY KEY, status TEXT, at TEXT)")
+    return db
+
+
+def claim(key: str) -> str | None:
+    """Claim `key`. None if this run owns it now, else the status it already has."""
+    with _db() as db:
+        now = dt.datetime.now(dt.UTC).isoformat()
+        cursor = db.execute("INSERT OR IGNORE INTO jobs VALUES (?, 'claimed', ?)", (key, now))
+        if cursor.rowcount == 1:
+            return None
+        return db.execute("SELECT status FROM jobs WHERE key = ?", (key,)).fetchone()[0]
+
+
+def mark(key: str, status: str) -> None:
+    with _db() as db:
+        db.execute("UPDATE jobs SET status = ? WHERE key = ?", (status, key))
 
 
 def release(key: str) -> None:
-    """Forget `key`, so a later trigger can try again."""
-    with sqlite3.connect(LEDGER) as db:
-        db.execute("DELETE FROM handled WHERE key = ?", (key,))
+    """Forget `key`, so a later trigger runs the job again."""
+    with _db() as db:
+        db.execute("DELETE FROM jobs WHERE key = ?", (key,))
 
 
-def build_and_send_report(date: str) -> str:
-    return f"report for {date} sent"  # your real work goes here
+def build_report(date: str) -> str:
+    return f"Sales for {date}: ..."  # read-only work: safe to repeat
+
+
+def send_report(report: str) -> None:
+    pass  # the side effect: an email, an API call
 
 
 @tool(audiences=["operator"])
@@ -65,13 +89,33 @@ def send_daily_report(date: str) -> str:
     except ValueError:
         return f"{date!r} is not a date (YYYY-MM-DD); nothing was done."
     key = f"daily-report:{date}"
-    if not claim(key):
+    status = claim(key)
+    if status == "done":
         return f"The report for {date} was already sent; nothing was done."
+    if status is not None:
+        return (
+            f"An earlier run for {date} did not finish ({status}). Check whether the report "
+            "went out before running it again; nothing was done."
+        )
     try:
-        return build_and_send_report(date)
+        report = build_report(date)
     except Exception:
-        release(key)  # it raised: let the next trigger try again
+        release(key)  # nothing was sent yet: the next trigger can retry
         raise
+    try:
+        send_report(report)
+    except Exception:
+        mark(key, "uncertain")  # it may have gone out: a person checks before a retry
+        raise
+    mark(key, "done")
+    return f"The report for {date} was sent."
+
+
+def model_config() -> ModelConfig:
+    """As in the agent factory guide: a key only when the environment has one."""
+    model = os.environ.get("REPORT_MODEL", DEFAULT_MODEL)
+    key = os.environ.get("OPENROUTER_API_KEY")
+    return {"model": model, "api_key": key} if key else {"model": model}
 
 
 def build_agent(remote_tools=()):
@@ -80,23 +124,32 @@ def build_agent(remote_tools=()):
             "You run back-office jobs. When asked to send the daily report for a date, "
             "call send_daily_report with that date and reply with its result."
         ),
-        model={
-            "model": "openrouter/nex-agi/nex-n2.5-mini:free",
-            "api_key": os.environ["OPENROUTER_API_KEY"],
-        },
+        model=model_config(),
         tools=[send_daily_report, *remote_tools],
     )
 
 
 if __name__ == "__main__":
-    serve(build_agent(), name="reports", port=8000)
+    # Local only: a self-served agent offers every tool to anyone who reaches it.
+    serve(build_agent(), name="reports", host="127.0.0.1", port=8000)
 ```
 
-The key goes into the ledger *before* the work starts. Two triggers racing for
-the same date can't both win, because the second insert is ignored. If the work
-raises, the key is released so the next trigger retries. Whether a retry is
-safe depends on how far the work got, so make the work itself safe to repeat
-where you can (see below).
+The job is split at the side effect, and each failure is handled by where it
+happened:
+
+| Where it stopped | Ledger | Next trigger |
+|------------------|--------|--------------|
+| Finished | `done` | Does nothing |
+| `build_report` raised (nothing sent) | released | Runs the job again |
+| `send_report` raised (it may have gone out) | `uncertain` | Does nothing, and says a person should check |
+| The process died between `claim` and the end | stays `claimed` | Does nothing, and says a person should check |
+
+The last two rows need a person. Check whether the report actually went out,
+then either mark the key `done` or `release` it so the next trigger sends it.
+Two triggers racing for the same date can't both run the job: the second
+insert is ignored. Where the destination accepts an idempotency key, pass the
+job key (`daily-report:2026-10-23`) to it as well. A repeated send is then
+harmless even in the uncertain cases.
 
 The tool is tested without a model or a server:
 
@@ -111,39 +164,52 @@ from genfleet.sdk import ToolCall
 import report_agent
 
 
-def test_second_trigger_for_the_same_date_does_nothing(tmp_path, monkeypatch):
-    monkeypatch.setattr(report_agent, "LEDGER", tmp_path / "ledger.sqlite3")
-    call = ToolCall(id="1", name="send_daily_report", arguments={"date": "2026-10-23"})
-    first = asyncio.run(report_agent.send_daily_report.call(call))
-    second = asyncio.run(report_agent.send_daily_report.call(call))
-    assert first == "report for 2026-10-23 sent"
-    assert second == "The report for 2026-10-23 was already sent; nothing was done."
+def trigger(date):
+    call = ToolCall(id="1", name="send_daily_report", arguments={"date": date})
+    return asyncio.run(report_agent.send_daily_report.call(call))
 
 
-def test_a_failed_run_can_be_retried(tmp_path, monkeypatch):
+@pytest.fixture(autouse=True)
+def ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(report_agent, "LEDGER", tmp_path / "ledger.sqlite3")
 
-    def boom(date):
-        raise RuntimeError("mail server down")
 
-    monkeypatch.setattr(report_agent, "build_and_send_report", boom)
-    call = ToolCall(id="1", name="send_daily_report", arguments={"date": "2026-10-24"})
+def test_second_trigger_for_the_same_date_does_nothing():
+    assert trigger("2026-10-23") == "The report for 2026-10-23 was sent."
+    assert trigger("2026-10-23") == "The report for 2026-10-23 was already sent; nothing was done."
+
+
+def test_a_failure_before_sending_can_be_retried(monkeypatch):
+    working = report_agent.build_report
+
+    def broken(date):
+        raise RuntimeError("database down")
+
+    monkeypatch.setattr(report_agent, "build_report", broken)
     with pytest.raises(RuntimeError):
-        asyncio.run(report_agent.send_daily_report.call(call))
-    assert report_agent.claim("daily-report:2026-10-24")
+        trigger("2026-10-24")
+    monkeypatch.setattr(report_agent, "build_report", working)
+    assert trigger("2026-10-24") == "The report for 2026-10-24 was sent."
+
+
+def test_a_failure_while_sending_is_not_retried_blindly(monkeypatch):
+    def timeout(report):
+        raise TimeoutError("no answer from the mail server")
+
+    monkeypatch.setattr(report_agent, "send_report", timeout)
+    with pytest.raises(TimeoutError):
+        trigger("2026-10-25")
+    assert "did not finish (uncertain)" in trigger("2026-10-25")
 ```
 
 ## The external caller
 
 ### An agent you serve yourself
 
-`serve()` exposes the agent over A2A, so a cron job can post the trigger
-message itself. Send the key in the request's `metadata` as `turn_id`: `Agent`
-hands it to its memory backend as the turn's idempotency key, and a backend
-that honours it keeps the first copy of a retried turn and drops the replay.
-The Redis backend doesn't, so the ledger is still what keeps the job from
-running twice. Give scheduled jobs their own `contextId`, so their history
-doesn't mix with anyone's conversation.
+`serve()` exposes the agent over A2A, so a cron job on the same machine can
+post the trigger message. Give scheduled jobs their own `contextId`, so their
+history doesn't mix with anyone's conversation. A JSON-RPC error still comes
+back as HTTP 200, so check the body, not just the status:
 
 ```bash
 # crontab: 06:00 every day
@@ -153,24 +219,28 @@ doesn't mix with anyone's conversation.
 ```bash
 #!/bin/sh
 # send-daily-report.sh
+set -eu
 DATE=$(date +%F)
-curl -sf -X POST http://localhost:8000 \
+RESPONSE=$(curl -sS -X POST http://127.0.0.1:8000 \
   -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
   -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"SendMessage\",\"params\":{
         \"message\":{\"messageId\":\"daily-report-$DATE\",\"role\":\"ROLE_USER\",
                    \"contextId\":\"jobs:daily-report\",
-                   \"parts\":[{\"text\":\"Send the daily report for $DATE.\"}]},
-        \"metadata\":{\"turn_id\":\"daily-report:$DATE\"}}}"
+                   \"parts\":[{\"text\":\"Send the daily report for $DATE.\"}]}}}")
+# Fails (exit 1) on a JSON-RPC error or a task that didn't complete.
+echo "$RESPONSE" | jq -e '.error == null and .result.task.status.state == "TASK_STATE_COMPLETED"' >/dev/null
+# The agent's reply, for the cron log: check it says the report was sent.
+echo "$RESPONSE" | jq -r '.result.task.artifacts[0].parts[0].text'
 ```
 
-An agent you serve yourself has no roles: a turn without a verified caller
-gets every tool, `send_daily_report` included. Keep that endpoint off the
-public internet, or put your own authentication in front of it.
+A retried request can't run the job twice, because the ledger guards it.
+`Agent` hands a `turn_id` from the request's `metadata` to its memory as the
+turn's idempotency key, but only the platform's memory backend uses it. For a
+self-served agent the ledger is the only protection.
 
 ### An agent hosted on the platform
 
-Send the trigger as a workspace member with the `gf` CLI, from any machine
-where `gf login` has been run:
+Send the trigger as a workspace member with the `gf` CLI:
 
 ```bash
 0 6 * * * gf agents chat reports "Send the daily report for $(date +\%F)."
@@ -179,6 +249,12 @@ where `gf login` has been run:
 The agent sees that turn as an operator in a private chat, so it is offered
 its operator tools. The agent must serve operators, which it does unless its
 manifest's `audiences` leaves `"operator"` out.
+
+The machine running cron holds a logged-in `gf` session, which is a long-lived
+credential, stored under `~/.genfleet/` (the CLI writes it readable only by
+its owner). Use a dedicated account for it, not a person's login, with the
+lowest workspace role that can chat with the agent, and run the cron job as an
+OS user nobody else shares.
 
 A hosted agent has no durable local files, so the SQLite ledger above doesn't
 fit there. Keep the idempotency where the effect lands:
@@ -216,15 +292,34 @@ turn it is called in:
   triggered with `gf agents chat`, that's the member who sent it. Their
   operator runs and a customer's runs never mix, and a call naming a turn that
   has already ended is refused.
-- **Outside any turn**, the scope is the agent's own **background scope**. That
-  covers code that isn't running inside a turn's model call or tool, such as a
-  task your process started on its own. No customer turn can read the
-  background scope.
+- **Outside any turn**, the scope is the agent's own **background scope**.
+  That covers code started outside every turn: work begun at startup, or a
+  thread of your own. No customer turn can read the background scope.
 
 `Agent` makes the turn visible to the store while its model client or a tool
-runs. Your tool code is therefore inside the turn without doing anything. Code
-that runs elsewhere but should count as part of a turn can wrap the call in
+runs, so your tool code is inside the turn without doing anything. Code that
+runs elsewhere but should count as part of a turn can wrap the call in
 `genfleet.sdk.turn.call_within(input.metadata, ...)`.
+
+**A task started from a tool still belongs to the turn.** `asyncio.create_task`
+copies the current context, turn included. Once the turn has ended, that
+task's state calls name an ended turn and are refused. They do not fall back
+to the background scope. For work that outlives the turn, start the task in a
+fresh context, so it runs in the background scope explicitly:
+
+```python
+import asyncio
+import contextvars
+
+_background: set[asyncio.Task] = set()  # keeps tasks alive until they finish
+
+
+def start_in_background(coro) -> None:
+    """Run `coro` outside the current turn, in the background scope."""
+    task = asyncio.create_task(coro, context=contextvars.Context())
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+```
 
 Locally (`LocalStateStore`) there is no stamping. The scope is the `agent` and
 `owner` values you pass, so use a fixed owner such as `"jobs"` for scheduled

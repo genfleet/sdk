@@ -15,7 +15,10 @@ tool = load_tool_manifest("acme-tickets")
 Both raise `ManifestError` when the file is missing, isn't valid TOML, or has a
 bad value. The message starts with the file's path, and `.path` and `.problem`
 hold the two parts. `gf agents push` and `gf tools push` run the same parser
-before they upload anything, so a bad manifest never reaches the registry.
+before they upload anything, so a manifest that fails these checks never
+reaches the registry. The parser checks the slug, `kind`, `audiences` and the
+shape of each table; it does not check the format of `version` or `entry`, so
+check those yourself.
 
 ## Agent manifest
 
@@ -67,6 +70,11 @@ customers write to. Which *tools* each audience gets is decided per tool; see
 "Operators and customers" in the [README](../../README.md#operators-and-customers).
 
 ### `[tools]` and `[mcps]`
+
+> **Beta:** for now, keep your tools in your agent's own package, as the
+> [publish guide](../../README.md#publish-on-genfleet-private-beta) does. A marketplace tool named
+> here is mounted only after a reviewer approves the agent's submission; until
+> then the agent runs without it.
 
 Each key is a tool slug and each value is a version spec. Both tables use the
 same format, and both spellings below are equivalent:
@@ -157,15 +165,17 @@ description = "Helpdesk API token"
 | Key | Required | Default | Meaning |
 |-----|----------|---------|---------|
 | `slug` | yes | | `@scope/name`, with the same rules as an agent's `[tools]` keys. Agents name the tool by this slug. |
-| `version` | yes | | The version you are publishing, as `MAJOR.MINOR.PATCH`. Agents' specs match against it. `gf tools push --tool-id` submits this exact version. |
+| `version` | yes | | The version you are publishing. Write it as `MAJOR.MINOR.PATCH`: agents' specs (`1.x`, `1.4.x`) match it by prefix. The parser accepts any string. `gf tools push --tool-id` submits this exact version. |
 | `kind` | no | `"cli"` | One of `"cli"`, `"http"`, `"mcp_stdio"`, `"mcp_http"`. See below. |
 | `description` | no | `""` | What the tool does. |
 | `entry` | yes | | `module:callable`, the function (or `@tool` object) `load_tools()` hands to the agent. The module path is relative to the tool's directory: `acme_tickets:create_ticket` is `create_ticket` in `acme_tickets.py`. |
 | `sensitive` | no | `false` | `true` makes every call to this tool wait for a workspace owner's or admin's approval. See [approvals](approvals-and-messaging.md). |
 
 **`kind`.** The parser accepts exactly these four values and rejects any
-other. `load_tools()` loads every tool the same way, whatever its `kind`: it
-imports `entry` and returns the callable.
+other. On the platform, `load_tools()` loads every tool the same way,
+whatever its `kind`: it imports `entry` from the tool's directory and returns
+the callable. Locally it uses whatever the installed tool package provides
+(see the [connectors guide](connectors.md#using-a-tool-from-an-agent-locally)).
 
 **`sensitive`.** The platform reads this when the tool is published and uses
 it as the tool's default on every turn. It can only add the marking: a tool

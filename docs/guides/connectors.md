@@ -7,6 +7,12 @@ then runs for every workspace, against that workspace's account.
 
 This guide builds `@acme/tickets`, a tool that opens a ticket in a helpdesk.
 
+> **Beta:** for now, keep tools in your agent's own package, as the
+> [publish guide](../../README.md#publish-on-genfleet-private-beta) does.
+> Marketplace tools are mounted only after review, and an agent that names one
+> runs without it until then. Use this guide to build and test a connector
+> ahead of that.
+
 ## Layout
 
 ```text
@@ -55,7 +61,12 @@ description = "Helpdesk API token"
 - `sensitive = true` would make every call wait for a workspace owner's
   approval (see [approvals](approvals-and-messaging.md)).
 
-Every key is described in the [manifest reference](manifest.md#tool-manifest).
+The keys a tool author needs are described in the
+[manifest reference](manifest.md#tool-manifest).
+
+Each workspace picks its own `base_url` here. Hosted agents have restricted
+outbound network access, so a host that is chosen per workspace may need
+review before the tool can reach it.
 
 ## The tool and `ToolContext`
 
@@ -67,40 +78,71 @@ never sees it and can't fill it in. The SDK builds it on every call.
 # acme-tickets/acme_tickets.py
 import asyncio
 import json
+import logging
+import urllib.error
 import urllib.request
 
-from genfleet.sdk import ToolContext, tool
+from genfleet.sdk import ToolContext, ToolSecretError, tool
+
+log = logging.getLogger(__name__)
+NOT_SET_UP = "The helpdesk tool isn't set up yet. Ask your workspace administrator."
+
+
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None  # a redirect would carry the token to wherever it points
+
+
+_OPENER = urllib.request.build_opener(_NoRedirects)
 
 
 @tool(audiences=["operator", "customer"])
 async def create_ticket(subject: str, body: str, ctx: ToolContext) -> str:
     """Open a helpdesk ticket and return its id."""
+    base_url = str(ctx.config.get("base_url", ""))
+    if not base_url.startswith("https://"):
+        log.warning("acme-tickets: base_url must be an https:// URL")
+        return NOT_SET_UP
+    try:
+        token = ctx.secret("api_token")
+    except ToolSecretError as exc:
+        log.warning("acme-tickets: %s", exc)  # names the secret, never a value
+        return NOT_SET_UP
     request = urllib.request.Request(
-        f"{ctx.config['base_url'].rstrip('/')}/api/tickets",
+        f"{base_url.rstrip('/')}/api/tickets",
         data=json.dumps({
             "subject": subject,
             "body": body,
             "queue": ctx.config.get("queue", "support"),
         }).encode(),
-        headers={
-            "Authorization": f"Bearer {ctx.secret('api_token')}",
-            "Content-Type": "application/json",
-        },
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
-    # urllib blocks; run it off the event loop so other turns keep going.
-    return await asyncio.to_thread(_send, request)
+    try:
+        # urllib blocks; run it off the event loop so other turns keep going.
+        return await asyncio.to_thread(_send, request)
+    except (urllib.error.URLError, TimeoutError) as exc:  # includes a refused redirect
+        log.warning("acme-tickets: request failed: %s", exc)
+        return "The helpdesk didn't answer. The ticket was not confirmed; try again later."
 
 
 def _send(request: urllib.request.Request) -> str:
-    with urllib.request.urlopen(request, timeout=20) as response:
+    with _OPENER.open(request, timeout=20) as response:
         return f"created ticket {json.load(response)['id']}"
 ```
 
 - `ctx.config` is a read-only mapping of the settings the tool was given.
   Read optional ones with a fallback, as `queue` is read above.
 - `ctx.secret("api_token")` returns the value, or raises `ToolSecretError`
-  naming the secret. The error never includes a value.
+  naming the secret. The error never includes a value, but it does describe
+  setup (which variable or binding is missing). Log it, and give the model a
+  fixed message instead, since on a customer-facing tool the model's words
+  reach customers.
+- `base_url` comes from whoever installed the tool, so check it before use.
+  The tool accepts only `https://` URLs (`urllib` would otherwise also open
+  `file:` and `ftp:` URLs), and it doesn't follow redirects, because a
+  followed redirect would send the `Authorization` header to wherever it
+  points.
 - Accept `ToolContext`, `ToolContext | None` or `Optional[ToolContext]`. Any
   other hint naming `ToolContext` raises `TypeError` when the tool is wrapped.
 - `audiences` is the tool's default audience. Without it, only operators get the
@@ -177,13 +219,11 @@ attaches it, and in a test `with_slug` does the same:
 import asyncio
 import io
 import json
-import urllib.request
 from pathlib import Path
 
-import pytest
-
-from acme_tickets import create_ticket
-from genfleet.sdk import ToolCall, ToolSecretError, load_tool_manifest, tool_env_namespace
+import acme_tickets
+from acme_tickets import NOT_SET_UP, create_ticket
+from genfleet.sdk import ToolCall, load_tool_manifest, tool_env_namespace
 
 SLUG = "@acme/tickets"
 NS = tool_env_namespace(SLUG)  # "GENFLEET_TOOL_ACME__TICKETS"
@@ -192,6 +232,15 @@ CALL = ToolCall(id="1", name="create_ticket", arguments={"subject": "Hi", "body"
 
 def run(tool):
     return asyncio.run(tool.call(CALL))
+
+
+def configure(monkeypatch, config, secrets=None):
+    monkeypatch.setenv(f"{NS}__CONFIG", json.dumps(config))
+    if secrets is None:
+        for name in (f"{NS}__SECRETS", "api_token", "API_TOKEN"):
+            monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(f"{NS}__SECRETS", json.dumps(secrets))
 
 
 def test_manifest_is_valid():
@@ -205,28 +254,30 @@ def test_the_model_never_sees_the_context():
 
 
 def test_creates_a_ticket(monkeypatch):
-    monkeypatch.setenv(f"{NS}__CONFIG", json.dumps({"base_url": "https://helpdesk.test"}))
-    monkeypatch.setenv(f"{NS}__SECRETS", json.dumps({"api_token": "t0ken"}))
+    configure(monkeypatch, {"base_url": "https://helpdesk.test"}, {"api_token": "t0ken"})
     sent = {}
 
-    def fake_urlopen(request, timeout):
+    def fake_open(request, timeout):
         sent["url"] = request.full_url
         sent["auth"] = request.get_header("Authorization")
         return io.BytesIO(b'{"id": 42}')
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(acme_tickets._OPENER, "open", fake_open)
 
     # load_tools() gives each tool its slug; do the same here.
     assert run(create_ticket.with_slug(SLUG)) == "created ticket 42"
     assert sent == {"url": "https://helpdesk.test/api/tickets", "auth": "Bearer t0ken"}
 
 
-def test_a_missing_secret_is_named(monkeypatch):
-    monkeypatch.setenv(f"{NS}__CONFIG", json.dumps({"base_url": "https://helpdesk.test"}))
-    for name in (f"{NS}__SECRETS", "api_token", "API_TOKEN"):
-        monkeypatch.delenv(name, raising=False)
-    with pytest.raises(ToolSecretError, match="api_token"):
-        run(create_ticket.with_slug(SLUG))
+def test_refuses_a_non_https_url(monkeypatch):
+    configure(monkeypatch, {"base_url": "file:///etc"}, {"api_token": "t0ken"})
+    assert run(create_ticket.with_slug(SLUG)) == NOT_SET_UP
+
+
+def test_a_missing_secret_gets_a_generic_answer(monkeypatch, caplog):
+    configure(monkeypatch, {"base_url": "https://helpdesk.test"})
+    assert run(create_ticket.with_slug(SLUG)) == NOT_SET_UP
+    assert "api_token" in caplog.text  # the detail goes to the log, not the model
 ```
 
 ### Using a tool from an agent locally
@@ -290,16 +341,23 @@ The [agent factory guide](agent-factory.md#testing-it) shows one.
 ## Publishing
 
 ```bash
-gf tools digest acme-tickets                     # the digest, computed offline
-gf tools push acme-tickets                       # validate, archive, store
-gf tools push acme-tickets --tool-id <tool id>   # store and submit for review
+gf tools digest acme-tickets    # the digest, computed offline
+gf tools push acme-tickets      # validate, archive, store
 ```
 
 `gf tools push` validates the manifest before uploading anything. It archives
 the directory deterministically and checks that the registry stored the same
-digest. Without `--tool-id` the archive is only stored: no agent can name it
-yet. With `--tool-id`, it's submitted for review as the `version` in your
-manifest.
+digest. On its own, that only stores the archive: no agent can name it yet.
+
+To submit it for review, the tool needs an entry in your workspace. Create
+one in the web app under **Tools → My tools → Create tool**, then pass that
+tool's id:
+
+```bash
+gf tools push acme-tickets --tool-id <the tool's id>   # store and submit for review
+```
+
+The submission carries the `version` from your manifest.
 
 What happens next:
 
@@ -317,16 +375,9 @@ What happens next:
    installs a marketplace *agent* that uses your tool also has to grant that
    agent the tool's secrets. Until it does, `ctx.secret(...)` raises
    `ToolSecretError`, saying to bind the secret in the tool's settings and
-   grant it to the agent. An exception from a tool ends the agent's turn, so
-   if you want the model to explain the problem instead, catch it and return
-   the message:
-
-   ```python
-   try:
-       token = ctx.secret("api_token")
-   except ToolSecretError as exc:
-       return f"Not configured: {exc}"
-   ```
+   grant it to the agent. An exception from a tool ends the agent's turn,
+   which is why the example catches it, logs it, and gives the model a fixed
+   "isn't set up yet" message.
 
    Never ask the user to paste a credential into the chat.
 

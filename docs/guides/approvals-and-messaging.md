@@ -3,7 +3,7 @@
 Two features that reach beyond a single reply:
 
 - **Sensitive tools.** A tool call that waits for a workspace owner or admin to
-  approve it, then runs exactly once.
+  approve it, then runs once in a follow-up turn.
 - **`send_message`.** Sending a message to someone other than the person the
   agent is replying to, or sending it later than the reply.
 
@@ -26,7 +26,10 @@ makes a tool sensitive:
 | The workspace | The owner marks the tool sensitive in the dashboard |
 
 The markings only add up. The workspace's setting can make a tool sensitive,
-but a `false` from the platform never unmarks a tool its author marked.
+but a `false` from the platform never unmarks a tool marked in the agent's
+code (`@tool(sensitive=True)` or an MCP config's `sensitive_tools`). A
+connector manifest's `sensitive = true` is applied by the platform, as the
+tool's default.
 
 ```python
 from genfleet.sdk import tool
@@ -57,7 +60,10 @@ money moving, data deleted, a message going to many people.
 3. **An owner or admin approves it.** The platform then starts a follow-up
    turn that carries the approved call, signed by the platform. Before the
    model does anything, `Agent` checks the signature and the expiry, makes sure
-   this call hasn't already run, and runs it, once. The model sees the call and
+   this call hasn't already run in this agent process, and runs it. That
+   guarantee is per process: if the agent restarts before the approval expires
+   and the call is delivered again, it can run a second time, so the tool must
+   tolerate that (see below). The model sees the call and
    its result in the conversation, along with an instruction to tell the
    person it's talking to what happened.
 4. **The outcome is reported.** The follow-up turn's final chunk carries
@@ -86,7 +92,8 @@ refused.
 - **Check state again when it runs.** Between the request and the approval,
   the order may have been refunded by hand. Make the tool look before it acts
   ("already refunded: nothing to do"), and pass a stable idempotency key to the
-  remote API when it supports one.
+  remote API when it supports one. The same check covers the rare second run
+  after an agent restart.
 - **Tell the model not to claim success early.** The pending result already
   tells it to say the action is waiting for approval. Add a line to `role` that
   fits your agent, for example *"When an action is waiting for approval, say
@@ -158,7 +165,7 @@ Both stop work and pick it up later. They answer different questions:
 |---|---|---|
 | Question | "May this action happen?" | "Where was I?" |
 | Who continues | An owner or admin, who approves in the dashboard | Whoever holds the resume token, in the same owner scope, **including the original requester** |
-| What runs | Exactly the call that was approved, once | Whatever your code does after `resume` |
+| What runs | Exactly the call that was approved, once per agent process | Whatever your code does after `resume` |
 | Use it for | Refunds, deletions, anything that needs a second person | Waiting for an external event (a payment webhook, a reply), multi-step workflows |
 
 **Don't build an approval gate on `pause`.** The person who asked can resume
