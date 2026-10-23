@@ -63,6 +63,7 @@ Agent(
     files:   FileResolver | None = None, # reads file references
     max_images_per_turn: int = 8,
     max_image_bytes_per_turn: int = 20 * 1024 * 1024,
+    max_history_turns: int | None = None,   # past turns sent to the model
 )
 ```
 
@@ -94,6 +95,7 @@ memory=MyMemory()                                          # any object with asy
 - Omit `memory` and a hosted agent still gets the platform store; run anywhere else it is stateless. `memory="platform"` says so explicitly and fails at construction when the agent is not hosted.
 - Redis keeps 24 hours of history per session. `agent.memory.search(subject, query)` and `agent.memory.purge(subject)` exist on the platform store.
 - `metadata["genfleet.memory"] == "off"` makes the Agent skip loading and saving for that turn.
+- `max_history_turns=N` sends only the last N turns to the model (a turn is a user message and everything up to the next one, so tool calls keep their results). Memory still stores every turn. Default `None` sends the whole thread. Set it for long-running chats such as messaging channels.
 - Where `session_id` comes from over A2A: see "Sessions" in `references/serve.md`. A turn without one is stateless.
 
 ### MCP servers

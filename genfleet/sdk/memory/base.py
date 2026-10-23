@@ -14,6 +14,11 @@ class Memory(Protocol):
     also implements :class:`AppendableMemory`; the agent prefers that path
     when it exists, because a chat grows by one turn at a time and a
     thread that is re-sent whole on every turn does not survive a long one.
+
+    ``load`` may also take a keyword ``limit``: the newest ``limit``
+    messages, oldest first. An agent with ``max_history_turns`` passes it to
+    a backend that also appends, so a long thread is not read whole on every
+    turn; any other backend is loaded whole and cut before the model call.
     """
 
     async def load(self, session_id: str) -> list[Message]: ...

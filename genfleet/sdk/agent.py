@@ -19,6 +19,7 @@ from .state_store import StateStore, state_for
 #: Agent neither loads nor writes its session memory for that turn.
 MEMORY_METADATA_KEY = "genfleet.memory"
 from .memory.base import AppendableMemory, Memory
+from .memory.window import load_recent, load_takes_limit, recent_turns
 from . import turn as _turn
 from .models import ModelClient, discover_model_client
 from .providers import provider_for
@@ -149,6 +150,11 @@ class Agent:
 
     ``memory`` may be left out: hosted on the platform the agent then gets
     the platform store anyway; on a laptop it runs without memory.
+
+    ``max_history_turns`` caps how many past turns go to the model. A turn is
+    a user message and everything up to the next one, so a tool call is never
+    sent without its result. Memory still stores every turn; ``None`` (the
+    default) sends the whole thread.
     """
 
     def __init__(
@@ -167,8 +173,14 @@ class Agent:
         files: FileResolver | None = None,
         max_images_per_turn: int = DEFAULT_MAX_IMAGES_PER_TURN,
         max_image_bytes_per_turn: int = DEFAULT_MAX_IMAGE_BYTES_PER_TURN,
+        max_history_turns: int | None = None,
     ) -> None:
         self._role = role
+        # How many past turns go to the model; ``None`` sends them all. Only
+        # what the model sees is cut: memory still keeps every turn.
+        if max_history_turns is not None and max_history_turns < 1:
+            raise ValueError("max_history_turns must be at least 1, or None for no limit")
+        self._max_history_turns = max_history_turns
         # The file types this agent takes besides text (`serve` advertises
         # and enforces them). Images go to the model as images when the model
         # config says ``vision``; every other file is described, never sent.
@@ -260,10 +272,15 @@ class Agent:
             # Load history from memory backend (empty list if no memory configured)
             persisted: list[Message] = []
             if use_memory:
-                persisted = await self._memory.load(session_id)
+                persisted = await self._load_history(session_id)
 
             # Merge caller-supplied history (takes precedence) with persisted history
             history = persisted if not input.history else list(input.history)
+            # `history` stays whole: a backend without `append` saves it back.
+            sent_history = (
+                history if self._max_history_turns is None
+                else recent_turns(history, self._max_history_turns)
+            )
 
             # Build system prompt
             system_parts = [self._role]
@@ -286,7 +303,7 @@ class Agent:
                 )
 
             messages: list[dict] = [{"role": "system", "content": "\n\n".join(system_parts)}]
-            for msg in history:
+            for msg in sent_history:
                 messages.append(self._message_to_dict(msg))
             turn_text, user_content = await self._user_content(input)
             messages.append({"role": "user", "content": user_content})
@@ -505,6 +522,21 @@ class Agent:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    async def _load_history(self, session_id: str) -> list[Message]:
+        """The session's thread, or its recent end when the store can serve one.
+
+        The store is asked for less only when it appends: a backend that saves
+        rewrites the thread from what was loaded, so it must load all of it.
+        """
+        turns = self._max_history_turns
+        if (
+            turns is not None
+            and isinstance(self._memory, AppendableMemory)
+            and load_takes_limit(self._memory)
+        ):
+            return await load_recent(self._memory, session_id, turns)
+        return await self._memory.load(session_id)
 
     async def _persist_turn(
         self,

@@ -39,6 +39,7 @@ class Agent:
         files:   FileResolver | None = None,
         max_images_per_turn:      int = 8,
         max_image_bytes_per_turn: int = 20 * 1024 * 1024,
+        max_history_turns:        int | None = None,
     ) -> None: ...
 
     async def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]: ...
@@ -61,6 +62,7 @@ Implements `AgentProtocol`. Pass directly to `serve()` or `create_app()`. Proper
 - `accepts` - MIME types the agent takes besides text (`"image/*"`, `"application/pdf"`, `"*/*"`). Becomes the agent's `accepted_input_types`, which `serve` advertises and enforces. Default: text only.
 - `files` - A `FileResolver` that reads file references. Without one only inline files can be read.
 - `max_images_per_turn`, `max_image_bytes_per_turn` - Limits on the images one turn sends to a vision model. Negative values raise `ValueError`.
+- `max_history_turns` - How many past turns go to the model; `None` (default) sends the whole thread. A turn is a user message plus everything up to the next user message, so the cut never separates a tool call from its result. Applies to loaded memory and to a caller-supplied `history`. Only what is sent is cut: memory still stores every turn. Values below 1 raise `ValueError`.
 
 ---
 
@@ -102,6 +104,8 @@ class MemoryConfig(TypedDict, total=False):
 `{"type": "platform"}` equals `memory="platform"`. Redis needs `pip install 'genfleet-sdk[memory] @ git+https://github.com/genfleet/sdk@dev'`; its key pattern is `genfleet:session:{session_id}:history` with a 24h TTL.
 
 Memory is keyed by `input.metadata["session_id"]`; a turn without one gets a per-request UUID (stateless). How `serve` fills `session_id` is in `serve.md` under "Sessions". `metadata["genfleet.memory"] == "off"` makes the Agent neither load nor save for that turn. On an append-capable store (the platform store, or a custom `Memory` with `append`) a retried turn is stored twice unless the request metadata names it with `turn_id`, `request_id` or `message_id`, which becomes the idempotency key. Redis rewrites the whole thread on each save, so a retry does not duplicate. The platform store also has `agent.memory.search(subject, query)` and `agent.memory.purge(subject)`.
+
+With `max_history_turns`, a store that appends and whose `load` takes a `limit` keyword (the newest N messages, oldest first; the platform store does) is asked for only the recent end of the thread, in a page that grows when the last turns are long. Any other store, Redis included, is loaded whole and cut before the model call: a store that saves rewrites the thread from what was loaded, so it must load all of it.
 
 A custom store implements the protocol:
 
