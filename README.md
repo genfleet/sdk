@@ -177,7 +177,8 @@ turn and appended to after it.
   their results, the reply), so a tool call is never sent without its result.
   Memory still keeps every turn: only what goes to the model is cut. The
   platform store reads just the recent end of the thread; Redis and a custom
-  `Memory` are loaded whole and cut before the model call. It applies to a
+  `Memory` are loaded whole and cut before the model call. When the last
+  turns are very long, fewer than N may be sent. It applies to a
   caller-supplied `history` too. The default, `None`, sends the whole thread.
 
 ### Workflow state (checkpoints, pause/resume, effect claims)

@@ -18,8 +18,8 @@ from .state_store import StateStore, state_for
 #: ``AgentInput.metadata`` key the platform sets per turn: ``"off"`` means the
 #: Agent neither loads nor writes its session memory for that turn.
 MEMORY_METADATA_KEY = "genfleet.memory"
-from .memory.base import AppendableMemory, Memory
-from .memory.window import load_recent, load_takes_limit, recent_turns
+from .memory.base import AppendableMemory, Memory, WindowedMemory
+from .memory.window import load_recent, recent_turns
 from . import turn as _turn
 from .models import ModelClient, discover_model_client
 from .providers import provider_for
@@ -178,8 +178,12 @@ class Agent:
         self._role = role
         # How many past turns go to the model; ``None`` sends them all. Only
         # what the model sees is cut: memory still keeps every turn.
-        if max_history_turns is not None and max_history_turns < 1:
-            raise ValueError("max_history_turns must be at least 1, or None for no limit")
+        if max_history_turns is not None and (
+            not isinstance(max_history_turns, int)
+            or isinstance(max_history_turns, bool)
+            or max_history_turns < 1
+        ):
+            raise ValueError("max_history_turns must be an int of at least 1, or None for no limit")
         self._max_history_turns = max_history_turns
         # The file types this agent takes besides text (`serve` advertises
         # and enforces them). Images go to the model as images when the model
@@ -269,12 +273,13 @@ class Agent:
             )
 
         try:
-            # Load history from memory backend (empty list if no memory configured)
+            # Load history from memory backend (empty list if no memory configured).
+            # A caller-supplied history replaces the stored one for this turn
+            # (it is never merged), so the store is not read at all.
             persisted: list[Message] = []
-            if use_memory:
+            if use_memory and not input.history:
                 persisted = await self._load_history(session_id)
 
-            # Merge caller-supplied history (takes precedence) with persisted history
             history = persisted if not input.history else list(input.history)
             # `history` stays whole: a backend without `append` saves it back.
             sent_history = (
@@ -533,7 +538,7 @@ class Agent:
         if (
             turns is not None
             and isinstance(self._memory, AppendableMemory)
-            and load_takes_limit(self._memory)
+            and isinstance(self._memory, WindowedMemory)
         ):
             return await load_recent(self._memory, session_id, turns)
         return await self._memory.load(session_id)

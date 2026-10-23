@@ -65,8 +65,7 @@ class PlatformMemory:
     async def load(self, session_id: str, *, limit: int | None = None) -> list[Message]:
         """The thread, oldest first. ``limit`` bounds it to the newest N
         *messages* (not turns); a tool result whose call fell outside that
-        window is left out, so a page may hold fewer. The agent passes it when
-        it has ``max_history_turns``."""
+        window is left out, so a page may hold fewer."""
         body: dict[str, Any] = {"session_id": session_id}
         if limit:
             body["limit"] = limit
@@ -80,6 +79,12 @@ class PlatformMemory:
             except Exception:  # noqa: BLE001 — one bad row must not lose the thread
                 log.warning("skipping an undecodable message in session %s", session_id)
         return out
+
+    # -- WindowedMemory ---------------------------------------------------
+
+    async def load_newest(self, session_id: str, limit: int) -> list[Message]:
+        """The newest ``limit`` messages, oldest first (see :meth:`load`)."""
+        return await self.load(session_id, limit=limit)
 
     async def save(self, session_id: str, history: list[Message]) -> None:
         """Replace the thread. Prefer :meth:`append` — this path is lossy.

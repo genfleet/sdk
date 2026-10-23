@@ -16,7 +16,12 @@ import pytest
 from genfleet.sdk import Agent, AgentInput, AgentOutput
 from genfleet.sdk.memory import PlatformMemory
 from genfleet.sdk.memory.redis import RedisMemory
-from genfleet.sdk.memory.window import MAX_LOAD_MESSAGES, load_recent, recent_turns
+from genfleet.sdk.memory.window import (
+    MAX_LOAD_MESSAGES,
+    MESSAGES_PER_TURN,
+    load_recent,
+    recent_turns,
+)
 from genfleet.sdk.schemas import Message, ToolCall
 
 
@@ -164,9 +169,10 @@ async def test_a_limit_applies_to_a_caller_supplied_history_too():
     assert [m["content"] for m in _history_sent(recorder)] == ["u4", "a4"]
 
 
-def test_a_limit_below_one_is_refused():
+@pytest.mark.parametrize("value", [0, -1, True, 2.5, "3"])
+def test_a_limit_that_is_not_a_positive_int_is_refused(value):
     with pytest.raises(ValueError, match="max_history_turns"):
-        _agent(None, max_history_turns=0)
+        _agent(None, max_history_turns=value)
 
 
 @pytest.mark.asyncio
@@ -215,75 +221,158 @@ async def test_an_appending_backend_without_limit_is_loaded_whole_and_cut():
 
 
 # ---------------------------------------------------------------------------
-# A store that takes `limit` (newest N messages)
+# A store that reads the newest messages (WindowedMemory)
 # ---------------------------------------------------------------------------
 
-class _LimitedStore:
-    """Answers the newest ``limit`` messages and drops a leading orphaned tool result."""
+def _drop_leading_tool_results(page: list) -> list:
+    """What the platform store does to a page cut inside a tool round."""
+    while page and (page[0]["role"] if isinstance(page[0], dict) else page[0].role) == "tool":
+        page = page[1:]
+    return page
 
-    def __init__(self, thread: list[Message]) -> None:
+
+class _WindowedStore:
+    """Answers the newest ``limit`` messages; optionally drops leading tool results."""
+
+    def __init__(self, thread: list[Message], *, drops_orphans: bool = True) -> None:
         self.thread = thread
-        self.limits: list[int | None] = []
+        self.drops_orphans = drops_orphans
+        self.limits: list[int] = []
+        self.whole_loads = 0
+        self.appended: list[list[Message]] = []
 
-    async def load(self, session_id, *, limit=None):
+    async def load(self, session_id):
+        self.whole_loads += 1
+        return list(self.thread)
+
+    async def load_newest(self, session_id, limit):
         self.limits.append(limit)
-        page = self.thread[-limit:] if limit else list(self.thread)
-        while page and page[0].role == "tool":
-            page = page[1:]
-        return page
+        page = self.thread[-limit:]
+        return _drop_leading_tool_results(page) if self.drops_orphans else page
 
     async def save(self, session_id, history):
-        raise AssertionError("not used")
+        raise AssertionError("an appending store is never saved whole")
 
     async def clear(self, session_id):
         pass
 
+    async def append(self, session_id, messages, *, subject=None, metadata=None, turn_id=None):
+        self.appended.append(messages)
+
+
+def _tool_heavy_turn(n: int, rounds: int) -> list[Message]:
+    """A user message and ``rounds`` call/result pairs, with no final reply:
+    the turn ends on a tool result, as one does when the model answers empty."""
+    out = [Message(role="user", content=f"u{n}")]
+    for k in range(rounds):
+        out.append(Message(role="assistant", content="", tool_calls=[ToolCall(id=f"c{n}-{k}", name="t")]))
+        out.append(Message(role="tool", content="r", tool_call_id=f"c{n}-{k}"))
+    return out
+
+
+def _dicts(messages: list[Message]) -> list[dict]:
+    return [Agent._message_to_dict(m) for m in messages]
+
 
 @pytest.mark.asyncio
-async def test_load_recent_reads_one_page_when_it_holds_enough_turns():
-    store = _LimitedStore(_thread(50, tool=True))
+async def test_load_recent_reads_one_bounded_page():
+    store = _WindowedStore(_thread(50, tool=True))
     window = await load_recent(store, "s1", 3)
-    assert store.limits == [30]
+    assert store.limits == [3 * MESSAGES_PER_TURN]
     assert window[0].content == "u48" and len(window) == 12
 
 
 @pytest.mark.asyncio
-async def test_load_recent_grows_the_page_when_turns_are_long_and_never_orphans():
-    # Each turn is 1 + 2*6 + 1 = 14 messages: a 20-message page is cut mid turn.
-    def long_turn(n: int) -> list[Message]:
-        rounds = [
-            m
-            for k in range(6)
-            for m in (
-                Message(role="assistant", content="", tool_calls=[ToolCall(id=f"c{n}-{k}", name="t")]),
-                Message(role="tool", content="r", tool_call_id=f"c{n}-{k}"),
-            )
-        ]
-        return [Message(role="user", content=f"u{n}"), *rounds, Message(role="assistant", content=f"a{n}")]
+async def test_a_huge_limit_asks_for_at_most_the_largest_page():
+    store = _WindowedStore(_thread(3))
+    await load_recent(store, "s1", 10_000)
+    assert store.limits == [MAX_LOAD_MESSAGES]
 
-    store = _LimitedStore([m for n in range(1, 11) for m in long_turn(n)])
+
+@pytest.mark.parametrize("drops_orphans", [True, False])
+@pytest.mark.asyncio
+async def test_a_cut_page_with_exactly_n_user_messages_starts_on_the_user_message(drops_orphans):
+    # 19-message turns ending on a tool result; a 20-message page is one tool
+    # result of the previous turn, then the last turn whole.
+    thread = [m for n in range(1, 4) for m in _tool_heavy_turn(n, 9)]
+    store = _WindowedStore(thread, drops_orphans=drops_orphans)
+    window = await load_recent(store, "s1", 1)
+    assert store.limits == [20]
+    assert window[0].role == "user" and window[0].content == "u3"
+    assert len(window) == 19
+    _assert_no_orphaned_tool_result(_dicts(window))
+
+
+@pytest.mark.asyncio
+async def test_turns_longer_than_the_allowance_send_fewer_whole_turns():
+    thread = [m for n in range(1, 6) for m in _tool_heavy_turn(n, 15)]  # 31 messages each
+    store = _WindowedStore(thread, drops_orphans=False)
     window = await load_recent(store, "s1", 2)
-    assert store.limits == [20, 80]
-    assert window[0].content == "u9" and len(window) == 28
-    _assert_no_orphaned_tool_result([Agent._message_to_dict(m) for m in window])
+    assert store.limits == [40]
+    assert [m.content for m in window if m.role == "user"] == ["u5"]
+    _assert_no_orphaned_tool_result(_dicts(window))
 
 
 @pytest.mark.asyncio
-async def test_load_recent_stops_at_a_short_thread():
-    store = _LimitedStore(_thread(2))
-    assert len(await load_recent(store, "s1", 5)) == 4
-    assert store.limits == [50]
-
-
-@pytest.mark.asyncio
-async def test_load_recent_at_the_largest_page_keeps_whole_turns_only():
-    huge = [Message(role="user", content="u0")] + [
-        Message(role="assistant", content=f"a{i}") for i in range(MAX_LOAD_MESSAGES)
-    ] + _thread(1)
-    store = _LimitedStore(huge)
+async def test_a_thread_whose_visible_start_is_mid_turn_is_read_once():
+    # The older part has expired: what is left starts inside a tool round.
+    tail = [
+        Message(role="tool", content="r", tool_call_id="gone"),
+        Message(role="assistant", content="", tool_calls=[ToolCall(id="c0", name="t")]),
+        Message(role="tool", content="r", tool_call_id="c0"),
+        Message(role="assistant", content="a0"),
+    ]
+    store = _WindowedStore(tail + _thread(2), drops_orphans=False)
     window = await load_recent(store, "s1", 5)
-    assert store.limits[-1] == MAX_LOAD_MESSAGES
-    assert window[0].role == "user" and window[0].content == "u1"
+    assert store.limits == [5 * MESSAGES_PER_TURN]
+    assert [m.content for m in window] == ["u1", "a1", "u2", "a2"]
+
+
+@pytest.mark.asyncio
+async def test_a_thread_with_no_user_message_sends_nothing_on_both_paths():
+    no_user = [Message(role="assistant", content="hello"), Message(role="assistant", content="anyone?")]
+    store = _WindowedStore(no_user)
+    assert await load_recent(store, "s1", 3) == []
+    assert store.limits == [3 * MESSAGES_PER_TURN]
+    assert recent_turns(no_user, 3) == []
+
+    agent, recorder = _agent(None, max_history_turns=3)
+    await _run(agent, history=no_user)
+    assert _history_sent(recorder) == []
+
+
+@pytest.mark.asyncio
+async def test_the_agent_reads_a_windowed_appending_store_by_its_newest_messages():
+    store = _WindowedStore([m for n in range(1, 4) for m in _tool_heavy_turn(n, 9)], drops_orphans=False)
+    agent, recorder = _agent(store, max_history_turns=1)
+    await _run(agent)
+    assert store.limits == [20] and store.whole_loads == 0
+    sent = _history_sent(recorder)
+    assert sent[0] == {"role": "user", "content": "u3"}
+    _assert_no_orphaned_tool_result(sent)
+    assert [m.content for m in store.appended[0]] == ["now", "ok"]
+
+
+@pytest.mark.asyncio
+async def test_a_windowed_store_that_only_saves_is_loaded_whole():
+    class _SaveOnly(_SavingMemory):
+        async def load_newest(self, session_id, limit):
+            raise AssertionError("a save-only store must be loaded whole")
+
+    memory = _SaveOnly(_thread(5))
+    agent, _ = _agent(memory, max_history_turns=2)
+    await _run(agent)
+    assert memory.load_calls == [("s1",)]
+    assert len(memory.stored["s1"]) == 12
+
+
+@pytest.mark.asyncio
+async def test_a_caller_supplied_history_skips_the_stored_thread():
+    store = _WindowedStore(_thread(5))
+    agent, recorder = _agent(store, max_history_turns=2)
+    await _run(agent, history=_thread(1))
+    assert store.limits == [] and store.whole_loads == 0
+    assert [m["content"] for m in _history_sent(recorder)] == ["u1", "a1"]
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +389,8 @@ class _Proxy(BaseHTTPRequestHandler):
         payload: dict = {}
         if self.path.endswith("/episodic/load"):
             limit = body.get("limit")
-            payload = {"messages": _Proxy.thread[-limit:] if limit else _Proxy.thread}
+            page = _Proxy.thread[-limit:] if limit else _Proxy.thread
+            payload = {"messages": _drop_leading_tool_results(page)}
         raw = json.dumps(payload).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
@@ -329,13 +419,24 @@ async def test_the_platform_store_is_asked_for_a_limited_page_and_the_turn_is_ap
 
     (load_path, load_body), (append_path, append_body) = _Proxy.calls
     assert load_path == "/memory/episodic/load"
-    assert load_body == {"session_id": "whatsapp:1", "limit": 20}
+    assert load_body == {"session_id": "whatsapp:1", "limit": 40}
     sent = _history_sent(recorder)
     assert sent[0]["content"] == "u39" and len(sent) == 8
     _assert_no_orphaned_tool_result(sent)
     # Appending is untouched: this turn only, whatever was sent.
     assert append_path == "/memory/episodic/append"
     assert [m["content"] for m in append_body["messages"]] == ["now", "ok"]
+
+
+@pytest.mark.asyncio
+async def test_a_platform_page_cut_inside_a_tool_round_starts_on_a_user_message(proxy):
+    _Proxy.thread = [m.model_dump(exclude_none=True) for n in range(1, 4) for m in _tool_heavy_turn(n, 9)]
+    agent, recorder = _agent(PlatformMemory(proxy, "t"), max_history_turns=1)
+    await _run(agent)
+    assert _Proxy.calls[0][1] == {"session_id": "s1", "limit": 20}
+    sent = _history_sent(recorder)
+    assert sent[0] == {"role": "user", "content": "u3"} and len(sent) == 19
+    _assert_no_orphaned_tool_result(sent)
 
 
 @pytest.mark.asyncio
