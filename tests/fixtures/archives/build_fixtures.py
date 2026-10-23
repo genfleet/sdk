@@ -3,7 +3,7 @@
     python tests/fixtures/archives/build_fixtures.py
 
 One rule on every side that reads an artifact (engine delivery, backend
-submit, CLI build), decided 2026-10-06 after :
+submit, CLI build), decided 2026-10-06:
 
 * member types are an allow-list: regular file or directory only;
 * a name with a leading ``/``, any ``..`` segment or a backslash is refused;
@@ -74,7 +74,7 @@ CASES: list[tuple[str, int, list[tuple], bool, str | None, str]] = [
     ("symlink-inside.tar", tarfile.GNU_FORMAT,
      [_dir("docs"), _special("pkg", tarfile.SYMTYPE, "docs"),
       _file("pkg/genfleet.toml", MANIFEST_A), _file("docs/genfleet.toml", MANIFEST_B)],
-     False, "link", "the  alias: review reads A, extraction leaves B"),
+     False, "link", "the alias: review reads A, extraction leaves B"),
     ("symlink-outside.tar", tarfile.GNU_FORMAT,
      [_special("pkg", tarfile.SYMTYPE, "../outside"), _file("pkg/x")],
      False, "link", "a link out of the tree"),

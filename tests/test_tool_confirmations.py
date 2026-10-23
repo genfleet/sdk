@@ -1,4 +1,4 @@
-"""Sensitive tools and their confirmations (, SDK 0.19). Tier 1, no network."""
+"""Sensitive tools and their confirmations. Tier 1, no network."""
 
 from __future__ import annotations
 
@@ -32,8 +32,11 @@ from genfleet.sdk.caller import (
     TOOL_AUDIENCES_METADATA_KEY,
 )
 from genfleet.sdk.confirmations import (
+    _APPROVAL_UNAVAILABLE_NOTE,
+    _APPROVAL_UNVERIFIED_NOTE,
     _PEER_REFUSAL,
     _PENDING_RESULT,
+    _approved_call_note,
     APPROVAL_KEY_ENV,
     PEER_TURN_KEY,
     ApprovedCall,
@@ -747,7 +750,7 @@ async def test_an_approved_call_runs_once_before_the_model(key):
     tool_msg = next(m for m in history if m.get("role") == "tool")
     assert tool_msg["tool_call_id"] == "approved-c-1"
     assert tool_msg["content"] == "refunded"
-    assert "approved `refund`" in history[0]["content"]
+    assert history[0]["content"].endswith("\n\n" + _approved_call_note("refund", True))
     assert outputs[-1].metadata == {APPROVED_CALL_RESULT_KEY: "ran"}
 
 
@@ -760,7 +763,7 @@ async def test_the_same_signed_call_redelivered_does_nothing(key):
     outputs = await _run(_agent(model, tools=[refund]), meta)
     assert len(ran) == 1
     assert _events(outputs, "tool_call") == []
-    assert "could not be verified" in model.seen[0][0]["content"]
+    assert model.seen[0][0]["content"].endswith("\n\n" + _APPROVAL_UNVERIFIED_NOTE)
     assert not any(m.get("role") == "tool" for m in model.seen[0])
 
 
@@ -780,11 +783,14 @@ async def test_an_approved_call_is_consumed_even_if_the_tool_raises(key):
         raise RuntimeError("nope")
 
     meta = _approved_meta(tool="boom", arguments={})
-    # The turn goes on: the failure is the tool result, and the model tells the user.
-    outputs = await _run(_agent(_Model(_DONE), tools=[boom]), meta)
+    # The turn goes on: the failure is the tool result, and the model tells the person.
+    model = _Model(_DONE)
+    outputs = await _run(_agent(model, tools=[boom]), meta)
     assert ran == [("boom", {})]
     [result] = _events(outputs, "tool_result")
     assert result["ok"] is False and "approved action failed (RuntimeError)" in result["output"]
+    # Not told "it has run": the model must not report a failed call as done.
+    assert model.seen[0][0]["content"].endswith("\n\n" + _approved_call_note("boom", False))
     assert outputs[-1].metadata[APPROVED_CALL_RESULT_KEY] == "failed"
     # Recorded as run: a redelivery does not try again.
     await _run(_agent(_Model(_DONE), tools=[boom]), meta)
@@ -805,7 +811,7 @@ async def test_an_approved_call_by_bare_name_does_not_reach_a_slug_tagged_tool(k
     model = _Model(_DONE)
     await _run(_agent(model, tools=[scoped]), _approved_meta(tool="_fn_x", arguments={"a": 3}))
     assert ran == []
-    assert "can't run for this caller" in model.seen[0][0]["content"]
+    assert model.seen[0][0]["content"].endswith("\n\n" + _APPROVAL_UNAVAILABLE_NOTE)
 
 
 @pytest.mark.asyncio
@@ -954,3 +960,64 @@ async def test_an_audit_failure_after_the_tool_ran_is_not_reported_as_failed(key
         await _run(agent, _approved_meta())
     # It ran; the turn errors, so no result is reported (the platform reads that as unconfirmed).
     assert ran == [("refund", {"order": "A1", "amount": 5})]
+
+
+# ---------------------------------------------------------------------------
+# Model-facing wording (sdk#72)
+# ---------------------------------------------------------------------------
+
+def test_the_pending_text_is_pinned():
+    assert _PENDING_RESULT == (
+        "Not run yet: this action needs approval from a workspace owner or admin. "
+        "An approval request was sent; the action runs once it is approved. "
+        "Let the person you are talking to know it is waiting for approval."
+    )
+
+
+def test_the_refusal_and_outcome_notes_are_pinned():
+    assert _PEER_REFUSAL == (
+        "Error: this tool needs an owner's approval and can't be used on a call from another agent."
+    )
+    assert _APPROVAL_UNVERIFIED_NOTE == (
+        "An approval arrived with this message but could not be verified, so the action did not run. "
+        "Let the person you are talking to know it did not run."
+    )
+    assert _APPROVAL_UNAVAILABLE_NOTE == (
+        "An approved action can't run for this caller now, so it did not run. "
+        "Let the person you are talking to know it did not run."
+    )
+    assert _approved_call_note("refund", True) == (
+        "A workspace owner or admin approved `refund`, and it has run (its result follows). "
+        "Tell the person you are talking to what the result says."
+    )
+    assert _approved_call_note("refund", False) == (
+        "A workspace owner or admin approved `refund`, but it failed (the error follows), "
+        "so it is not confirmed as done. Let the person you are talking to know it failed and was "
+        "not confirmed as done, and that someone should check before they ask for it again."
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _PENDING_RESULT,
+        _PEER_REFUSAL,
+        _APPROVAL_UNVERIFIED_NOTE,
+        _APPROVAL_UNAVAILABLE_NOTE,
+        _approved_call_note("t", True),
+        _approved_call_note("t", False),
+    ],
+)
+def test_no_approval_text_names_a_third_party_user(text):
+    # Covers the fixed wording only; a tool's own name (here "t") is not checked.
+    assert "user" not in text.lower()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [_PENDING_RESULT, _APPROVAL_UNVERIFIED_NOTE, _APPROVAL_UNAVAILABLE_NOTE, _approved_call_note("t", False)],
+)
+def test_texts_for_an_action_that_did_not_complete_never_say_it_ran(text):
+    assert "has run" not in text and "succeeded" not in text
+    # And each one says positively that the action is not done.
+    assert any(p in text for p in ("Not run yet", "did not run", "not confirmed as done"))

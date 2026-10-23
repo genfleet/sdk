@@ -16,12 +16,17 @@ the SDK passes through without reading.
 
 from __future__ import annotations
 
+import copy
 import logging
-from collections.abc import AsyncIterator, Callable, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from importlib.metadata import EntryPoint, entry_points
+from typing import Any
+
+from pydantic import ValidationError
 
 from .providers.base import Provider
-from .schemas import AgentOutput, ModelConfig, ToolSchema
+from .schemas import AgentOutput, ModelConfig, TokenUsage, ToolCall, ToolSchema
 
 log = logging.getLogger("genfleet.sdk.models")
 
@@ -66,4 +71,160 @@ class FakeModelClient:
         yield AgentOutput(content=reply, done=True)
 
 
-__all__ = ["ENTRY_POINT_GROUP", "FakeModelClient", "ModelClient", "ModelClientFactory", "discover_model_client"]
+#: The keys a tool call mapping in a `Step` may carry.
+_TOOL_CALL_KEYS = frozenset({"id", "name", "arguments", "thought_signature"})
+
+
+@dataclass(frozen=True)
+class Step:
+    """One scripted model answer: text, tool calls, or both.
+
+    A tool call is a `ToolCall`, or a mapping with ``name`` and optional
+    ``arguments``, ``id`` and ``thought_signature``. A call with no id (or
+    ``id=""``) gets ``call_<n>``, skipping any id the script already uses.
+    `ScriptedModelClient` checks the calls when it is built.
+    """
+
+    text: str = ""
+    #: Stored as a tuple, copied from what was passed.
+    tool_calls: Sequence[ToolCall | Mapping[str, Any]] = ()
+    #: Reported with the answer, as a provider does; the `Agent` adds it up.
+    token_usage: TokenUsage | None = None
+
+    def __post_init__(self) -> None:
+        # A copy: the step doesn't change when the caller's list or dicts do.
+        calls = tuple(tc if isinstance(tc, ToolCall) else dict(tc) for tc in self.tool_calls)
+        object.__setattr__(self, "tool_calls", calls)
+
+
+@dataclass(frozen=True)
+class RecordedCall:
+    """What a `ScriptedModelClient` was given on one call."""
+
+    #: The whole conversation sent to the model, copied at call time.
+    messages: list[dict]
+    #: The tool schemas offered to the model.
+    tools: list[ToolSchema]
+    #: The tool results that came back since the model's last answer, in
+    #: order: ``{"tool_call_id", "name", "content"}``.
+    tool_results: list[dict] = field(default_factory=list)
+
+    @property
+    def tool_names(self) -> list[str]:
+        """The names of the tools offered on this call."""
+        return [t.name for t in self.tools]
+
+
+class ScriptedModelClient:
+    """An in-memory client for tests that answers each call with the next `Step`.
+
+    A plain string is a text-only step. A step with tool calls drives the
+    `Agent`'s tool loop: the agent runs the calls, sends their results back,
+    and the next step answers. Every call is recorded in `calls`. A call
+    after the last step raises `RuntimeError`.
+
+    Answers always have the streaming shape (text, then the tool calls or
+    the end of the answer); ``stream=False`` is ignored.
+    """
+
+    def __init__(self, steps: Iterable[Step | str]) -> None:
+        raw = [Step(text=s) if isinstance(s, str) else s for s in steps]
+        for index, step in enumerate(raw):
+            if not isinstance(step, Step):
+                raise TypeError(f"script step {index}: a step is a str or a Step, got {type(step).__name__}")
+        calls = [[_as_tool_call(index, tc) for tc in step.tool_calls] for index, step in enumerate(raw)]
+        used = {tc.id for step_calls in calls for tc in step_calls if tc.id}
+        for index, step_calls in enumerate(calls):
+            ids = [tc.id for tc in step_calls if tc.id]
+            duplicate = next((i for i in ids if ids.count(i) > 1), None)
+            if duplicate is not None:
+                raise ValueError(f"script step {index}: tool call id {duplicate!r} is used twice")
+        next_id = 0
+        for step_calls in calls:
+            for position, tc in enumerate(step_calls):
+                if tc.id:
+                    continue
+                next_id += 1
+                while f"call_{next_id}" in used:
+                    next_id += 1
+                used.add(f"call_{next_id}")
+                step_calls[position] = tc.model_copy(update={"id": f"call_{next_id}"})
+        self._steps = [replace(step, tool_calls=tuple(c)) for step, c in zip(raw, calls, strict=True)]
+        self.calls: list[RecordedCall] = []
+
+    async def complete(
+        self, messages: list[dict], tools: list[ToolSchema], stream: bool = True
+    ) -> AsyncIterator[AgentOutput]:
+        self.calls.append(RecordedCall(
+            messages=copy.deepcopy(messages), tools=list(tools), tool_results=_trailing_tool_results(messages)
+        ))
+        if len(self.calls) > len(self._steps):
+            raise RuntimeError(
+                f"ScriptedModelClient: the model was called {len(self.calls)} times but the script has "
+                f"{len(self._steps)} step(s). Last message: {_describe(messages[-1]) if messages else 'none'}. "
+                "Add a step for this call."
+            )
+        step = self._steps[len(self.calls) - 1]
+        # The shape a streaming provider sends: text first, then either the
+        # complete tool calls (the turn continues) or the end of the answer.
+        if step.text:
+            yield AgentOutput(content=step.text, done=False)
+        if step.tool_calls:
+            yield AgentOutput(tool_calls=list(step.tool_calls), done=False, token_usage=step.token_usage)
+        else:
+            yield AgentOutput(content="", done=True, token_usage=step.token_usage)
+
+
+def _as_tool_call(index: int, tc: ToolCall | Mapping[str, Any]) -> ToolCall:
+    """One scripted call as a `ToolCall`; errors name the script step."""
+    if isinstance(tc, ToolCall):
+        return tc
+    unknown = sorted(set(tc) - _TOOL_CALL_KEYS)
+    if unknown:
+        raise TypeError(
+            f"script step {index}: unknown tool call key {unknown[0]!r} "
+            f"(allowed: {', '.join(sorted(_TOOL_CALL_KEYS))})"
+        )
+    if "name" not in tc:
+        raise TypeError(f"script step {index}: a tool call needs a 'name'")
+    try:
+        return ToolCall.model_validate({"id": "", **tc})
+    except ValidationError as exc:
+        raise TypeError(f"script step {index}: invalid tool call {dict(tc)!r}: {exc}") from exc
+
+
+def _trailing_tool_results(messages: list[dict]) -> list[dict]:
+    """The tool messages at the end of `messages`, each with the name of the call it answers."""
+    names = {
+        tc["id"]: tc["function"]["name"]
+        for m in messages if m.get("role") == "assistant"
+        for tc in m.get("tool_calls") or []
+    }
+    results: list[dict] = []
+    for m in reversed(messages):
+        if m.get("role") != "tool":
+            break
+        results.append({
+            "tool_call_id": m["tool_call_id"], "name": names.get(m["tool_call_id"], ""), "content": m["content"]
+        })
+    return results[::-1]
+
+
+def _describe(message: dict) -> str:
+    content = message.get("content")
+    text = content if isinstance(content, str) else repr(content)
+    if len(text) > 200:
+        text = text[:200] + "..."
+    return f"{message.get('role')}: {text!r}"
+
+
+__all__ = [
+    "ENTRY_POINT_GROUP",
+    "FakeModelClient",
+    "ModelClient",
+    "ModelClientFactory",
+    "RecordedCall",
+    "ScriptedModelClient",
+    "Step",
+    "discover_model_client",
+]

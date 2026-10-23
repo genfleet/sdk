@@ -1,4 +1,4 @@
-"""A2A v1.0 in ``serve`` (sdk#46, ): the card, SendMessage, SendStreamingMessage."""
+"""A2A v1.0 in ``serve`` (sdk#46): the card, SendMessage, SendStreamingMessage."""
 
 from __future__ import annotations
 
