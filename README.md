@@ -55,6 +55,14 @@ curl -X POST http://localhost:8000 \
   -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"What is the weather in Paris?"}]}}}'
 ```
 
+## Guides
+
+- [`genfleet.toml` reference](docs/guides/manifest.md): agent and tool manifests, version specs, and what gets pinned
+- [The agent factory](docs/guides/agent-factory.md): `build_agent(remote_tools=())`, peer agents as tools, and model config
+- [Writing a connector](docs/guides/connectors.md): a marketplace tool with `ToolContext`, local testing, and publishing
+- [Approvals and outbound messages](docs/guides/approvals-and-messaging.md): sensitive tools, and `send_message`
+- [Scheduled and event-driven work](docs/guides/triggers.md): triggers without a scheduler, idempotency, and the background scope
+
 ## Publish on Genfleet (private beta)
 
 Invited to the beta? The step-by-step guide — write an agent with a tool,
