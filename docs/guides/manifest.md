@@ -16,7 +16,7 @@ Both raise `ManifestError` when the file is missing, isn't valid TOML, or has a
 bad value. The message starts with the file's path, and `.path` and `.problem`
 hold the two parts. `gf agents push` and `gf tools push` run the same parser
 before they upload anything, so a manifest that fails these checks never
-reaches the registry. The parser checks the slug, `kind`, `audiences` and the
+reaches the registry. The parser checks the slug, `kind` and the
 shape of each table; it does not check the format of `version` or `entry`, so
 check those yourself.
 
@@ -40,7 +40,6 @@ name = "support"
 kind = "code"
 description = "Answers order questions and opens helpdesk tickets."
 entry = "support_agent.agent:build_agent"
-audiences = ["operator", "customer"]
 
 [tools]
 "@acme/tickets" = "1.x"
@@ -57,24 +56,27 @@ audiences = ["operator", "customer"]
 | `kind` | no | `"code"` | One of `"code"`, `"declarative"`, `"native_sdk"`. See below. |
 | `description` | no | `""` | A one-line description. `gf agents push --create` uses it as the agent's description. |
 | `entry` | no | `"agent:build_agent"` | `module:callable` for the agent factory. See the [agent factory guide](agent-factory.md). |
-| `audiences` | no | operators only | Who the agent serves on channels: a list of `"operator"` (your workspace's staff) and/or `"customer"` (your customers). An empty list is an error: leave the key out instead. Duplicates are dropped. |
 
 **`kind`.** The parser accepts exactly these three values and rejects any
 other. It doesn't attach behaviour to them. An agent written as a Python
 package with a `build_agent` factory, like every example in this repository,
 is `"code"`, which is the default.
 
-**`audiences`.** When the key is absent, the platform serves the agent to
-operators only. Add `"customer"` before you connect the agent to a channel your
-customers write to. Which *tools* each audience gets is decided per tool; see
-"Operators and customers" in the [README](../../README.md#operators-and-customers).
+**Who the agent serves.** The manifest doesn't say. The workspace owner sets
+it in the dashboard, and by default an agent serves operators only. Which
+*tools* each audience gets is decided per tool; see "Operators and customers"
+in the [README](../../README.md#operators-and-customers).
+
+The SDK parser still accepts an `audiences` key for compatibility, but the
+platform doesn't use it, so set who an agent serves in the dashboard.
 
 ### `[tools]` and `[mcps]`
 
 > **Beta:** for now, keep your tools in your agent's own package, as the
-> [publish guide](../../README.md#publish-on-genfleet-private-beta) does. A marketplace tool named
-> here is mounted only after a reviewer approves the agent's submission; until
-> then the agent runs without it.
+> [publish guide](../../README.md#publish-on-genfleet-private-beta) does. An
+> agent that names a marketplace tool here can't be started until the agent is
+> submitted to the marketplace and approved, with that tool pinned. A tool that
+> isn't published yet can't be pinned, so the submission fails.
 
 Each key is a tool slug and each value is a version spec. Both tables use the
 same format, and both spellings below are equivalent:
@@ -113,9 +115,9 @@ You never write a hash. Two things are pinned for you:
   These are recorded alongside the agent's archive, not written into your
   `genfleet.toml`, so the archive's digest still covers exactly the code you
   pushed. A spec that matches no published version, or a tool your workspace's
-  plan can't use, fails the submission. The tools are mounted for the agent only
-  after a reviewer approves the submission; until then the agent runs without
-  them.
+  plan can't use, fails the submission. An agent that names a
+  marketplace tool can't be started until the agent is submitted and approved,
+  with that tool pinned.
 
 In the SDK, a `ToolRef` read from your manifest has `spec` set and `version`
 and `digest` empty (`is_pinned` is `False`). A resolved one carries all three.
@@ -227,6 +229,5 @@ PACKAGE = Path(__file__).parent.parent / "support_agent"
 def test_manifest():
     manifest = load_agent_manifest(PACKAGE)
     assert manifest.name == "support"
-    assert manifest.audiences == ["operator", "customer"]
     assert [ref.slug for ref in manifest.tools] == ["@acme/tickets"]
 ```

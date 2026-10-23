@@ -417,7 +417,6 @@ name = "support"                       # required
 kind = "code"                          # "declarative" | "code" | "native_sdk"; default "code"
 description = "Answers order questions"
 entry = "agent:build_agent"            # default
-audiences = ["operator", "customer"]   # absent: operators only; empty or unknown values are rejected
 
 [tools]                                # @scope/name = version spec ("*", "1.2.x", exact)
 "@acme/jira" = "*"

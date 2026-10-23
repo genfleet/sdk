@@ -139,7 +139,7 @@ def issue_refund(order_id: str, amount: float) -> str: ...
 - Your marking is only the default: the tenant owner sets each tool's audience on the platform, and that setting wins, wider or narrower. It reaches the agent as `metadata["genfleet.tool_audiences"]`.
 - `sensitive=True`: the call does not run when the model makes it. The model is told it awaits approval, a workspace owner or admin approves the exact call, then it runs once in a follow-up turn. A sensitive tool is refused on a call from another agent. The owner can also mark or unmark tools on the platform.
 - `customer_safe=True` is **deprecated** (0.18, removed in 1.0): it meant both audiences. Use `audiences=[...]`. Do not combine the two.
-- Outside the platform there are no roles and nothing is filtered. Declare who the agent serves under `[agent] audiences` in `genfleet.toml` (see below).
+- Outside the platform there are no roles and nothing is filtered. Who an agent serves is set by the workspace owner in the dashboard, not in `genfleet.toml`.
 
 ### ToolContext: tool settings and secrets (0.21)
 
@@ -279,7 +279,6 @@ name = "support"                 # required
 kind = "code"                    # "declarative" | "code" | "native_sdk" (default "code")
 description = "Answers order questions"
 entry = "agent:build_agent"      # module:factory (default)
-audiences = ["operator", "customer"]   # who the agent serves; absent = operators only
 
 [tools]
 "@acme/jira" = "*"               # slug = version spec; push pins version and digest
