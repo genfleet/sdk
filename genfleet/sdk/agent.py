@@ -8,7 +8,7 @@ import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal, NamedTuple
 
 from .audit import Auditor, audit_for
 from .audit.schemas import AuditConfig
@@ -39,6 +39,7 @@ from .caller import (
     Audience,
     Caller,
     EVERYONE,
+    OPERATOR_ONLY,
     caller_of,
     effective_audiences,
     marked,
@@ -63,7 +64,8 @@ from .confirmations import (
 from .files import FileAccessError, FileResolver, read_part
 from .parts import ImagePart, UnsupportedInput, looks_like, media_of, mime_patterns
 from .parts import accepts as _accepts
-from .tool import ToolWrapper, wrap_tool
+from .protocol import ToolProtocol
+from .tool import ToolWrapper, is_tool_object, wrap_tool
 from .skills import Skill, load_skills, pinned_revision
 
 log = logging.getLogger("genfleet.sdk.agent")
@@ -80,8 +82,47 @@ DEFAULT_MAX_IMAGES_PER_TURN = 8
 DEFAULT_MAX_IMAGE_BYTES_PER_TURN = 20 * 1024 * 1024
 
 
-def _wrap_tool(fn: Callable) -> ToolWrapper:
-    return wrap_tool(fn)
+def _as_tool(entry: Callable | ToolProtocol) -> ToolProtocol:
+    """A ``tools=`` entry as the tool the agent holds.
+
+    A function (plain or ``@tool``) becomes a `ToolWrapper`; an object that
+    already implements `ToolProtocol` (``schema()`` and an async ``call()``,
+    such as a peer agent in ``remote_tools``) is held as it is.
+    """
+    if isinstance(entry, ToolWrapper):
+        return entry
+    if is_tool_object(entry):
+        schema = entry.schema()
+        if not isinstance(schema, ToolSchema):
+            raise TypeError(f"{entry!r}.schema() must return a ToolSchema, got {schema!r}")
+        return entry
+    if isinstance(entry, type) and issubclass(entry, ToolProtocol):
+        raise TypeError(f"tools entries take a ToolProtocol instance, not the class {entry.__name__}")
+    if callable(entry):
+        return wrap_tool(entry)
+    raise TypeError(
+        "tools entries must be functions, @tool functions or ToolProtocol objects "
+        f"(schema() and async call()), got {entry!r}"
+    )
+
+
+class _Marking(NamedTuple):
+    """What the author marked on a tool; the platform's settings still win."""
+
+    slug: str | None
+    audiences: frozenset[Audience]
+    sensitive: bool
+
+
+#: A ToolProtocol object that isn't a `ToolWrapper` carries no marking: like
+#: an unmarked function, it is operator-only, not sensitive, keyed by name.
+_UNMARKED = _Marking(slug=None, audiences=OPERATOR_ONLY, sensitive=False)
+
+
+def _marking_of(tool: ToolProtocol) -> _Marking:
+    if isinstance(tool, ToolWrapper):
+        return _Marking(slug=tool.slug, audiences=tool.audiences, sensitive=tool.sensitive)
+    return _UNMARKED
 
 
 def _tool_call_to_dict(tc: ToolCall) -> dict:
@@ -148,6 +189,14 @@ class Agent:
         )
         serve(agent, name="my-agent", port=8000)
 
+    ``tools`` takes plain functions, ``@tool`` functions and objects that
+    implement `ToolProtocol` (``schema()`` and an async ``call()``), such as
+    the peer agents a factory receives in ``remote_tools``. Functions are
+    wrapped; a ToolProtocol object is used as it is, operator-only and not
+    sensitive unless the platform's per-tool settings say otherwise. Tools
+    are keyed by schema name, and a later one replaces an earlier one with
+    the same name.
+
     ``memory`` may be left out: hosted on the platform the agent then gets
     the platform store anyway; on a laptop it runs without memory.
 
@@ -161,7 +210,7 @@ class Agent:
         self,
         role: str,
         model: ModelConfig,
-        tools: list[Callable] | None = None,
+        tools: list[Callable | ToolProtocol] | None = None,
         mcps: list[MCPConfig] | None = None,
         memory: MemoryConfig | Literal["platform"] | Memory | None = None,
         context: str | None = None,
@@ -205,9 +254,9 @@ class Agent:
         self._auditor: Auditor | None = audit_for(audit)
         self._mcp_configs: list[MCPConfig] = mcps or []
 
-        # Wrap plain functions as ToolWrapper instances
-        self._local_tools: dict[str, ToolWrapper] = {
-            w.schema().name: w for w in (_wrap_tool(t) for t in (tools or []))
+        # Functions become ToolWrappers; ToolProtocol objects are held as is.
+        self._local_tools: dict[str, ToolProtocol] = {
+            w.schema().name: w for w in (_as_tool(t) for t in (tools or []))
         }
         if any(name.startswith("skill:") for name in self._local_tools):
             raise ValueError("tool names starting with 'skill:' are reserved")
@@ -675,10 +724,11 @@ class Agent:
 
     def _offered_tools(self, caller: Caller | None, overrides: dict[str, frozenset[Audience]]) -> set[str]:
         """Names of the tools offered on this caller's turn, by ``effective_audiences``."""
-        names = {
-            n for n, w in self._local_tools.items()
-            if may_offer(caller, effective_audiences(n, w.slug, w.audiences, overrides))
-        }
+        names = set()
+        for n, w in self._local_tools.items():
+            marking = _marking_of(w)
+            if may_offer(caller, effective_audiences(n, marking.slug, marking.audiences, overrides)):
+                names.add(n)
         names |= {
             n for n, spec in self._mcp_tools.items()
             # MCP: `customer_safe_tools` is the config's (legacy) marking; the
@@ -691,8 +741,9 @@ class Agent:
 
     def _key_of(self, name: str) -> str:
         """The platform's key for a tool: a manifest tool's slug key, else its name."""
-        wrapper = self._local_tools.get(name)
-        return slug_key(wrapper.slug) if wrapper is not None and wrapper.slug else name
+        tool = self._local_tools.get(name)
+        slug = _marking_of(tool).slug if tool is not None else None
+        return slug_key(slug) if slug else name
 
     def _tool_by_key(self, key: str) -> str | None:
         """The tool a platform key names, by the same rule as audiences (§5)."""
@@ -703,7 +754,7 @@ class Agent:
 
     def _sensitive_tools(self, flags: dict[str, bool]) -> set[str]:
         """Names of the sensitive tools: the author's marking, plus the platform's ``true`` (add-only)."""
-        names = {n for n, w in self._local_tools.items() if _is_sensitive(self._key_of(n), w.sensitive, flags)}
+        names = {n for n, w in self._local_tools.items() if _is_sensitive(self._key_of(n), _marking_of(w).sensitive, flags)}
         names |= {
             n for n, spec in self._mcp_tools.items()
             if _is_sensitive(n, n in spec["config"].get("sensitive_tools", []), flags)

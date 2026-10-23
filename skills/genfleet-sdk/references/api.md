@@ -27,7 +27,7 @@ class Agent:
         self,
         role:    str,
         model:   ModelConfig,
-        tools:   list[Callable] | None = None,
+        tools:   list[Callable | ToolProtocol] | None = None,
         mcps:    list[MCPConfig] | None = None,
         memory:  MemoryConfig | Literal["platform"] | Memory | None = None,
         context: str | None = None,
@@ -51,7 +51,7 @@ Implements `AgentProtocol`. Pass directly to `serve()` or `create_app()`. Proper
 
 - `role` - System prompt / persona. Prepended to every LLM call.
 - `model` - Provider credentials. See [ModelConfig](#modelconfig).
-- `tools` - Plain Python functions or `ToolWrapper` instances; plain functions are wrapped, with the schema derived from type hints and the docstring. Names starting with `skill:` are reserved, and `read_skill` is reserved when skills are configured.
+- `tools` - Plain Python functions, `ToolWrapper` instances (`@tool`), or objects implementing `ToolProtocol` (`schema()` and async `call()`, such as peer agents in `remote_tools`). Plain functions are wrapped, with the schema derived from type hints and the docstring; a `ToolProtocol` object is used as it is, operator-only and not sensitive unless the platform says otherwise. Anything else raises `TypeError`. A later tool replaces an earlier one with the same name. Names starting with `skill:` are reserved, and `read_skill` is reserved when skills are configured.
 - `mcps` - MCP server connections. Tool schemas are fetched on first `run()` and merged with local tools. An MCP tool whose name is taken by another tool is skipped.
 - `memory` - `"platform"` (the hosted agent's store; fails at construction when not hosted), a [MemoryConfig](#memoryconfig) dict for Redis, or any object implementing the `Memory` protocol (`async load / save / clear`; an optional `append` makes saves incremental). Left out: a hosted agent gets the platform store anyway, anywhere else the agent is stateless and the caller manages history through `AgentInput.history`.
 - `context` - Extra string appended to the system prompt at runtime.

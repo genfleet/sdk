@@ -229,6 +229,15 @@ class ToolWrapper:
         return f"ToolWrapper(name={self._schema.name!r}, audiences={sorted(self.audiences)})"
 
 
+def is_tool_object(obj: object) -> bool:
+    """Whether ``obj`` is an object that already implements ToolProtocol:
+    a callable ``schema()`` and a coroutine ``call()``. A class is not one,
+    only an instance; a `ToolWrapper` is."""
+    if isinstance(obj, type):
+        return False
+    return callable(getattr(obj, "schema", None)) and inspect.iscoroutinefunction(getattr(obj, "call", None))
+
+
 #: Set by ``load_tools`` on the proxy it returns for a mounted tool (never on
 #: the loaded object): the manifest slug it came from.
 TOOL_SLUG_ATTR = "__genfleet_tool_slug__"

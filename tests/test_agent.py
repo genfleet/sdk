@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from genfleet.sdk import TOOL_EVENT_KEY, Agent, AgentInput, AgentOutput, AgentProtocol, ToolCall, tool
-from genfleet.sdk.agent import _wrap_tool
+from genfleet.sdk.agent import _as_tool
 from genfleet.sdk.schemas import ToolSchema
 
 
@@ -94,12 +94,12 @@ def test_platform_memory_outside_a_sandbox_names_the_missing_variable(monkeypatc
 # Tool wrapping
 # ---------------------------------------------------------------------------
 
-def test_wrap_tool_plain_function():
+def test_as_tool_plain_function():
     def add(a: float, b: float) -> str:
         """Adds two numbers."""
         return str(a + b)
 
-    wrapper = _wrap_tool(add)
+    wrapper = _as_tool(add)
     schema = wrapper.schema()
     assert schema.name == "add"
     assert schema.description == "Adds two numbers."
@@ -107,12 +107,12 @@ def test_wrap_tool_plain_function():
     assert "b" in schema.parameters["required"]
 
 
-def test_wrap_tool_already_wrapped():
+def test_as_tool_already_wrapped():
     @tool(description="multiplies two numbers")
     def multiply(a: float, b: float) -> str:
         return str(a * b)
 
-    wrapper = _wrap_tool(multiply)
+    wrapper = _as_tool(multiply)
     assert wrapper.schema().description == "multiplies two numbers"
 
 

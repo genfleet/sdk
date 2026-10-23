@@ -74,7 +74,7 @@ import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from genfleet.sdk import Agent, ModelConfig, ToolResolver, caller_of, load_tools, tool
+from genfleet.sdk import Agent, ModelConfig, ToolProtocol, ToolResolver, caller_of, load_tools, tool
 from genfleet.sdk.models import ModelClient
 from genfleet.sdk.turn import current_turn
 
@@ -115,7 +115,7 @@ def model_config() -> ModelConfig:
 def make_agent(
     model: ModelConfig,
     *,
-    remote_tools: Sequence[Callable] = (),
+    remote_tools: Sequence[Callable | ToolProtocol] = (),
     resolver: ToolResolver | None = None,
     model_client: ModelClient | None = None,
 ) -> Agent:
@@ -127,7 +127,7 @@ def make_agent(
     )
 
 
-def build_agent(remote_tools: Sequence[Callable] = ()) -> Agent:
+def build_agent(remote_tools: Sequence[Callable | ToolProtocol] = ()) -> Agent:
     """What the platform calls. Keep the signature exactly like this."""
     return make_agent(model_config(), remote_tools=remote_tools)
 ```
@@ -244,7 +244,14 @@ resolver argument (see the [connectors guide](connectors.md#using-a-tool-from-an
 When a deployment connects your agent to another agent, that agent reaches
 yours as one of the `remote_tools`: a tool with a name, a description and
 parameters, whose result is the other agent's reply. Your model calls it like
-any other tool. Treat it as a tool whose author you don't control:
+any other tool.
+
+A peer is a `ToolProtocol` object (`schema()` and an async `call()`), not a
+function, and `Agent(tools=...)` takes it as it is. It carries no marking of
+its own: it is offered to operators only and is not sensitive, unless the
+platform's per-tool settings for it say otherwise.
+
+Treat it as a tool whose author you don't control:
 
 - **Its output is untrusted input.** The reply is text another model wrote. It
   can be wrong, and it can contain instructions ("ignore your rules and
