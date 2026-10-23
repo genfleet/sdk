@@ -26,6 +26,11 @@ def serve(
     description: str = "",
     host: str = "0.0.0.0",
     port: int = 8000,
+    public_url: str | None = None,
+    accept_history: bool = False,
+    accepted_input_types: Iterable[str] | None = None,
+    output_types: Iterable[str] | None = None,
+    max_body_bytes: int = 8 * 1024 * 1024,
 ) -> None:
 ```
 
@@ -39,14 +44,27 @@ def create_app(
     *,
     name: str = "agent",
     description: str = "",
+    public_url: str | None = None,
+    accept_history: bool = False,
+    accepted_input_types: Iterable[str] | None = None,
+    output_types: Iterable[str] | None = None,
+    max_body_bytes: int = 8 * 1024 * 1024,
 ) -> FastAPI:
 ```
 
-Returns a FastAPI app. Use when you need to:
+Returns a FastAPI app with the same options as `serve()`. Use when you need to:
 - Add middleware (CORS, auth, logging)
 - Mount under a larger application
 - Run with a custom ASGI server (Hypercorn, Daphne)
 - Write tests with `httpx.AsyncClient` + ASGI transport
+
+### Options
+
+- `public_url` - the URL the card advertises (`supportedInterfaces[0].url`). Must be an absolute http(s) URL with no query or fragment, else `ValueError`. Without it the card names each request's own URL, built from the caller's `Host` header (so any host can be advertised), and is sent with `Cache-Control: no-store`; with it, `max-age=300`. Set it whenever the app is reachable from outside.
+- `accept_history` - forward caller-supplied prior turns (`metadata["genfleet.history"]`, or 0.x `params.history`) to the agent as its history. Off by default: whoever can call the app could otherwise put words in the agent's earlier turns. Turn it on only for a trusted caller that keeps the conversation itself. The `genfleet.history` key is removed from the metadata the agent sees either way; other request `metadata` passes through.
+- `accepted_input_types` - MIME types (`"image/*"`, `"application/pdf"`, `"*/*"`) of the files the app takes besides text. Defaults to the agent's `accepted_input_types` attribute (`Agent(accepts=...)` sets it), else none. Given here, it applies to this app only: the agent is unchanged and `Agent.run` accepts what this app admitted. The card lists them in `defaultInputModes`.
+- `output_types` - MIME types of files the agent may return, listed in the card's `defaultOutputModes` after `text/plain`. Defaults to the agent's `output_types` attribute, else none.
+- `max_body_bytes` - the largest request body read (default 8 MiB). A larger one is refused before it is parsed with `-32600`; send big files by reference.
 
 ## Endpoints (A2A v1.0, JSON-RPC binding)
 
@@ -64,8 +82,8 @@ for one minor release):
   ],
   "version": "1.0.0",
   "capabilities": {"streaming": true, "pushNotifications": false, "extendedAgentCard": false},
-  "defaultInputModes": ["text/plain"],
-  "defaultOutputModes": ["text/plain"],
+  "defaultInputModes": ["text/plain"],      // plus accepted_input_types
+  "defaultOutputModes": ["text/plain"],     // plus output_types
   "skills": []
 }
 ```
@@ -96,23 +114,6 @@ Collects the full agent output and returns a completed task.
 }
 ```
 
-`contextId` becomes `AgentInput.metadata["session_id"]`, over any
-`session_id` in request `metadata` (which is used only when there is no
-`contextId`). A message with no text part is refused (`-32005`).
-
-Options on `create_app` / `serve`:
-
-- `public_url="https://agents.example.com/bot/"` — the URL the card
-  advertises. Without it the card names each request's own URL, built from the
-  caller's `Host` header (so any host can be advertised), and is sent with
-  `Cache-Control: no-store`; with it, `max-age=300`.
-- `accept_history=True` — forward caller-supplied prior turns
-  (`metadata["genfleet.history"]`, or 0.x `params.history`) to the agent.
-  Off by default: the key is stripped and ignored, because whoever can call the
-  app could otherwise put words in the agent's earlier turns. Turn it on only
-  for a trusted caller that keeps the conversation itself. Request `metadata` passes through to the agent; the
-`metadata["genfleet.history"]` key is always removed (see `accept_history`).
-
 **Response:**
 ```json
 {
@@ -128,6 +129,12 @@ Options on `create_app` / `serve`:
   }
 }
 ```
+
+#### Sessions
+
+`contextId` becomes `AgentInput.metadata["session_id"]`, over any `session_id` in the request `metadata` (which is used only when there is no `contextId`, so a gateway in front can scope `contextId` per caller and metadata cannot route around it). `Agent` memory is keyed by `session_id`; without one each request is stateless. The 0.x `params.sessionId` is honoured only when metadata has no `session_id`.
+
+A message may carry text, files, or both; a file-only request is a turn with an empty `message`. A part that is neither text nor a recognisable file or data part is `-32602`.
 
 #### SendStreamingMessage — streaming (SSE)
 
@@ -154,9 +161,10 @@ minor release.
 | Code | Meaning |
 |------|---------|
 | -32700 | Parse error (malformed JSON) |
+| -32600 | Invalid request: body larger than `max_body_bytes` (or not a JSON object) |
 | -32601 | Method not found |
-| -32602 | Invalid params (e.g. no `message.parts`) |
-| -32005 | Content type not supported (no text part) |
+| -32602 | Invalid params (no `message.parts`, malformed part, inline file over 1 MiB) |
+| -32005 | Content type not supported: a file whose type the app does not accept; `data` names `unsupported` and `accepted` |
 | -32603 | Internal error (agent raised an exception) |
 | -32004 | Unsupported operation (task methods) |
 | -32003 | Push notifications not supported |
@@ -180,17 +188,19 @@ To debug a failure, take the error id from the response and grep your own logs:
 grep 9f2c1ab40e7d agent.log
 ```
 
-## Message Parsing
+## Message Parsing and Files
 
-The serve module extracts text from A2A message parts:
+The serve module maps every A2A part into `AgentInput.parts`:
 
-```python
-# From the request params:
-params.message.parts → [{"text": "..."}]
-# Concatenated into: "..." and passed as AgentInput(message="...")
-```
+- `{"text": "..."}` becomes a `TextPart`; the text parts are joined into `AgentInput.message`.
+- `{"raw": "<base64>", "mediaType": "image/png", "filename": "a.png"}` (inline, at most 1 MiB decoded) or `{"url": "...", "mediaType": "..."}` (by reference) becomes the media part for that MIME type (`ImagePart`, `FilePart`, ...). The 0.x form is `{"type": "file", "file": {"bytes" | "uri", "mimeType", "name"}}`.
+- `{"data": {...}}` (a data part) becomes an `application/json` file part.
 
-Only `text` parts are extracted. Non-text parts (file, data) are ignored by the default serve module.
+A file whose type is not in the accepted types is refused with `-32005` before the agent runs. `serve` never fetches a `url`: the agent reads references through a `FileResolver` (`Agent(files=...)`), which is where access and expiry are checked.
+
+Files the agent returns in `AgentOutput.parts` go out as file parts of the `result` artifact, beside the text (`raw` for inline bytes, `url` for references; 0.x callers get the `file` form).
+
+`SendMessage` returns the whole reply; `SendStreamingMessage` streams it. In both, `tool_calls` yielded by a custom `AgentProtocol` are **not executed and not returned** - only text, files and tool events (from `Agent`) reach the caller.
 
 ## Testing with httpx (unit tests)
 
