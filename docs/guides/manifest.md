@@ -67,11 +67,16 @@ it in the dashboard, and by default an agent serves operators only. Which
 *tools* each audience gets is decided per tool; see "Operators and customers"
 in the [README](../../README.md#operators-and-customers).
 
+The SDK parser still accepts an `audiences` key for compatibility, but the
+platform doesn't use it, so set who an agent serves in the dashboard.
+
 ### `[tools]` and `[mcps]`
 
 > **Beta:** for now, keep your tools in your agent's own package, as the
-> [publish guide](../../README.md#publish-on-genfleet-private-beta) does. An agent that names a
-> marketplace tool here can't be started until that tool is approved.
+> [publish guide](../../README.md#publish-on-genfleet-private-beta) does. An
+> agent that names a marketplace tool here can't be started until the agent is
+> submitted to the marketplace and approved, with that tool pinned. A tool that
+> isn't published yet can't be pinned, so the submission fails.
 
 Each key is a tool slug and each value is a version spec. Both tables use the
 same format, and both spellings below are equivalent:
@@ -111,7 +116,8 @@ You never write a hash. Two things are pinned for you:
   `genfleet.toml`, so the archive's digest still covers exactly the code you
   pushed. A spec that matches no published version, or a tool your workspace's
   plan can't use, fails the submission. An agent that names a
-  marketplace tool can't be started until that tool is approved.
+  marketplace tool can't be started until the agent is submitted and approved,
+  with that tool pinned.
 
 In the SDK, a `ToolRef` read from your manifest has `spec` set and `version`
 and `digest` empty (`is_pinned` is `False`). A resolved one carries all three.
