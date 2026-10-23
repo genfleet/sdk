@@ -247,8 +247,8 @@ Send the trigger as a workspace member with the `gf` CLI:
 ```
 
 The agent sees that turn as an operator in a private chat, so it is offered
-its operator tools. The agent must serve operators, which it does unless its
-manifest's `audiences` leaves `"operator"` out.
+its operator tools. The agent must serve operators, which it does unless the workspace owner
+has set it to serve customers only in the dashboard.
 
 The machine running cron holds a logged-in `gf` session, which is a long-lived
 credential, stored under `~/.genfleet/` (the CLI writes it readable only by

@@ -9,8 +9,8 @@ This guide builds `@acme/tickets`, a tool that opens a ticket in a helpdesk.
 
 > **Beta:** for now, keep tools in your agent's own package, as the
 > [publish guide](../../README.md#publish-on-genfleet-private-beta) does.
-> Marketplace tools are mounted only after review, and an agent that names one
-> runs without it until then. Use this guide to build and test a connector
+> An agent that names a marketplace tool can't be
+> started until that tool is approved. Use this guide to build and test a connector
 > ahead of that.
 
 ## Layout
@@ -368,8 +368,8 @@ What happens next:
    is resolved to an exact version and digest. The agent keeps running that
    version until the agent is submitted again. See [what gets pinned](manifest.md#what-gets-pinned).
 3. **Mounting.** On the platform the reviewed archive is mounted next to the
-   agent, and `load_tools()` imports `entry` from it. Until the agent's own
-   submission is approved, the agent runs without the tool.
+   agent, and `load_tools()` imports `entry` from it. An agent that names a
+   tool can't be started until that tool is approved.
 4. **Settings and secrets.** Each workspace that installs the tool fills in its
    `[config]` and binds its `[secrets]` in the tool's settings. A workspace that
    installs a marketplace *agent* that uses your tool also has to grant that

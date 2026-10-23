@@ -139,7 +139,6 @@ name = "support"
 kind = "code"
 description = "Answers order questions and opens helpdesk tickets."
 entry = "support_agent.agent:build_agent"
-audiences = ["operator", "customer"]
 
 [tools]
 "@acme/tickets" = "1.x"
