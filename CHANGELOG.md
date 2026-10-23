@@ -5,6 +5,13 @@ All notable changes to `genfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+- **Added: `Agent(max_history_turns=N)`.** Sends only the last N turns of a session's thread to the model, so a long chat does not grow cost, latency and context without bound. A turn is a user message and everything up to the next one, so a tool call is never sent without its result. Only what goes to the model is cut; memory still stores every turn. The history sent always starts on a user message; when the last turns are very long, fewer than N may be sent. The platform store is asked for just the recent end of the thread; Redis and custom `Memory` backends are loaded whole and cut before the model call. Default `None` keeps today's behaviour.
+- **Added: `WindowedMemory`** (`genfleet.sdk.memory`), an optional protocol: `load_newest(session_id, limit)` returns the newest `limit` messages, oldest first. A backend that implements it and `append` is read through it when the agent has `max_history_turns`. `PlatformMemory` implements it.
+- **Changed:** when the caller supplies `AgentInput.history`, the agent no longer reads the stored thread for that turn. It was read and then discarded; the caller's history already replaced it.
+- **Docs:** `PlatformMemory.load(limit=...)` counts messages, not turns, as its docstring now says.
+
 ## 0.23.0
 
 **Breaking:** `genfleet.sdk.egress` and the manifest `egress` fields are removed (#82).
