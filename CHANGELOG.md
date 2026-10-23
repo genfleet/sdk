@@ -5,6 +5,13 @@ All notable changes to `genfleet-sdk` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.0
+
+**Breaking:** `genfleet.sdk.egress` and the manifest `egress` fields are removed (#82).
+
+- **Removed:** the `genfleet.sdk.egress` module and `AgentManifest.egress` / `ToolManifest.egress`. A manifest that still has an `egress` key loads as before; the SDK ignores the key. Code that imported the module or read the fields must drop it.
+- **Docs:** an agent that names a marketplace tool can't be started until the agent is submitted and approved with that tool pinned. The manifest guide no longer documents an `[agent] audiences` key: set who an agent serves in the dashboard (#81).
+
 ## 0.22.0
 
 Everything since 0.21.0: clearer approval texts (#72), `ScriptedModelClient` for testing tool calls (#76), and a documentation pass (#73, #75, #77, #78).
