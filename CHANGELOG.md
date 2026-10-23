@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- **Changed: approval texts the model sees** (#72). They told the model to "tell the user", and small models read "the user" as a third party ("I'll let them know"). Every model-facing approval text now names "the person you are talking to". The pending tool result is now: "Not run yet: this action needs approval from a workspace owner or admin. An approval request was sent; the action runs once it is approved. Let the person you are talking to know it is waiting for approval." The notes for an approval that could not be verified, or can't run for this caller, say the action did not run. An approved call that failed no longer gets the "it has run" note; it is told the action did not complete. Behaviour is unchanged: only the wording.
+- **Changed: approval texts the model sees** (#72). They told the model to "tell the user", and small models read "the user" as a third party ("I'll let them know"). Every model-facing approval text now names "the person you are talking to". The pending tool result is now: "Not run yet: this action needs approval from a workspace owner or admin. An approval request was sent; the action runs once it is approved. Let the person you are talking to know it is waiting for approval." The notes for an approval that could not be verified, or can't run for this caller, say the action did not run. An approved call that failed no longer gets the "it has run" note; it is told the call failed and was not confirmed as done (a tool can fail after its side effect), so someone should check before the person asks again. Behaviour is unchanged: only the wording.
 
 ## 0.21.0
 

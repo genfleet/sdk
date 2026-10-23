@@ -992,7 +992,8 @@ def test_the_refusal_and_outcome_notes_are_pinned():
     )
     assert _approved_call_note("refund", False) == (
         "A workspace owner or admin approved `refund`, but it failed (the error follows), "
-        "so it did not complete. Let the person you are talking to know it did not complete."
+        "so it is not confirmed as done. Let the person you are talking to know it failed and was "
+        "not confirmed as done, and that someone should check before they ask for it again."
     )
 
 
@@ -1008,6 +1009,7 @@ def test_the_refusal_and_outcome_notes_are_pinned():
     ],
 )
 def test_no_approval_text_names_a_third_party_user(text):
+    # Covers the fixed wording only; a tool's own name (here "t") is not checked.
     assert "user" not in text.lower()
 
 
@@ -1017,3 +1019,5 @@ def test_no_approval_text_names_a_third_party_user(text):
 )
 def test_texts_for_an_action_that_did_not_complete_never_say_it_ran(text):
     assert "has run" not in text and "succeeded" not in text
+    # And each one says positively that the action is not done.
+    assert any(p in text for p in ("Not run yet", "did not run", "not confirmed as done"))

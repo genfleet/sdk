@@ -99,7 +99,8 @@ def _approved_call_note(tool: str, ok: bool) -> str:
         )
     return (
         f"A workspace owner or admin approved `{tool}`, but it failed (the error follows), "
-        "so it did not complete. Let the person you are talking to know it did not complete."
+        "so it is not confirmed as done. Let the person you are talking to know it failed and was "
+        "not confirmed as done, and that someone should check before they ask for it again."
     )
 
 #: The fields an approved call is signed over, in this exact set.
