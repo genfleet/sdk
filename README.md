@@ -55,6 +55,14 @@ curl -X POST http://localhost:8000 \
   -d '{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m1","role":"ROLE_USER","parts":[{"text":"What is the weather in Paris?"}]}}}'
 ```
 
+## Guides
+
+- [`genfleet.toml` reference](docs/guides/manifest.md): agent and tool manifests, version specs, and what gets pinned
+- [The agent factory](docs/guides/agent-factory.md): `build_agent(remote_tools=())`, peer agents as tools, and model config
+- [Writing a connector](docs/guides/connectors.md): a marketplace tool with `ToolContext`, local testing, and publishing
+- [Approvals and outbound messages](docs/guides/approvals-and-messaging.md): sensitive tools, and `send_message`
+- [Scheduled and event-driven work](docs/guides/triggers.md): triggers without a scheduler, idempotency, and the background scope
+
 ## Publish on Genfleet (private beta)
 
 Invited to the beta? The step-by-step guide — write an agent with a tool,
@@ -519,7 +527,7 @@ An unmarked tool is `["operator"]`. An operator in a private chat gets the tools
 def issue_refund(order_id: str, amount: float) -> str: ...
 ```
 
-When the model calls it, it doesn't run. The model is told the action awaits approval, and the platform shows the owner or admin the exact call to approve. Once approved, a follow-up turn runs that one call, exactly once, and the model tells the user the outcome. The platform signs the approved call with a key only this agent instance holds, so another agent or a direct caller can't forge one. On a call from another agent, a sensitive tool is refused. The owner can mark or unmark any tool in the dashboard, and that setting wins.
+When the model calls it, it doesn't run. The model is told the action awaits approval, and the platform shows the owner or admin the exact call to approve. Once approved, a follow-up turn runs that one call, exactly once, and the model tells the user the outcome. The platform signs the approved call with a key only this agent instance holds, so another agent or a direct caller can't forge one. On a call from another agent, a sensitive tool is refused. The owner can mark any tool sensitive in the dashboard, but can't unmark one marked in the agent's code: `@tool(sensitive=True)` and an MCP config's `sensitive_tools` always stay.
 
 An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the caller key gets every tool. On the platform (`is_hosted()` is true) a missing caller gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
 
