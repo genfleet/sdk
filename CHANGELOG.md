@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 0.21.0
 
-- **Added: `ToolContext`** (sdk#27, #68). A tool parameter annotated `ToolContext` is left out of the tool's schema and filled in at call time with the tool's own `config` (read-only mapping) and `secret(name)`. On the platform the values are the tenant's installation, set by the engine under the tool's namespace (`tool_env_namespace(slug)`: `<NS>__CONFIG` and `<NS>__SECRETS`, JSON objects); locally the same variables work, and a secret also falls back to a variable with its own name. Additive: a tool without the parameter is unchanged. `ToolSecretError` names a missing secret, never a value.
+- **Added: `ToolContext`** (sdk#27, #68). A tool parameter annotated `ToolContext` is left out of the tool's schema and filled in at call time with the tool's own `config` (read-only mapping) and `secret(name)`. On the platform the values are the tenant's installation, set under the tool's namespace (`tool_env_namespace(slug)`: `<NS>__CONFIG` and `<NS>__SECRETS`, JSON objects); locally the same variables work, and a secret also falls back to a variable with its own name. Additive: a tool without the parameter is unchanged. `ToolSecretError` names a missing secret, never a value.
 
 ## 0.20.0
 
@@ -46,7 +46,7 @@ Everything since 0.19.0: on-demand repository skills (#57), workflow state (#58)
 - **Sensitive tools.** `@tool(sensitive=True)` (or `sensitive = true` in a tool's manifest, or an MCP config's `sensitive_tools`) marks a tool whose call waits for a workspace owner's or admin's approval. The platform's per-tool flags (`metadata["genfleet.sensitive_tools"]`, `{key: bool}`, keyed like audiences) are **add-only**: `true` marks a tool sensitive, `false` never unmarks one its author marked. The map is unsigned, so a forged one can't switch an approval off. `remember` is never sensitive.
   - When the model calls one, it does **not run**. The model is told the action awaits approval, and the tool result event has `ok: false` and `status: "pending"`. The request (`{tool key, arguments}`) is reported on the turn's final chunk, `metadata["genfleet.confirmation_requests"]`.
   - On a turn another agent started (`genfleet.peer_turn`), a sensitive tool is refused outright.
-- **Approved calls.** A follow-up turn can carry `metadata["genfleet.approved_call"]`, signed by the engine with a per-spawn key in `GENFLEET_APPROVAL_KEY`. `Agent` runs it **first and exactly once**, before the model, and only if all of these hold:
+- **Approved calls.** A follow-up turn can carry `metadata["genfleet.approved_call"]`, signed by the platform with a key only that agent instance holds. `Agent` runs it **first and exactly once**, before the model, and only if all of these hold:
   - the HMAC-SHA256 signature over `canonical_json` of `{confirmation_id, tool, arguments, args_hash, expires_at}` verifies (`hmac.compare_digest`);
   - it hasn't expired;
   - its `confirmation_id` hasn't already run in this process;
@@ -57,7 +57,7 @@ Everything since 0.19.0: on-demand repository skills (#57), workflow state (#58)
   - It is agent-reported, so it is advisory. A turn that errors before its final chunk (the provider, the audit sink) sends no result, even if the tool ran: read a missing result as "unconfirmed", not "did not run". It reaches the platform only through the non-streaming invoke (`serve`'s streaming paths drop final-chunk metadata).
   - Only the tool's own exception becomes a failed result; one from the audit sink after the tool ran ends the turn as before.
 - An approved call is verified **and claimed in one step**. A signature that isn't 64 lowercase hex characters, and arguments with NaN, infinities or lone surrogates (`canonical_json` uses `allow_nan=False`), are malformed and refused without an error. It runs through the same audited dispatch as any tool call (`tool.call` / `tool.result`).
-- Exported for the engine: `APPROVAL_KEY_ENV`, `PEER_TURN_KEY`, `canonical_json`, `sign_approved_call` and the metadata keys. The agent-side helpers in `genfleet.sdk.confirmations` are private.
+- Exported for the platform: `APPROVAL_KEY_ENV`, `PEER_TURN_KEY`, `canonical_json`, `sign_approved_call` and the metadata keys. The agent-side helpers in `genfleet.sdk.confirmations` are private.
 - MCP tools whose names start with `@` are skipped: that's a slug key's form.
 
 ## 0.18.1
@@ -76,7 +76,7 @@ Everything since 0.19.0: on-demand repository skills (#57), workflow state (#58)
   - `legacy_tools`, and an agent the platform didn't spawn, get every tool.
   - A hosted turn with a missing or malformed caller is a customer in a group. It now also gets `["customer"]` tools, never staff tools.
 - **The platform's per-tool setting wins.** On a hosted turn, `metadata["genfleet.tool_audiences"]` (`TOOL_AUDIENCES_METADATA_KEY`) holds the tenant owner's audience per tool, keyed by tool name or manifest slug. It replaces the author's marking, wider or narrower (`effective_audiences`: name, then slug, then the marking).
-  - It covers every tool an `Agent` holds: its own functions, `load_tools()` tools, remote tools passed in as `tools=`, and MCP tools (by name). Tools the engine keeps itself, such as runner-held peers and `remember`, are filtered by the engine.
+  - It covers every tool an `Agent` holds: its own functions, `load_tools()` tools, remote tools passed in as `tools=`, and MCP tools (by name). Tools the platform keeps itself, such as peers and `remember`, are filtered by the platform.
   - **Fail closed:** an entry whose value can't be read is offered to no one. A value that isn't a mapping is ignored.
 - **`load_tools()` tools carry their manifest slug.** A function or method comes back as a fresh `functools.wraps` proxy that behaves exactly like it: sync stays sync and the result is unchanged. Any other callable (a builtin, a partial, an `itemgetter`, a callable instance) comes back as a `ToolWrapper`, named by its slug if it has no `__name__`. `ToolWrapper`s come back as copies (`with_slug`). The loaded objects are never modified. Schemas for callables without type hints no longer fail; their parameters are left untyped.
 - New in `genfleet.sdk`: `may_offer`, `tool_audiences_of`, `Audience`, `EVERYONE`, `OPERATOR_ONLY` and `TOOL_AUDIENCES_METADATA_KEY`, plus `ToolWrapper.with_slug` and `genfleet.sdk.tool.wrap_tool`.
@@ -90,12 +90,12 @@ Everything since 0.19.0: on-demand repository skills (#57), workflow state (#58)
 
 ## 0.17.1
 
-- **A sandbox is hosted when `GENFLEET_HOSTED` is set.** The engine sets it in every sandbox it spawns, process sandboxes included. Before, the SDK keyed on `GENFLEET_A2A_TOKEN`, which a process sandbox never gets, so a process-hosted agent reached without `genfleet.caller` offered every tool. `GENFLEET_A2A_TOKEN` still counts as hosted, for engines that don't set the new marker yet. `HOSTED_ENV` is now `"GENFLEET_HOSTED"`.
+- **Hosted detection is reliable in every kind of platform sandbox.** Before, an agent hosted in some sandbox kinds was not recognised as hosted, so a turn reaching it without `genfleet.caller` offered every tool. `is_hosted()` reports it.
 
 ## 0.17.0
 
 - **Operators and customers.** On a hosted turn the platform sets `metadata["genfleet.caller"]` = `{role, id, name, channel, private, legacy_tools}`, resolved from the provider-verified sender and overwritten from any value a caller sends. `role` is `"operator"` (tenant staff) or `"customer"`. `name` is the sender's own display name: untrusted text, never an authorization input. `genfleet.sdk.caller` adds `CALLER_METADATA_KEY`, `Caller`, `caller_of(metadata)` and `may_use(caller, customer_safe=…)`.
-- **Tools are operator-only unless marked customer-safe.** `@tool(customer_safe=True)` marks a tool; an MCP config lists its customer-safe tools in `customer_safe_tools`. On a customer's turn, or anyone's turn in a group chat (where everyone sees the reply), `Agent` offers only customer-safe tools, and a call to any other tool is refused as unknown. An operator in a private chat gets every tool; so does every turn of an agent the platform migrated with the `legacy_tools` grace flag. A turn without `genfleet.caller` is not filtered only when the platform did not spawn the agent (a local `serve`, a test); in a platform sandbox (`GENFLEET_A2A_TOKEN` set) it gets the narrowest set. An MCP tool whose name is already taken (by a local tool or another server) is skipped, so a server cannot lend its mark to another tool. **Breaking for hosted customer-facing agents:** mark the tools customers may use before the platform turns roles on.
+- **Tools are operator-only unless marked customer-safe.** `@tool(customer_safe=True)` marks a tool; an MCP config lists its customer-safe tools in `customer_safe_tools`. On a customer's turn, or anyone's turn in a group chat (where everyone sees the reply), `Agent` offers only customer-safe tools, and a call to any other tool is refused as unknown. An operator in a private chat gets every tool; so does every turn of an agent the platform migrated with the `legacy_tools` grace flag. A turn without `genfleet.caller` is not filtered only when the platform did not spawn the agent (a local `serve`, a test); on the platform it gets the narrowest set. An MCP tool whose name is already taken (by a local tool or another server) is skipped, so a server cannot lend its mark to another tool. **Breaking for hosted customer-facing agents:** mark the tools customers may use before the platform turns roles on.
 - **`audiences` in `genfleet.toml`** (`[agent]`): `["operator"]`, `["customer"]` or both. Left out, the platform serves operators only. Entries are deduplicated; an empty list is a `ManifestError`.
 - The 0.x A2A card path and methods, announced for removal in this minor, stay one more minor (sdk#47).
 
@@ -121,18 +121,16 @@ Everything since 0.19.0: on-demand repository skills (#57), workflow state (#58)
 ## [0.13.0] - 2026-10-06
 
 ### Added
-- **`egress` in `genfleet.toml`**: the hosts an agent or tool reaches, declared in `[agent]` or `[tool]` as `egress = ["api.github.com", "*.googleapis.com", "hooks.example.com:8443"]`. A hosted sandbox leaves only through the platform's egress proxy, and the hosts a manifest declares are one of the lists the proxy allows. An agent is allowed its own entries plus those of every tool it pins. `AgentManifest.egress` and `ToolManifest.egress` hold the entries validated, lowercased, without a trailing dot or a default `:443`, and deduplicated. A bad entry is a `ManifestError` naming the file.
-- `genfleet.sdk.egress`: `parse_egress_entry` / `parse_egress` (an `EgressEntry` with `canonical` and `matches(host, port)`), raising `EgressEntryError` with a `reason` of `invalid_host`, `ip_not_allowed` or `limit`. An entry is a hostname of at least two labels, optionally starting with `*.` (any subdomain at any depth, never the bare domain) and optionally ending with `:port` (default 443). IP literals (including resolver and URL-parser shorthands such as `127.1` and `1.2.3.0x`), a bare `*`, any non-ASCII or internal whitespace, and more than 100 entries are refused; ASCII whitespace at the ends is trimmed. Every wildcard carries `EgressEntry.review_warning`; there is no public-suffix list, so `*.github.io` is valid and marketplace review decides. `tests/fixtures/egress-hosts.cases.json` pins the rules; the platform tests its own validators against a copy.
 
 ## [0.12.0] - 2026-10-04
 
 ### Added
-- **`Agent.run` reports the tools it runs** (sdk#39), so a hosted agent's tool calls show in chat. Next to the text it yields, per tool round: one `AgentOutput(content="", done=False, metadata={"tool_event": {"type": "tool_call", "id", "name", "arguments"}})` per call once its input is complete, then one `{"type": "tool_result", "id", "name", "ok", "output"}` per call as its tool returns. `ok` is false for an unknown tool or a failed MCP call. The shape is the one the platform runner emits for tools it dispatches (genfleet/engine#155); values are raw, and the platform redacts and truncates them before a user sees them. Text chunks are unchanged, and a consumer that only reads `content` sees the same text as before.
+- **`Agent.run` reports the tools it runs** (sdk#39), so a hosted agent's tool calls show in chat. Next to the text it yields, per tool round: one `AgentOutput(content="", done=False, metadata={"tool_event": {"type": "tool_call", "id", "name", "arguments"}})` per call once its input is complete, then one `{"type": "tool_result", "id", "name", "ok", "output"}` per call as its tool returns. `ok` is false for an unknown tool or a failed MCP call. The shape is the one the platform runner emits for tools it dispatches; values are raw, and the platform redacts and truncates them before a user sees them. Text chunks are unchanged, and a consumer that only reads `content` sees the same text as before.
 - `TOOL_EVENT_KEY` (`"tool_event"`), exported from `genfleet.sdk`.
 - `serve` relays tool events on non-final `working` status updates under `metadata.tool_event`, as the platform's A2A server does, with a tool result's `output` capped at 4000 characters. A failed result's `output` goes out as the fixed `"The tool failed."`: it is error text, and `serve` never sends exception text to its caller (sdk#20). A tool call's `arguments` are redacted (tool-call stream contract v1.1 redaction v2: secret-looking keys, header-style `{name: "Authorization", value}` pairs, and credential-looking values such as `Bearer …` or `sk-…`) and then capped at 8 KB of JSON, past which they become `{"_truncated": true, "preview": …}`.
 
 ### Changed
-- **A self-hosted `serve` now sends each successful tool's raw output to its caller** on `tasks/sendSubscribe`, up to 4000 characters per result. Before 0.12.0 a caller got only the model's text. A tool that reads a database row, a file or an internal API exposes that data to whoever calls your `serve` app directly. On the platform the engine scrubs tool output before a user sees it; a `serve` you host yourself does not. `tasks/send` still returns only the text.
+- **A self-hosted `serve` now sends each successful tool's raw output to its caller** on `tasks/sendSubscribe`, up to 4000 characters per result. Before 0.12.0 a caller got only the model's text. A tool that reads a database row, a file or an internal API exposes that data to whoever calls your `serve` app directly. On the platform, tool output is scrubbed before a user sees it; a `serve` you host yourself does not. `tasks/send` still returns only the text.
 
 ### Fixed
 - An MCP tool call that fails without raising is reported with `ok: false`: a result flagged `isError` by the MCP server, and an unsupported transport. Before, both said `ok: true`, so `serve` relayed their error text.
@@ -145,9 +143,9 @@ Everything since 0.19.0: on-demand repository skills (#57), workflow state (#58)
 ## [0.11.0] - 2026-09-22
 
 ### Added
-- **`send_message`**. `await send_message("whatsapp:2010…", "text")` or `send_message(to, template="name", params=[...])` sends on one of the agent's channel bindings through the sandbox's channels proxy (`GENFLEET_CHANNELS_URL` / `GENFLEET_CHANNELS_TOKEN`, set by the platform). The agent never holds the channel token; the platform picks the binding, enforces the 24-hour window and cold-send policy, and says which rule refused a send via `ChannelSendError.code` (`outside_window`, `cold_send_disabled`, `no_binding`, `invalid_request`, `send_rejected`). The reply to an inbound message is still sent by the platform — this is for everything else.
+- **`send_message`.** `await send_message("whatsapp:2010…", "text")` or `send_message(to, template="name", params=[...])` sends on one of the agent's channel bindings through the platform. The agent never holds the channel token; the platform picks the binding, enforces the 24-hour window and cold-send policy, and says which rule refused a send via `ChannelSendError.code` (`outside_window`, `cold_send_disabled`, `no_binding`, `invalid_request`, `send_rejected`). The reply to an inbound message is still sent by the platform — this is for everything else.
 - `send_message_tool`: the same as a model-callable tool (with `language` for templates), answering `"sent"`, `"not sent: <reason>"` for a refusal, or `"delivery unknown …; do not resend without checking"` when the platform could not confirm the outcome — so a refusal is something the model can act on, and a timeout does not become a duplicate message.
-- `ChannelSendError.delivery_unknown`; `code="not_in_sandbox"` when the channels variables are absent.
+- `ChannelSendError.delivery_unknown`; `code="not_in_sandbox"` when the agent is not running on the platform.
 
 ### Fixed
 - **Tool schemas typed `X | None` parameters as `{}`.** `@tool` only recognised `typing.Union`, and `str | None` is a `types.UnionType`, so every optional parameter written in the modern spelling reached the model with no type. Both spellings are now read.
@@ -155,7 +153,7 @@ Everything since 0.19.0: on-demand repository skills (#57), workflow state (#58)
 ## [0.10.0] - 2026-09-18
 
 ### Added
-- **Platform episodic memory**. `Agent(memory="platform")` — or `memory` omitted, when the sandbox provides `GENFLEET_MEMORY_URL` / `GENFLEET_MEMORY_TOKEN` — selects `PlatformMemory`, an HTTP client for the engine's memory proxy. It never sends a tenant or agent id; the proxy's per-spawn token *is* the scope. Stdlib HTTP, no new dependency.
+- **Platform episodic memory.** `Agent(memory="platform")` — or `memory` omitted, on the platform — selects `PlatformMemory`, the platform's memory store scoped to the agent instance. It never sends a tenant or agent id; the platform scopes it. Stdlib HTTP, no new dependency.
 - `AppendableMemory`: a backend that can add one turn without rewriting the thread. `Agent.run` appends the turn on such a backend and only falls back to whole-thread `save` on others (Redis). `subject` and `channel` from the input metadata are kept with the session.
 - **Turn idempotency.** `AppendableMemory.append` takes a `turn_id`, and `Agent.run` fills it from the input metadata (`turn_id`, `request_id` or `message_id`), falling back to the invocation id. A store that honours it drops a replayed turn instead of storing it twice.
 - `PlatformMemory.search(subject, query)` and `.purge(subject)`; `Agent.memory` exposes the backend.

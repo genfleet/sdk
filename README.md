@@ -113,8 +113,9 @@ turn and appended to after it.
 
 - **On the platform** you need not name a backend. A hosted agent uses the
   platform's store, scoped to that agent instance. `memory="platform"` says so
-  explicitly and fails fast when the agent is not running on the platform. `agent.memory.search(subject, query)`
-  and `agent.memory.purge(subject)` are available on it.
+  explicitly and fails fast when the agent is not running on the platform.
+  `agent.memory.search(subject, query)` and `agent.memory.purge(subject)` are
+  available on it.
 - **Anywhere else** pass your own Redis, or nothing for a stateless agent.
 - A retried turn is appended twice unless the caller names it: `turn_id`,
   `request_id` or `message_id` in the request metadata is passed to the store
@@ -152,8 +153,8 @@ one async `StateStore` interface:
 its resume token within the same owner scope, so the requester can resume it
 themselves. Don't build an approval gate on it: an approval by someone other
 than the requester (an owner or admin) goes through the platform's sensitive
-tool confirmations (see "Sensitive tools" below), and durable resume after a human approval is
-tracked in [genfleet/sdk#59](https://github.com/genfleet/sdk/issues/59).
+tool confirmations (see "Sensitive tools" below), and durable resume after a
+human approval is tracked in [genfleet/sdk#59](https://github.com/genfleet/sdk/issues/59).
 
 ```python
 from genfleet.sdk import LocalStateStore

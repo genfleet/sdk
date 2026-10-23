@@ -999,7 +999,7 @@ gf agents chat hello-agent "How many words are in: the quick brown fox?"</code><
       <h3>When something goes wrong</h3>
       <ul>
         <li><strong><code>gf agents push</code> or <code>create</code> answers 403</strong>: your role in the workspace is <em>member</em>. Pushing and creating agents need <em>owner</em>, <em>admin</em> or <em>developer</em>. Ask the workspace owner.</li>
-        <li><strong><code>gf agents create</code> prints “saved but not loaded”</strong>: the agent row exists, but the engine could not load it. The message says why. Fix the cause, delete the agent in the web app, and create it again.</li>
+        <li><strong><code>gf agents create</code> prints “saved but not loaded”</strong>: the agent row exists, but the platform could not load it. The message says why. Fix the cause, delete the agent in the web app, and create it again.</li>
         <li><strong>The agent will not activate</strong> — check that the secret named in <code>spec.env</code> exists, and that your code imports nothing beyond the SDK and the standard library (step 2).</li>
         <li><strong>An error shows an error id or trace id</strong> — include it when you ask for help; it is how we find the failure in our logs.</li>
       </ul>
