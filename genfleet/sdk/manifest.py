@@ -7,10 +7,11 @@ parser is here rather than in the platform because developers author these
 files by hand and must be able to validate them offline.
 
 The central rule: **an agent's manifest names tools, and the
-publisher records digests.** A developer writes `"@acme/jira" = "*"`; `push`
-resolves that to a concrete version and digest and records both in the
-published artifact. Nobody types a hash, and what ships is still pinned — the
-same split as `package.json` and its lockfile.
+publisher records digests.** A developer writes `"@acme/jira" = "*"`; when
+the agent is submitted to the marketplace, that spec is resolved to a concrete
+version and digest, recorded alongside the published artifact. Nobody types a
+hash, and what ships is still pinned — the same split as `package.json` and
+its lockfile.
 """
 
 from __future__ import annotations
@@ -65,8 +66,8 @@ class ToolRef(BaseModel):
     One entry in an agent's `[tools]` or `[mcps]` table.
 
     `spec` is what the developer wrote — `"*"`, `"1.2.x"`, an exact version.
-    `version` and `digest` are empty until `push` resolves them, and are what
-    the published artifact carries. An unresolved ref is fine on disk and
+    `version` and `digest` are empty until marketplace submission resolves
+    them, and are what the published artifact carries. An unresolved ref is fine on disk and
     invalid in a published artifact; `is_pinned` is the difference.
     """
 
@@ -169,7 +170,7 @@ class AgentManifest(BaseModel):
 
     @property
     def is_fully_pinned(self) -> bool:
-        """Every dependency resolved — the precondition for publishing."""
+        """Every dependency resolved, as marketplace submission leaves it."""
         return all(ref.is_pinned for ref in (*self.tools, *self.mcps))
 
 
