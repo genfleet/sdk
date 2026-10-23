@@ -1,4 +1,4 @@
-"""Sensitive tools and their confirmations (ADR-0028 §8a).
+"""Sensitive tools and their confirmations.
 
 A **sensitive** tool does not run when the model calls it. The ``Agent``
 answers the model that the action needs approval by a workspace owner or
@@ -34,8 +34,8 @@ verifies, it has not expired, and its ``confirmation_id`` has not already run
 in this process. The key sits in the agent's own environment, so the
 signature stops **other agents and direct callers** from forging an
 approval. It does not stop the agent's own code, which could run any tool
-anyway. For code that does not use ``Agent``, all of this is advisory, as the
-caller's role is (ADR-0028 §5).
+anyway. For code that does not use ``Agent``, all of this is advisory, as a
+caller's role is.
 
 **Peer turns fail closed.** On a turn another agent started
 (:data:`PEER_TURN_KEY`), a sensitive tool is refused outright: nobody can
@@ -106,7 +106,7 @@ def _approved_call_note(tool: str, ok: bool) -> str:
 #: The fields an approved call is signed over, in this exact set.
 _SIGNED_FIELDS = ("confirmation_id", "tool", "arguments", "args_hash", "expires_at")
 
-#: Never sensitive, whatever the flags say (ADR-0028 §8a).
+#: Never sensitive, whatever the flags say.
 _NEVER_SENSITIVE = frozenset({"remember"})
 
 #: ``confirmation_id`` s already claimed in this process (one spawn): an

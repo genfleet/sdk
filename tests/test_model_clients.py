@@ -174,7 +174,7 @@ def test_only_a_missing_api_key_is_refused(monkeypatch):
 
 
 def test_the_sdk_imports_no_platform_module():
-    # The one-way dependency (ADR-0022 §5): no module of the open SDK imports
+    # The one-way dependency: no module of the open SDK imports
     # platform code, at import time or lazily inside a function.
     import ast
     from pathlib import Path

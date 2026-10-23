@@ -1,4 +1,4 @@
-"""`ToolContext`: a tool reads its own config and secrets (backend#250)."""
+"""`ToolContext`: a tool reads its own config and secrets."""
 
 from __future__ import annotations
 

@@ -17,7 +17,7 @@ def _write(directory, body: str):
 
 
 def test_agent_names_tools_without_versions_or_hashes(tmp_path):
-    # The point of ADR-0007's revision: a developer writes names, never digests.
+    # The point of the manifest design: a developer writes names, never digests.
     manifest = load_agent_manifest(
         _write(
             tmp_path,
@@ -136,7 +136,7 @@ def test_manifest_without_its_required_section_is_rejected(tmp_path):
 def test_an_agent_declares_the_catalog_models_it_calls(tmp_path):
     _write(tmp_path, '[agent]\nname = "support"\nmodels = ["general-fast", "General-Fast", "general-smart"]\n')
     # Platform model ids, deduplicated and lowercased; the platform scopes the
-    # agent's model credential to these (gateway phase 3).
+    # agent's model credential to these.
     assert load_agent_manifest(tmp_path).models == ["general-fast", "general-smart"]
 
 

@@ -176,7 +176,7 @@ def _build_v1_input(
     The message's parts are the turn's parts (text, and the files the agent
     accepts; ``_PartError`` for one it does not); request ``metadata`` passes
     through; the message's ``contextId`` is ``metadata["session_id"]``, over
-    any ``session_id`` in the metadata (a gateway in front may scope
+    any ``session_id`` in the metadata (a proxy in front may scope
     ``contextId`` per caller; metadata must not route around it), which is
     used only when there is no ``contextId``. ``metadata["genfleet.history"]``
     is always removed from the metadata, and forwarded as the turn's history

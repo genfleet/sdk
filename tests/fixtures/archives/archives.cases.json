@@ -1,5 +1,5 @@
 {
-  "contract": "agent/tool archive members, v1 (engine#175)",
+  "contract": "agent/tool archive members, v1",
   "keep_in_sync": "Source of truth: genfleet/sdk tests/fixtures/archives/ (this file, the .tar files and build_fixtures.py). Copied byte-identical into the engine (delivery tests) and the backend (submit-time archive parse).",
   "notes": [
     "Every reader refuses an archive whose `valid` is false, for the stated `reason`: link | name | duplicate | type.",
@@ -42,7 +42,7 @@
       "file": "symlink-inside.tar",
       "valid": false,
       "reason": "link",
-      "note": "the engine#175 alias: review reads A, extraction leaves B"
+      "note": "the alias: review reads A, extraction leaves B"
     },
     {
       "file": "symlink-outside.tar",

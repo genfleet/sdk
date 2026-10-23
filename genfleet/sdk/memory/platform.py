@@ -1,6 +1,6 @@
 """The platform's episodic memory, reached through the sandbox's memory proxy.
 
-ADR-0018 §4 and §6. The sandbox is handed two environment variables at spawn:
+The sandbox is handed two environment variables at spawn:
 ``GENFLEET_MEMORY_URL`` (the engine's memory proxy) and
 ``GENFLEET_MEMORY_TOKEN`` (a per-spawn bearer token the engine maps to this
 instance's ``(tenant, agent)``). This client sends a session id, a subject

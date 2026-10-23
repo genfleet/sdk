@@ -130,13 +130,13 @@ __all__ = [
     "FileExpired",
     "FileTooLarge",
     "UnsupportedReference",
-    # Caller roles (ADR-0028)
+    # Caller roles
     "CALLER_METADATA_KEY",
     "Caller",
     "caller_of",
     "is_hosted",
     "may_use",
-    # Sensitive tools (ADR-0028 §8a)
+    # Sensitive tools
     "APPROVAL_KEY_ENV",
     "APPROVED_CALL_KEY",
     "APPROVED_CALL_RESULT_KEY",
@@ -178,7 +178,7 @@ __all__ = [
     "ToolContext",
     "ToolSecretError",
     "tool_env_namespace",
-    # Channels (ADR-0019)
+    # Channels
     "send_message",
     "send_message_tool",
     "ChannelSendError",

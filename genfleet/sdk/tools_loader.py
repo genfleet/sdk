@@ -2,7 +2,7 @@
 `load_tools()` — turn an agent's manifest into callables it can use.
 
 An agent names the tools it wants and receives them; it never imports them.
-That indirection is the whole design (ADR-0007): the same published agent runs
+That indirection is the whole design: the same published agent runs
 for two tenants against their own credentials, because what a name resolves to
 is decided at run time rather than at `import` time.
 
@@ -24,8 +24,8 @@ The mounted resolver is here rather than in the engine because it is only a
 filesystem lookup: it reads directories and knows nothing about the registry
 that filled them. A resolver that reached into tenant installations, or that
 called the registry itself, would drag the platform across the open-source
-boundary — and, inside a sandbox, would need a credential ADR-0010 refused to
-put there.
+boundary — and, inside a sandbox, would need a registry credential that does not belong
+there.
 """
 
 from __future__ import annotations
@@ -149,13 +149,12 @@ class MountedToolResolver:
     Resolve against tool artifacts the engine unpacked and mounted read-only.
 
     The sandbox counterpart to `LocalToolResolver`, and deliberately *only* a
-    filesystem lookup. ADR-0010 rejected giving agent code a registry
-    credential and network reachability — "spending the isolation ADR-0009
-    just bought" — and a resolver that called the registry from inside the
-    sandbox would spend it again for tools. So the engine resolves each name
-    to a digest on the host, fetches and verifies the bytes there, and mounts
-    them; by the time this class runs there is nothing left to authenticate to
-    and nothing to fetch.
+    filesystem lookup. Agent code is not given a registry credential or
+    network reachability, and a resolver that called the registry from inside
+    the sandbox would hand it both again for tools. So the engine resolves
+    each name to a digest on the host, fetches and verifies the bytes there,
+    and mounts them; by the time this class runs there is nothing left to
+    authenticate to and nothing to fetch.
 
     That keeps this class inside the [[open-source-boundary]]: it reads
     directories, and knows nothing about the registry that filled them.
@@ -446,7 +445,7 @@ def load_tools(
 
 
 def _with_slug(fn: Callable, slug: str) -> Callable:
-    """``fn`` carrying ``slug``, as a new object (ADR-0028).
+    """``fn`` carrying ``slug``, as a new object.
 
     Not an attribute set on ``fn``: a loaded object can be shared (one module,
     two manifests), and tagging it would let one agent's slug overwrite

@@ -3,7 +3,7 @@
     python tests/fixtures/archives/build_fixtures.py
 
 One rule on every side that reads an artifact (engine delivery, backend
-submit, CLI build), decided 2026-10-06 after engine#175:
+submit, CLI build), decided 2026-10-06:
 
 * member types are an allow-list: regular file or directory only;
 * a name with a leading ``/``, any ``..`` segment or a backslash is refused;
@@ -74,7 +74,7 @@ CASES: list[tuple[str, int, list[tuple], bool, str | None, str]] = [
     ("symlink-inside.tar", tarfile.GNU_FORMAT,
      [_dir("docs"), _special("pkg", tarfile.SYMTYPE, "docs"),
       _file("pkg/genfleet.toml", MANIFEST_A), _file("docs/genfleet.toml", MANIFEST_B)],
-     False, "link", "the engine#175 alias: review reads A, extraction leaves B"),
+     False, "link", "the alias: review reads A, extraction leaves B"),
     ("symlink-outside.tar", tarfile.GNU_FORMAT,
      [_special("pkg", tarfile.SYMTYPE, "../outside"), _file("pkg/x")],
      False, "link", "a link out of the tree"),
@@ -139,7 +139,7 @@ def main() -> None:
     for file, fmt, members, _, _, _ in CASES:
         (HERE / file).write_bytes(_build(fmt, members))
     cases = {
-        "contract": "agent/tool archive members, v1 (engine#175)",
+        "contract": "agent/tool archive members, v1",
         "keep_in_sync": (
             "Source of truth: genfleet/sdk tests/fixtures/archives/ (this file, the .tar "
             "files and build_fixtures.py). Copied byte-identical into the engine "

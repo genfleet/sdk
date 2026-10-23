@@ -1,4 +1,4 @@
-"""Tool audiences (ADR-0028, SDK 0.18): who each tool is offered to. Tier 1, no network."""
+"""Tool audiences: who each tool is offered to. Tier 1, no network."""
 
 from __future__ import annotations
 

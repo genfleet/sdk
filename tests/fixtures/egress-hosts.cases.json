@@ -1,5 +1,5 @@
 {
-  "contract": "ADR-0021 §3 egress entry syntax and matching, v1",
+  "contract": "egress entry syntax and matching, v1",
   "keep_in_sync": "Source of truth: genfleet/sdk tests/fixtures/egress-hosts.cases.json. Copied byte-identical into genfleet/backend (DTO validator fixture). Change the SDK first, then re-copy.",
   "notes": [
     "entries: parse(input) is valid iff `valid`; `canonical` is the normalised form (port omitted when 443); `reason` is why an invalid entry is refused: invalid_host or ip_not_allowed.",

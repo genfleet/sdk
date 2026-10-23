@@ -1,4 +1,4 @@
-"""ADR-0021 §3: the `egress` entries an agent or tool declares.
+"""The `egress` entries an agent or tool declares.
 
 Driven by tests/fixtures/egress-hosts.cases.json, which the backend copies so
 its DTO validator and this parser cannot drift apart.
