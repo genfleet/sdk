@@ -531,13 +531,7 @@ When the model calls it, it doesn't run. The model is told the action awaits app
 
 An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the caller key gets every tool. On the platform (`is_hosted()` is true) a missing caller gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
 
-Declare who the agent serves in `genfleet.toml`:
-
-```toml
-[agent]
-name = "support"
-audiences = ["operator", "customer"]   # default when absent: operators only
-```
+Who an agent serves is not declared in `genfleet.toml`: the workspace owner sets it in the dashboard.
 
 ## AgentProtocol — direct implementation
 
