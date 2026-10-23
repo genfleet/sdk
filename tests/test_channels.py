@@ -59,11 +59,11 @@ async def test_text_goes_to_the_proxy_with_the_token_and_nothing_about_scope(pro
 
 @pytest.mark.asyncio
 async def test_a_template_carries_its_name_language_and_params(proxy):
-    await send_message("whatsapp:2010", template="heatec_escalation", params=["Mona", "leak"], language="ar")
+    await send_message("whatsapp:2010", template="acme_escalation", params=["Mona", "leak"], language="ar")
     ((_, body, _),) = _Proxy.calls
     assert body == {
         "to": "whatsapp:2010",
-        "template": {"name": "heatec_escalation", "language": "ar", "params": ["Mona", "leak"]},
+        "template": {"name": "acme_escalation", "language": "ar", "params": ["Mona", "leak"]},
     }
 
 

@@ -67,9 +67,9 @@ def test_session_id_populates_metadata(agent: RecordingAgent, client: TestClient
 
 
 def test_metadata_passthrough(agent: RecordingAgent, client: TestClient) -> None:
-    _send(client, _params(metadata={"channel": "whatsapp", "tenant": "heatec"}))
+    _send(client, _params(metadata={"channel": "whatsapp", "tenant": "acme"}))
     assert agent.inputs[0].metadata["channel"] == "whatsapp"
-    assert agent.inputs[0].metadata["tenant"] == "heatec"
+    assert agent.inputs[0].metadata["tenant"] == "acme"
 
 
 def test_explicit_metadata_session_id_wins(agent: RecordingAgent, client: TestClient) -> None:

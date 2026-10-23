@@ -6,7 +6,7 @@ an agent names the tools it wants, a tool declares what it needs to run. The
 parser is here rather than in the platform because developers author these
 files by hand and must be able to validate them offline.
 
-The central rule, of the manifest: **an agent's manifest names tools, and the
+The central rule: **an agent's manifest names tools, and the
 publisher records digests.** A developer writes `"@acme/jira" = "*"`; `push`
 resolves that to a concrete version and digest and records both in the
 published artifact. Nobody types a hash, and what ships is still pinned — the
