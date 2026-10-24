@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- **Added: the `[content]` manifest table** (`ContentSpec`, `AgentManifest.content`). `[content] required = true` says the agent can't serve without content supplied by the workspace that installs it; the platform then waits for that content before serving it. `required` is a strict boolean, unknown keys in the table are refused, and a manifest without the table loads as before (`required = false`).
+
 ## 0.24.0
 
 Everything since 0.23.0: `Agent(max_history_turns=N)` and `WindowedMemory` (#85), and `Agent(tools=...)` accepting `ToolProtocol` objects (#87, #89).

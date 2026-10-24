@@ -21,7 +21,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 
 MANIFEST_NAME = "genfleet.toml"
 
@@ -100,6 +100,21 @@ class SecretField(BaseModel):
     required: bool = True
 
 
+class ContentSpec(BaseModel):
+    """The agent's `[content]` table: whether it needs content to serve.
+
+    A generic agent has no business of its own: the workspace that installs
+    it supplies its content (a persona, knowledge, rules). With
+    ``required = true`` the platform does not serve the agent until that
+    content is in place. Unknown keys are refused, so a misspelt ``required``
+    is an error rather than a silent ``false``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    required: StrictBool = False
+
+
 class AgentManifest(BaseModel):
     """The `genfleet.toml` sitting next to an agent's entry point."""
 
@@ -113,6 +128,8 @@ class AgentManifest(BaseModel):
     #: ``customer`` (the tenant's customers), or both. ``None`` when the
     #: manifest does not say; the platform then serves operators only.
     audiences: list[Literal["operator", "customer"]] | None = None
+    #: The ``[content]`` table. Absent means the agent needs no content.
+    content: ContentSpec = Field(default_factory=ContentSpec)
 
     @field_validator("audiences")
     @classmethod
@@ -231,9 +248,30 @@ def load_agent_manifest(directory: Path | str) -> AgentManifest:
             **agent,
             tools=_parse_refs(raw.get("tools"), "tools", path),
             mcps=_parse_refs(raw.get("mcps"), "mcps", path),
+            content=_parse_content(raw.get("content"), path),
         )
+    except ManifestError:
+        raise
     except ValueError as exc:
         raise ManifestError(path, str(exc)) from exc
+
+
+def _parse_content(table: Any, path: Path) -> ContentSpec:
+    if table is None:
+        return ContentSpec()
+    if not isinstance(table, dict):
+        raise ManifestError(path, "[content] must be a table")
+    try:
+        return ContentSpec(**table)
+    except ValidationError as exc:
+        problems = []
+        for error in exc.errors():
+            key = ".".join(str(part) for part in error["loc"]) or "content"
+            if error["type"] == "extra_forbidden":
+                problems.append(f"unknown key {key!r} (the table takes only 'required')")
+            else:
+                problems.append(f"{key!r} must be true or false")
+        raise ManifestError(path, "[content] " + "; ".join(problems)) from None
 
 
 def load_tool_manifest(directory: Path | str) -> ToolManifest:
