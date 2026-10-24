@@ -109,7 +109,7 @@ Tool schemas are fetched on the first `run()` and merged with local tools. Eithe
 
 ## Tools
 
-Plain functions in `tools=` are auto-wrapped; the schema comes from type hints and the docstring. Tool results are always `str`.
+Plain functions in `tools=` are auto-wrapped; the schema comes from type hints and the docstring. `tools=` also takes `ToolProtocol` objects (`schema()` plus async `call()`, e.g. peer agents in `remote_tools`) as they are: operator-only and not sensitive unless the platform says otherwise. Tool results are always `str`.
 
 ```python
 from genfleet.sdk import tool
