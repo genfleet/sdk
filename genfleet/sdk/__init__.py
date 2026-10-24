@@ -36,8 +36,8 @@ from .files import (
 )
 from .manifest import (
     AgentManifest,
-    ContentSpec,
     ConfigField,
+    ContentSpec,
     ManifestError,
     SecretField,
     ToolManifest,

@@ -83,9 +83,10 @@ required = true
 
 Use it for a generic agent whose business comes from its installer: a persona,
 knowledge, rules. With `required = true` the platform doesn't serve the agent
-until that content is in place. The agent reads the content from the directory
-in its `CONTENT_DIR` environment variable. `required` must be `true` or `false`
-(not a string), and any other key in `[content]` is an error.
+until that content is in place. How the agent reads that content is up to the
+agent. `required` must be `true` or `false` (not a string), and any other key
+in `[content]` is an error, which also means an SDK release that adds a key is
+needed before a manifest can use it.
 
 ### `[tools]` and `[mcps]`
 

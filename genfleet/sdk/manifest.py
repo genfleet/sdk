@@ -21,7 +21,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 
 MANIFEST_NAME = "genfleet.toml"
 
@@ -250,6 +250,8 @@ def load_agent_manifest(directory: Path | str) -> AgentManifest:
             mcps=_parse_refs(raw.get("mcps"), "mcps", path),
             content=_parse_content(raw.get("content"), path),
         )
+    except ManifestError:
+        raise
     except ValueError as exc:
         raise ManifestError(path, str(exc)) from exc
 
@@ -261,8 +263,15 @@ def _parse_content(table: Any, path: Path) -> ContentSpec:
         raise ManifestError(path, "[content] must be a table")
     try:
         return ContentSpec(**table)
-    except ValueError as exc:
-        raise ManifestError(path, f"[content] {exc}") from exc
+    except ValidationError as exc:
+        problems = []
+        for error in exc.errors():
+            key = ".".join(str(part) for part in error["loc"]) or "content"
+            if error["type"] == "extra_forbidden":
+                problems.append(f"unknown key {key!r} (the table takes only 'required')")
+            else:
+                problems.append(f"{key!r} must be true or false")
+        raise ManifestError(path, "[content] " + "; ".join(problems)) from None
 
 
 def load_tool_manifest(directory: Path | str) -> ToolManifest:
