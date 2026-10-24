@@ -187,7 +187,14 @@ class PlatformMemory:
                 raw = resp.read()
                 status = resp.status
         except urllib.error.HTTPError as exc:
-            detail = _error_detail(exc.read())
+            body = exc.read()
+            if exc.code == 402:
+                from ..storage_limit import storage_limit_from_body  # circular at import time
+
+                limit = storage_limit_from_body(op, exc.code, body)
+                if limit is not None:
+                    raise limit from None
+            detail = _error_detail(body)
             raise PlatformMemoryError(op, exc.code, detail) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise PlatformMemoryError(op, 0, str(exc)) from None

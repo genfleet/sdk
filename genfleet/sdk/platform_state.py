@@ -175,6 +175,12 @@ class PlatformStateStore:
             with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310 — platform URL
                 payload = response.read()
         except urllib.error.HTTPError as exc:
+            if exc.code == 402:
+                from .storage_limit import storage_limit_from_body  # circular at import time
+
+                limit = storage_limit_from_body(op, exc.code, exc.read())
+                if limit is not None:
+                    raise limit from None
             raise _BY_STATUS.get(exc.code, PlatformStateError)(op, exc.code, "request rejected") from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise PlatformStateError(op, 0, str(exc)) from None

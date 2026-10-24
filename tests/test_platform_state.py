@@ -172,3 +172,33 @@ async def test_state_calls_inside_a_turn_carry_its_id_as_a_header(proxy):
     await call_within({"session_id": "s", "turn_id": "turn-3"}, store.create("agent-name", "caller-1", {"step": 0}))
     await store.get("run-1", agent="agent-name", owner="caller-1")
     assert Proxy.turn_ids == ["turn-3", None]
+
+
+async def test_a_storage_limit_402_raises_storage_limit_exceeded(proxy):
+    from genfleet.sdk import StorageLimitExceeded
+    from genfleet.sdk.memory import PlatformMemoryError
+
+    Proxy.answers["create"] = (402, {
+        "code": "storage_limit", "limitMax": 5000, "currentCount": 4990, "requiredBytes": 120,
+        "categories": {"content": 0, "data": 4990, "index": 0, "channels": 0},
+    })
+    store = PlatformStateStore(proxy, "spawn-token")
+    with pytest.raises(StorageLimitExceeded) as raised:
+        await store.create("agent-name", "o", {})
+    err = raised.value
+    assert isinstance(err, PlatformStateError) and isinstance(err, StateError)
+    assert isinstance(err, PlatformMemoryError)
+    assert (err.op, err.status) == ("create", 402)
+    assert (err.limit_bytes, err.current, err.required_bytes) == (5000, 4990, 120)
+    assert err.categories["data"] == 4990
+    assert len(Proxy.calls) == 1  # not retried
+
+
+async def test_another_402_is_a_plain_state_error(proxy):
+    from genfleet.sdk import StorageLimitExceeded
+
+    Proxy.answers["create"] = (402, {"code": "plan_limit"})
+    store = PlatformStateStore(proxy, "spawn-token")
+    with pytest.raises(PlatformStateError) as raised:
+        await store.create("agent-name", "o", {})
+    assert not isinstance(raised.value, StorageLimitExceeded)
