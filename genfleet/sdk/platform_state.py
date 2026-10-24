@@ -159,15 +159,16 @@ class PlatformStateStore:
 
     async def _call(self, op: str, agent: str, body: dict[str, Any]) -> dict[str, Any]:
         self._scope(agent)
-        return await asyncio.to_thread(self._call_sync, op, {**body, **_turn_ref()})
+        # Read the turn here, on the event loop: the worker thread need not see it.
+        return await asyncio.to_thread(self._call_sync, op, {**body, **_turn_ref()}, turn_headers())
 
-    def _call_sync(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+    def _call_sync(self, op: str, body: dict[str, Any], turn: dict[str, str]) -> dict[str, Any]:
         req = urllib.request.Request(
             f"{self._base}/{op}", data=json.dumps(body, allow_nan=False).encode(), method="POST",
             headers={
                 "content-type": "application/json",
                 "authorization": f"Bearer {self._token}",
-                **turn_headers(),
+                **turn,
             },
         )
         try:

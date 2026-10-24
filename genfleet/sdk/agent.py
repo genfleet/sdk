@@ -1025,10 +1025,6 @@ def _optional_str(value: Any) -> str | None:
 #: customer PII and is not copied into the store until a spec asks for it.
 _SESSION_METADATA_KEYS = ("channel",)
 
-#: Input-metadata keys, in order of preference, that an ingress uses to name a
-#: turn. A retry that replays the same id lets an idempotent backend drop the
-#: duplicate; see :class:`~genfleet.sdk.memory.base.AppendableMemory`.
-
 
 def _session_metadata(metadata: dict[str, Any]) -> dict[str, Any] | None:
     kept = {k: metadata[k] for k in _SESSION_METADATA_KEYS if metadata.get(k) is not None}

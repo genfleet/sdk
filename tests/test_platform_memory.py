@@ -210,3 +210,28 @@ async def test_an_agent_turn_sends_its_id_on_the_history_load_and_the_append(pro
     paths = [path for path, _, _ in _Proxy.calls]
     assert paths == ["/memory/episodic/load", "/memory/episodic/append"], paths
     assert _Proxy.turn_ids == ["turn-9", "turn-9"]
+
+
+async def test_a_tool_calling_memory_inside_a_turn_sends_its_id(proxy):
+    from genfleet.sdk import Agent, AgentInput, tool
+    from genfleet.sdk.models import ScriptedModelClient, Step
+
+    mem = PlatformMemory(proxy, "spawn-token")
+
+    @tool
+    async def lookup() -> str:
+        """Search past messages."""
+        await mem.search("cust-1", "q")
+        return "found"
+
+    agent = Agent(
+        role="r",
+        model={"model": "catalog-model"},
+        model_client=ScriptedModelClient([Step(tool_calls=[{"name": "lookup"}]), "done"]),
+        tools=[lookup],
+    )
+    _Proxy.responses = {"/memory/episodic/search": (200, {"results": []})}
+    async for _ in agent.run(AgentInput(message="hi", metadata={"session_id": "s", "turn_id": "turn-9"})):
+        pass
+    assert [path for path, _, _ in _Proxy.calls] == ["/memory/episodic/search"]
+    assert _Proxy.turn_ids == ["turn-9"]

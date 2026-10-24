@@ -1,7 +1,8 @@
 """The running turn, for code the turn calls into (a model client, a tool).
 
 `Agent.run` makes the turn's `AgentInput.metadata` visible only while its
-model client or a tool is running: it is set around each step and reset before
+model client or a tool is running, or while it loads and saves the turn's
+history: it is set around each step and reset before
 control returns to the turn's consumer, so it never leaks to the caller, or
 from one turn to another interleaved with it. The SDK gives the metadata's
 keys no meaning; a platform documents the ones it sets.
