@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- **Added: platform memory and state calls carry the running turn's id** in an `x-genfleet-turn-id` header. It's the same id the episodic append already sends as `turn_id`: the turn metadata's `turn_id`, else `request_id`, else `message_id`. Outside a turn, or for an id that isn't a valid header value, no header is sent. `Agent` now makes the turn visible while it loads and saves history, so those calls carry it too. New helpers `genfleet.sdk.turn.turn_id_of` and `turn_headers`.
+
 ## 0.24.0
 
 Everything since 0.23.0: `Agent(max_history_turns=N)` and `WindowedMemory` (#85), and `Agent(tools=...)` accepting `ToolProtocol` objects (#87, #89).

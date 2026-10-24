@@ -188,7 +188,10 @@ one async `StateStore` interface:
 
 - **Hosted:** an `Agent` running on the platform selects `PlatformStateStore`,
   and `agent.state` is kept by the platform. `Agent(state="platform")` fails
-  fast when the agent is not running on the platform.
+  fast when the agent is not running on the platform. Inside a turn, every
+  platform memory and state call carries the turn's id in the
+  `x-genfleet-turn-id` header (the turn's `turn_id`, else `request_id`, else
+  `message_id`), so the platform can tell which turn made it.
 - **Local/self-hosted:** `LocalStateStore(path)` wraps `SQLiteStateStore` on a
   worker thread. It refuses to open in a hosted sandbox, whose files don't
   survive a restart.

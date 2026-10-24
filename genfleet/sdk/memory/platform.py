@@ -22,6 +22,7 @@ import urllib.request
 from typing import Any
 
 from ..schemas import Message
+from ..turn import turn_headers
 
 log = logging.getLogger("genfleet.sdk.memory.platform")
 
@@ -177,6 +178,7 @@ class PlatformMemory:
             headers={
                 "content-type": "application/json",
                 "authorization": f"Bearer {self._token}",
+                **turn_headers(),
             },
         )
         try:

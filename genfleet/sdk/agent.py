@@ -381,7 +381,7 @@ class Agent:
             # (it is never merged), so the store is not read at all.
             persisted: list[Message] = []
             if use_memory and not input.history:
-                persisted = await self._load_history(session_id)
+                persisted = await _turn.call_within(input.metadata, self._load_history(session_id))
 
             history = persisted if not input.history else list(input.history)
             # `history` stays whole: a backend without `append` saves it back.
@@ -544,9 +544,9 @@ class Agent:
                     # stops reading at ``done`` — ``serve`` breaks out of the
                     # ``async for`` — which closes this generator at the yield
                     # below, so anything after it never runs.
-                    await self._persist_turn(
+                    await _turn.call_within(input.metadata, self._persist_turn(
                         session_id, input, turn_text, history, new_messages, invocation_id
-                    )
+                    ))
                     # Same reason as the persist: after the ``done`` yield this
                     # generator may already be closed, and the audit trail
                     # would have a start with no end for every served turn.
@@ -1028,7 +1028,6 @@ _SESSION_METADATA_KEYS = ("channel",)
 #: Input-metadata keys, in order of preference, that an ingress uses to name a
 #: turn. A retry that replays the same id lets an idempotent backend drop the
 #: duplicate; see :class:`~genfleet.sdk.memory.base.AppendableMemory`.
-_TURN_ID_KEYS = ("turn_id", "request_id", "message_id")
 
 
 def _session_metadata(metadata: dict[str, Any]) -> dict[str, Any] | None:
@@ -1043,8 +1042,4 @@ def _turn_id(metadata: dict[str, Any], invocation_id: str) -> str:
     is fresh on every attempt, so the fallback only dedupes a redelivery of
     the same in-flight call.
     """
-    for key in _TURN_ID_KEYS:
-        value = _optional_str(metadata.get(key))
-        if value:
-            return value
-    return invocation_id
+    return _turn.turn_id_of(metadata) or invocation_id

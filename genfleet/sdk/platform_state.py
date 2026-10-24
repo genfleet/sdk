@@ -28,7 +28,7 @@ import urllib.request
 from typing import Any
 
 from .state import EffectState, RunState, StateError, StateQuotaExceeded, StateTooLarge
-from .turn import current_turn
+from .turn import current_turn, turn_headers
 
 STATE_URL_ENV = "GENFLEET_STATE_URL"
 STATE_TOKEN_ENV = "GENFLEET_STATE_TOKEN"
@@ -164,7 +164,11 @@ class PlatformStateStore:
     def _call_sync(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
         req = urllib.request.Request(
             f"{self._base}/{op}", data=json.dumps(body, allow_nan=False).encode(), method="POST",
-            headers={"content-type": "application/json", "authorization": f"Bearer {self._token}"},
+            headers={
+                "content-type": "application/json",
+                "authorization": f"Bearer {self._token}",
+                **turn_headers(),
+            },
         )
         try:
             with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310 — platform URL
