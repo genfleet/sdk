@@ -116,29 +116,46 @@ def _as_tool(entry: Callable | ToolProtocol) -> tuple[ToolProtocol, str]:
     )
 
 
-def _local_tools_of(entries: Iterable[Callable | ToolProtocol]) -> dict[str, ToolProtocol]:
+def _reserved_name(name: str, skills_configured: bool) -> str | None:
+    """Why ``name`` is reserved, or ``None`` when a tool may take it."""
+    if name.startswith("skill:"):
+        return "tool names starting with 'skill:' are reserved"
+    if skills_configured and name == SKILL_TOOL_NAME:
+        return f"tool name {SKILL_TOOL_NAME!r} is reserved when skills are configured"
+    return None
+
+
+def _local_tools_of(
+    entries: Iterable[Callable | ToolProtocol], *, skills_configured: bool
+) -> dict[str, ToolProtocol]:
     """The agent's tools by name.
 
-    Among functions a later one replaces an earlier one with the same name.
-    An unwrapped ToolProtocol object never takes a name a function has, in
-    either order, nor one an earlier object took: dispatch goes by name, so
+    Among functions a later one replaces an earlier one with the same name,
+    and a reserved name is a `ValueError`. Unwrapped ToolProtocol objects are
+    placed after every function: one never takes a name a function has (in
+    either order) or an earlier object took, since dispatch goes by name and
     it would otherwise drop that tool's sensitive marking and audience. Like
-    an MCP tool, it can't take a name starting with ``@`` (a slug key's form).
-    Each one skipped is logged.
+    an MCP tool, it can't take a reserved name or one starting with ``@``
+    (a slug key's form). Each one skipped is logged.
     """
     tools: dict[str, ToolProtocol] = {}
     unwrapped: list[tuple[str, ToolProtocol]] = []
     for entry in entries:
         tool, name = _as_tool(entry)
-        if isinstance(tool, ToolWrapper):
-            tools[name] = tool
-        else:
+        if not isinstance(tool, ToolWrapper):
             unwrapped.append((name, tool))
+            continue
+        reason = _reserved_name(name, skills_configured)
+        if reason:
+            raise ValueError(reason)
+        tools[name] = tool
     for name, tool in unwrapped:
         if name in tools:
             log.warning("tool %r skipped: the name is already taken by another tool", name)
         elif name.startswith("@"):
             log.warning("tool %r skipped: a tool name can't start with '@'", name)
+        elif reason := _reserved_name(name, skills_configured):
+            log.warning("tool %r skipped: %s", name, reason)
         else:
             tools[name] = tool
     return tools
@@ -232,10 +249,12 @@ class Agent:
     the peer agents a factory receives in ``remote_tools``. Functions are
     wrapped; a ToolProtocol object is used as it is, operator-only and not
     sensitive unless the platform's per-tool settings say otherwise. Tools
-    are keyed by schema name. A function always keeps its name: a
-    ToolProtocol object whose name a function has (in either order) or an
-    earlier object took, or that starts with ``@``, is skipped with a logged
-    warning. Among functions a later one replaces an earlier one.
+    are keyed by schema name, and ToolProtocol objects are placed after
+    every function. A function always keeps its name: an object whose name
+    a function has (in either order), an earlier object took, an MCP tool
+    has, or that is reserved or starts with ``@``, is skipped with a logged
+    warning. Among functions a later one replaces an earlier one, and a
+    function with a reserved name is a `ValueError`.
 
     ``memory`` may be left out: hosted on the platform the agent then gets
     the platform store anyway; on a laptop it runs without memory.
@@ -294,16 +313,13 @@ class Agent:
         self._auditor: Auditor | None = audit_for(audit)
         self._mcp_configs: list[MCPConfig] = mcps or []
 
-        # Functions become ToolWrappers; ToolProtocol objects are held as is.
-        self._local_tools = _local_tools_of(tools or [])
-        if any(name.startswith("skill:") for name in self._local_tools):
-            raise ValueError("tool names starting with 'skill:' are reserved")
         resolved_skills = _resolve_skills(skills or [])
         self._skills = {skill.name: skill for skill in resolved_skills}
         if len(self._skills) != len(resolved_skills):
             raise ValueError("skill names must be unique")
-        if self._skills and SKILL_TOOL_NAME in self._local_tools:
-            raise ValueError(f"tool name {SKILL_TOOL_NAME!r} is reserved when skills are configured")
+        # Functions become ToolWrappers, ToolProtocol objects are held as is,
+        # and on a name collision a function wins (`_local_tools_of`).
+        self._local_tools = _local_tools_of(tools or [], skills_configured=bool(self._skills))
 
         # MCP tool registry — populated on first run()
         self._mcp_tools: dict[str, Any] = {}
@@ -883,6 +899,13 @@ class Agent:
         for config in self._mcp_configs:
             try:
                 tools = await _fetch_mcp_tools(config)
+                # An unwrapped ToolProtocol object (a peer) carries no marking,
+                # so it gives way to an MCP tool of the same name, which keeps
+                # its config's `sensitive_tools` and `customer_safe_tools`.
+                for name in [n for n in tools if n in self._local_tools]:
+                    if not isinstance(self._local_tools[name], ToolWrapper):
+                        log.warning("tool %r skipped: the name is taken by an MCP tool", name)
+                        del self._local_tools[name]
                 # An MCP server names its own tools. One that reuses a local
                 # tool's name is dropped: dispatch goes by name, so it could
                 # otherwise lend its customer-safe mark to an operator-only tool.

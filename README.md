@@ -467,7 +467,7 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 
 ## @tool decorator
 
-Plain functions passed to `tools=` are auto-wrapped. Use `@tool` when you want an explicit name or description. `tools=` also takes any object that implements `ToolProtocol` (`schema()` and an async `call()`), such as the peer agents in `remote_tools`; the agent uses it as it is. Such an object carries no marking of its own: it is operator-only and not sensitive unless the platform's per-tool setting says otherwise. Use `@tool` on a function to mark audiences or `sensitive`. A function always keeps its name: an object with the same name is skipped, with a logged warning.
+Plain functions passed to `tools=` are auto-wrapped. Use `@tool` when you want an explicit name or description. `tools=` also takes any object that implements `ToolProtocol` (`schema()` and an async `call()`), such as the peer agents in `remote_tools`; the agent uses it as it is. Such an object carries no marking of its own: it is operator-only and not sensitive unless the platform's per-tool setting says otherwise. Use `@tool` on a function to mark audiences or `sensitive`. A function or MCP tool always keeps its name: an object with the same name is skipped, with a logged warning.
 
 ```python
 from genfleet.sdk import tool, ToolCall

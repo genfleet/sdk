@@ -250,8 +250,8 @@ A peer is a `ToolProtocol` object (`schema()` and an async `call()`), not a
 function, and `Agent(tools=...)` takes it as it is. It carries no marking of
 its own: it is offered to operators only and is not sensitive, unless the
 platform's per-tool settings for it say otherwise. If one of your own tools
-has the same name, yours is kept and the peer is skipped, with a logged
-warning naming it.
+or an MCP tool has the same name, that one is kept and the peer is skipped,
+with a logged warning naming it.
 
 Treat it as a tool whose author you don't control:
 

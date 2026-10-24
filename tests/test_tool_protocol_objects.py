@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from genfleet.sdk import Agent, AgentInput, ToolCall, ToolProtocol, ToolSchema, tool
+from genfleet.sdk import (
+    Agent,
+    AgentInput,
+    Skill,
+    ToolCall,
+    ToolProtocol,
+    ToolSchema,
+    tool,
+)
+from genfleet.sdk import agent as agent_module
 from genfleet.sdk.caller import CALLER_METADATA_KEY, TOOL_AUDIENCES_METADATA_KEY
 from genfleet.sdk.models import ScriptedModelClient, Step
 
@@ -165,9 +174,66 @@ def test_schema_is_read_once_per_tool_protocol_object():
     assert Counting.reads == 1
 
 
-def test_a_reserved_name_is_refused_for_a_tool_protocol_object():
+def test_a_tool_protocol_object_with_a_reserved_name_is_skipped(caplog):
+    with caplog.at_level("WARNING", logger="genfleet.sdk.agent"):
+        agent = _agent([PeerTool("skill:x")])
+    assert agent._local_tools == {}
+    assert "tool 'skill:x' skipped" in caplog.text
+
+
+def test_a_peer_named_read_skill_is_skipped_when_skills_are_configured(caplog):
+    skill = Skill(name="returns", description="Returns.", instructions="Do it.")
+    with caplog.at_level("WARNING", logger="genfleet.sdk.agent"):
+        agent = Agent(role="r", model={"model": "test"}, model_client=ScriptedModelClient([]),
+                      tools=[PeerTool("read_skill")], skills=[skill])
+    assert agent._local_tools == {}
+    assert "tool 'read_skill' skipped" in caplog.text
+
+
+def test_a_function_with_a_reserved_name_still_raises():
+    @tool(name="skill:x")
+    def bad() -> str:
+        return ""
+
     with pytest.raises(ValueError, match="reserved"):
-        _agent([PeerTool("skill:x")])
+        _agent([bad, PeerTool()])
+
+
+def _mcp_serves(monkeypatch, *names):
+    async def fetch(cfg):
+        return {n: {"description": "", "parameters": {}, "config": cfg} for n in names}
+
+    monkeypatch.setattr(agent_module, "_fetch_mcp_tools", fetch)
+
+
+MCP_CONFIG = {"type": "sse", "url": "http://mcp.test", "sensitive_tools": ["ask_billing"]}
+
+
+async def test_an_mcp_tool_keeps_its_name_over_a_peer_and_stays_sensitive(monkeypatch, caplog):
+    _mcp_serves(monkeypatch, "ask_billing")
+    agent = Agent(role="r", model={"model": "test"}, model_client=ScriptedModelClient([]),
+                  tools=[PeerTool()], mcps=[MCP_CONFIG])
+    with caplog.at_level("WARNING", logger="genfleet.sdk.agent"):
+        await agent._init_mcp()
+    assert "ask_billing" not in agent._local_tools
+    assert "ask_billing" in agent._mcp_tools
+    assert agent._sensitive_tools({}) == {"ask_billing"}
+    assert "tool 'ask_billing' skipped: the name is taken by an MCP tool" in caplog.text
+
+
+async def test_a_local_tool_still_keeps_its_name_over_an_mcp_tool(monkeypatch, caplog):
+    @tool(name="ask_billing")
+    def local() -> str:
+        return ""
+
+    _mcp_serves(monkeypatch, "ask_billing")
+    agent = Agent(role="r", model={"model": "test"}, model_client=ScriptedModelClient([]),
+                  tools=[local], mcps=[MCP_CONFIG])
+    with caplog.at_level("WARNING", logger="genfleet.sdk.agent"):
+        await agent._init_mcp()
+    assert agent._local_tools["ask_billing"] is local
+    assert agent._mcp_tools == {}
+    assert "MCP tool 'ask_billing' skipped" in caplog.text
 
 
 async def test_a_tool_protocol_object_is_operator_only_unless_the_platform_says_otherwise():
