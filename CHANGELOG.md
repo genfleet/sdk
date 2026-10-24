@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- **Added: `StorageLimitExceeded`.** A platform memory or workflow-state call the platform refuses with HTTP 402 and `code: "storage_limit"` now raises `StorageLimitExceeded` (exported from `genfleet.sdk`). It carries `limit_bytes`, `current`, `required_bytes` and `categories` from the response, and is both a `PlatformStateError` (so a `StateError`) and a `PlatformMemoryError`. The limit is the whole workspace's, and the SDK does not retry it. Other 402s are unchanged.
 - **Added: the `[content]` manifest table** (`ContentSpec`, `AgentManifest.content`). `[content] required = true` says the agent can't serve without content supplied by the workspace that installs it; the platform then waits for that content before serving it. `required` is a strict boolean, unknown keys in the table are refused, and a manifest without the table loads as before (`required = false`).
 - **Added: platform memory and state calls carry the running turn's id** in an `x-genfleet-turn-id` header. When the turn names an id, it's the same one the episodic append sends as `turn_id`: the turn metadata's `turn_id`, else `request_id`, else `message_id`. Outside a turn, or for an id that isn't a valid header value, no header is sent. `Agent` now makes the turn visible while it loads and saves history, so those calls carry it too. New helpers `genfleet.sdk.turn.turn_id_of` and `turn_headers`.
 

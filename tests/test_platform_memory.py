@@ -235,3 +235,35 @@ async def test_a_tool_calling_memory_inside_a_turn_sends_its_id(proxy):
         pass
     assert [path for path, _, _ in _Proxy.calls] == ["/memory/episodic/search"]
     assert _Proxy.turn_ids == ["turn-9"]
+
+
+_STORAGE_LIMIT_BODY = {
+    "statusCode": 402, "error": "Plan Limit", "code": "storage_limit",
+    "message": "Storage limit reached", "limitMax": 5000, "currentCount": 4990,
+    "requiredBytes": 120, "categories": {"content": 1, "data": 4989, "index": 0, "channels": 0},
+}
+
+
+@pytest.mark.asyncio
+async def test_a_storage_limit_402_raises_storage_limit_exceeded_and_is_not_retried(proxy):
+    from genfleet.sdk import StorageLimitExceeded
+
+    _Proxy.responses["/memory/episodic/append"] = (402, _STORAGE_LIMIT_BODY)
+    with pytest.raises(StorageLimitExceeded) as exc:
+        await PlatformMemory(proxy, "t").append("s", [Message(role="user", content="hi")])
+    err = exc.value
+    assert isinstance(err, PlatformMemoryError)
+    assert (err.status, err.limit_bytes, err.current, err.required_bytes) == (402, 5000, 4990, 120)
+    assert err.categories == {"content": 1, "data": 4989, "index": 0, "channels": 0}
+    assert len(_Proxy.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_another_402_stays_a_plain_memory_error(proxy):
+    from genfleet.sdk import StorageLimitExceeded
+
+    _Proxy.responses["/memory/episodic/load"] = (402, {"code": "plan_limit", "error": "nope"})
+    with pytest.raises(PlatformMemoryError) as exc:
+        await PlatformMemory(proxy, "t").load("s")
+    assert not isinstance(exc.value, StorageLimitExceeded)
+    assert exc.value.status == 402
