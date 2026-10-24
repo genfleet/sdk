@@ -189,3 +189,42 @@ def test_a_tool_ref_ignores_an_egress_key(tmp_path, section):
     assert (ref.slug, ref.spec) == ("@acme/x", "1.x")
     assert not hasattr(ref, "egress")
     assert "egress" not in ref.model_dump()
+
+
+def test_content_table_defaults_to_not_required(tmp_path):
+    manifest = load_agent_manifest(_write(tmp_path, '[agent]\nname = "a"\n'))
+    assert manifest.content.required is False
+
+
+def test_content_required_is_read(tmp_path):
+    manifest = load_agent_manifest(_write(tmp_path, '[agent]\nname = "a"\n[content]\nrequired = true\n'))
+    assert manifest.content.required is True
+
+
+def test_content_required_false_is_read(tmp_path):
+    manifest = load_agent_manifest(_write(tmp_path, '[agent]\nname = "a"\n[content]\nrequired = false\n'))
+    assert manifest.content.required is False
+
+
+@pytest.mark.parametrize(
+    ("table", "message"),
+    [
+        ('[content]\nrequired = "yes"\n', "'required' must be true or false"),
+        ("[content]\nrequired = 1\n", "'required' must be true or false"),
+        ("[content]\nrequred = true\n", "unknown key 'requred'"),
+    ],
+)
+def test_a_bad_content_table_is_refused(tmp_path, table, message):
+    with pytest.raises(ManifestError, match=message):
+        load_agent_manifest(_write(tmp_path, '[agent]\nname = "a"\n' + table))
+
+
+def test_content_that_is_not_a_table_is_refused(tmp_path):
+    with pytest.raises(ManifestError, match="must be a table"):
+        load_agent_manifest(_write(tmp_path, 'content = true\n[agent]\nname = "a"\n'))
+
+
+def test_a_section_error_names_the_file_once(tmp_path):
+    with pytest.raises(ManifestError) as raised:
+        load_agent_manifest(_write(tmp_path, '[agent]\nname = "a"\n[content]\nrequired = "yes"\n'))
+    assert str(raised.value).count("genfleet.toml") == 1
