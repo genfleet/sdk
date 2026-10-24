@@ -15,12 +15,14 @@ from genfleet.sdk.state_store import state_for
 
 class Proxy(BaseHTTPRequestHandler):
     calls: list = []
+    turn_ids: list = []
     #: op -> (status, body) overriding the default answer.
     answers: dict = {}
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["content-length"])))
         self.calls.append((self.path, body, self.headers.get("authorization")))
+        self.turn_ids.append(self.headers.get("x-genfleet-turn-id"))
         op = self.path.rsplit("/", 1)[-1]
         if op in self.answers:
             status, data = self.answers[op]
@@ -50,6 +52,7 @@ class Proxy(BaseHTTPRequestHandler):
 @pytest.fixture
 def proxy():
     Proxy.calls = []
+    Proxy.turn_ids = []
     Proxy.answers = {}
     server = ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
     thread = Thread(target=server.serve_forever, daemon=True)
@@ -160,3 +163,12 @@ def test_hosted_state_selected_from_env(monkeypatch):
     monkeypatch.delenv("GENFLEET_STATE_TOKEN")
     with pytest.raises(RuntimeError, match="GENFLEET_STATE_TOKEN"):
         state_for()
+
+
+async def test_state_calls_inside_a_turn_carry_its_id_as_a_header(proxy):
+    from genfleet.sdk.turn import call_within
+
+    store = PlatformStateStore(proxy, "spawn-token")
+    await call_within({"session_id": "s", "turn_id": "turn-3"}, store.create("agent-name", "caller-1", {"step": 0}))
+    await store.get("run-1", agent="agent-name", owner="caller-1")
+    assert Proxy.turn_ids == ["turn-3", None]

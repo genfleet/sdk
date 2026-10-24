@@ -22,6 +22,7 @@ import urllib.request
 from typing import Any
 
 from ..schemas import Message
+from ..turn import turn_headers
 
 log = logging.getLogger("genfleet.sdk.memory.platform")
 
@@ -167,9 +168,10 @@ class PlatformMemory:
     # -- transport --------------------------------------------------------
 
     async def _call(self, op: str, body: dict[str, Any]) -> Any:
-        return await asyncio.to_thread(self._call_sync, op, body)
+        # Read the turn here, on the event loop: the worker thread need not see it.
+        return await asyncio.to_thread(self._call_sync, op, body, turn_headers())
 
-    def _call_sync(self, op: str, body: dict[str, Any]) -> Any:
+    def _call_sync(self, op: str, body: dict[str, Any], turn: dict[str, str]) -> Any:
         req = urllib.request.Request(
             f"{self._base}/{op}",
             data=json.dumps(body).encode(),
@@ -177,6 +179,7 @@ class PlatformMemory:
             headers={
                 "content-type": "application/json",
                 "authorization": f"Bearer {self._token}",
+                **turn,
             },
         )
         try:
