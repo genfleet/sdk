@@ -440,7 +440,7 @@ curl -X POST http://localhost:8000 \
       <pre><div class="code-header">python<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">Agent(
     role:    str,                         # system prompt / persona
     model:   ModelConfig,                 # provider + credentials dict
-    tools:   list[Callable] = [],         # plain functions — auto-wrapped
+    tools:   list[Callable | ToolProtocol] = [],  # functions are auto-wrapped; ToolProtocol objects used as is
     mcps:    list[MCPConfig] = [],        # MCP server connections
     memory:  MemoryConfig | "platform" | None = None,  # episodic memory (platform store or Redis)
     context: str | None = None,           # extra context appended to system prompt
@@ -577,7 +577,7 @@ serve(MyAgent(), name="my-agent", port=8000)</code></pre>
       <p class="section-desc">The contract for tools the agent can invoke.</p>
       <div class="api-card">
         <div class="api-card-header"><span class="api-badge badge-protocol">Protocol</span><span class="api-card-name">ToolProtocol</span></div>
-        <p>Any object with <code>schema()</code> and <code>call()</code> satisfies this protocol.</p>
+        <p>Any object with <code>schema()</code> and an async <code>call()</code> satisfies this protocol. Pass one straight to <code>Agent(tools=[...])</code>: it is used as it is, operator-only and not sensitive unless the platform says otherwise.</p>
       </div>
       <pre><div class="code-header">protocol.py<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-python">@runtime_checkable
 class ToolProtocol(Protocol):

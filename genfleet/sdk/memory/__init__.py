@@ -5,7 +5,7 @@ import os
 from typing import Literal
 
 from ..schemas import MemoryConfig
-from .base import AppendableMemory, Memory
+from .base import AppendableMemory, Memory, WindowedMemory
 from .platform import MEMORY_TOKEN_ENV, MEMORY_URL_ENV, PlatformMemory, PlatformMemoryError
 
 log = logging.getLogger("genfleet.sdk.memory")
@@ -61,5 +61,6 @@ __all__ = [
     "Memory",
     "PlatformMemory",
     "PlatformMemoryError",
+    "WindowedMemory",
     "memory_for",
 ]

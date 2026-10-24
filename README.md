@@ -86,6 +86,7 @@ Agent(
     files:   FileResolver | None = None, # reads file references (the platform supplies one when hosted)
     max_images_per_turn: int = 8,      # vision: images sent to the model per turn
     max_image_bytes_per_turn: int = 20 * 1024 * 1024,  # vision: their total bytes
+    max_history_turns: int | None = None,  # past turns sent to the model; None sends all
 )
 ```
 
@@ -170,6 +171,15 @@ turn and appended to after it.
 - A retried turn is appended twice unless the caller names it: `turn_id`,
   `request_id` or `message_id` in the request metadata is passed to the store
   as the turn's idempotency key.
+- **Long threads:** `max_history_turns=N` sends only the last N turns of the
+  thread to the model, so a long chat does not grow the prompt without bound.
+  A turn is one user message and everything up to the next one (tool calls,
+  their results, the reply), so a tool call is never sent without its result.
+  Memory still keeps every turn: only what goes to the model is cut. The
+  platform store reads just the recent end of the thread; Redis and a custom
+  `Memory` are loaded whole and cut before the model call. When the last
+  turns are very long, fewer than N may be sent. It applies to a
+  caller-supplied `history` too. The default, `None`, sends the whole thread.
 
 ### Workflow state (checkpoints, pause/resume, effect claims)
 
@@ -457,7 +467,7 @@ Token usage (input/output/total tokens) is tracked automatically for OpenAI, Ant
 
 ## @tool decorator
 
-Plain functions passed to `tools=` are auto-wrapped. Use `@tool` when you want an explicit name or description:
+Plain functions passed to `tools=` are auto-wrapped. Use `@tool` when you want an explicit name or description. `tools=` also takes any object that implements `ToolProtocol` (`schema()` and an async `call()`), such as the peer agents in `remote_tools`; the agent uses it as it is. Such an object carries no marking of its own: it is operator-only and not sensitive unless the platform's per-tool setting says otherwise. Use `@tool` on a function to mark audiences or `sensitive`. A function or MCP tool always keeps its name: an object with the same name is skipped, with a logged warning.
 
 ```python
 from genfleet.sdk import tool, ToolCall

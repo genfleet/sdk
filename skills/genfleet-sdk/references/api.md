@@ -27,7 +27,7 @@ class Agent:
         self,
         role:    str,
         model:   ModelConfig,
-        tools:   list[Callable] | None = None,
+        tools:   list[Callable | ToolProtocol] | None = None,
         mcps:    list[MCPConfig] | None = None,
         memory:  MemoryConfig | Literal["platform"] | Memory | None = None,
         context: str | None = None,
@@ -39,6 +39,7 @@ class Agent:
         files:   FileResolver | None = None,
         max_images_per_turn:      int = 8,
         max_image_bytes_per_turn: int = 20 * 1024 * 1024,
+        max_history_turns:        int | None = None,
     ) -> None: ...
 
     async def run(self, input: AgentInput) -> AsyncIterator[AgentOutput]: ...
@@ -50,7 +51,7 @@ Implements `AgentProtocol`. Pass directly to `serve()` or `create_app()`. Proper
 
 - `role` - System prompt / persona. Prepended to every LLM call.
 - `model` - Provider credentials. See [ModelConfig](#modelconfig).
-- `tools` - Plain Python functions or `ToolWrapper` instances; plain functions are wrapped, with the schema derived from type hints and the docstring. Names starting with `skill:` are reserved, and `read_skill` is reserved when skills are configured.
+- `tools` - Plain Python functions, `ToolWrapper` instances (`@tool`), or objects implementing `ToolProtocol` (`schema()` and async `call()`, such as peer agents in `remote_tools`). Plain functions are wrapped, with the schema derived from type hints and the docstring; a `ToolProtocol` object is used as it is, operator-only and not sensitive unless the platform says otherwise. Anything else raises `TypeError`. A function or MCP tool keeps its name: an object whose name a function or MCP tool has, in either order, or that an earlier object took, is skipped with a logged warning, as is one whose name starts with `@` or is reserved. Among functions a later one replaces an earlier one with the same name. Names starting with `skill:` are reserved, and `read_skill` is reserved when skills are configured.
 - `mcps` - MCP server connections. Tool schemas are fetched on first `run()` and merged with local tools. An MCP tool whose name is taken by another tool is skipped.
 - `memory` - `"platform"` (the hosted agent's store; fails at construction when not hosted), a [MemoryConfig](#memoryconfig) dict for Redis, or any object implementing the `Memory` protocol (`async load / save / clear`; an optional `append` makes saves incremental). Left out: a hosted agent gets the platform store anyway, anywhere else the agent is stateless and the caller manages history through `AgentInput.history`.
 - `context` - Extra string appended to the system prompt at runtime.
@@ -61,6 +62,7 @@ Implements `AgentProtocol`. Pass directly to `serve()` or `create_app()`. Proper
 - `accepts` - MIME types the agent takes besides text (`"image/*"`, `"application/pdf"`, `"*/*"`). Becomes the agent's `accepted_input_types`, which `serve` advertises and enforces. Default: text only.
 - `files` - A `FileResolver` that reads file references. Without one only inline files can be read.
 - `max_images_per_turn`, `max_image_bytes_per_turn` - Limits on the images one turn sends to a vision model. Negative values raise `ValueError`.
+- `max_history_turns` - How many past turns go to the model; `None` (default) sends the whole thread. A turn is a user message plus everything up to the next user message, so the cut never separates a tool call from its result. The history sent always starts on a user message, so a thread with none sends nothing. When the last turns are very long, fewer than N may be sent. Applies to loaded memory and to a caller-supplied `history`. Only what is sent is cut: memory still stores every turn. Anything but an `int` of at least 1 raises `ValueError`.
 
 ---
 
@@ -102,6 +104,8 @@ class MemoryConfig(TypedDict, total=False):
 `{"type": "platform"}` equals `memory="platform"`. Redis needs `pip install 'genfleet-sdk[memory] @ git+https://github.com/genfleet/sdk@dev'`; its key pattern is `genfleet:session:{session_id}:history` with a 24h TTL.
 
 Memory is keyed by `input.metadata["session_id"]`; a turn without one gets a per-request UUID (stateless). How `serve` fills `session_id` is in `serve.md` under "Sessions". `metadata["genfleet.memory"] == "off"` makes the Agent neither load nor save for that turn. On an append-capable store (the platform store, or a custom `Memory` with `append`) a retried turn is stored twice unless the request metadata names it with `turn_id`, `request_id` or `message_id`, which becomes the idempotency key. Redis rewrites the whole thread on each save, so a retry does not duplicate. The platform store also has `agent.memory.search(subject, query)` and `agent.memory.purge(subject)`.
+
+With `max_history_turns`, a store that implements both `append` and `WindowedMemory` (`async load_newest(session_id, limit) -> list[Message]`: the newest `limit` messages, oldest first; it may leave out leading tool results whose call fell outside them) is read through `load_newest`. The platform store does. Any other store, Redis included, is loaded whole and cut before the model call: a store that saves rewrites the thread from what was loaded, so it must load all of it.
 
 A custom store implements the protocol:
 
