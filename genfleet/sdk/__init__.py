@@ -36,6 +36,7 @@ from .files import (
 )
 from .manifest import (
     AgentManifest,
+    ContentSpec,
     ConfigField,
     ManifestError,
     SecretField,
@@ -161,6 +162,7 @@ __all__ = [
     "AuditEvent",
     # Manifests
     "AgentManifest",
+    "ContentSpec",
     "ToolManifest",
     "ToolRef",
     "ConfigField",

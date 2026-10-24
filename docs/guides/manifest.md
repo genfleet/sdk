@@ -70,6 +70,23 @@ in the [README](../../README.md#operators-and-customers).
 The SDK parser still accepts an `audiences` key for compatibility, but the
 platform doesn't use it, so set who an agent serves in the dashboard.
 
+### `[content]`
+
+```toml
+[content]
+required = true
+```
+
+| Key | Required | Default | Meaning |
+|-----|----------|---------|---------|
+| `required` | no | `false` | `true` when the agent can't serve without content supplied by the workspace that installs it. |
+
+Use it for a generic agent whose business comes from its installer: a persona,
+knowledge, rules. With `required = true` the platform doesn't serve the agent
+until that content is in place. The agent reads the content from the directory
+in its `CONTENT_DIR` environment variable. `required` must be `true` or `false`
+(not a string), and any other key in `[content]` is an error.
+
 ### `[tools]` and `[mcps]`
 
 > **Beta:** for now, keep your tools in your agent's own package, as the

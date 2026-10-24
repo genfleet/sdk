@@ -189,3 +189,27 @@ def test_a_tool_ref_ignores_an_egress_key(tmp_path, section):
     assert (ref.slug, ref.spec) == ("@acme/x", "1.x")
     assert not hasattr(ref, "egress")
     assert "egress" not in ref.model_dump()
+
+
+def test_content_table_defaults_to_not_required(tmp_path):
+    manifest = load_agent_manifest(_write(tmp_path, '[agent]\nname = "a"\n'))
+    assert manifest.content.required is False
+
+
+def test_content_required_is_read(tmp_path):
+    manifest = load_agent_manifest(_write(tmp_path, '[agent]\nname = "a"\n[content]\nrequired = true\n'))
+    assert manifest.content.required is True
+
+
+@pytest.mark.parametrize(
+    ("table", "message"),
+    [
+        ('[content]\nrequired = "yes"\n', "required"),
+        ('[content]\nrequred = true\n', "requred"),
+        ('content = true\n', "must be a table"),
+    ],
+)
+def test_a_bad_content_table_is_refused(tmp_path, table, message):
+    body = table + '[agent]\nname = "a"\n' if table.startswith("content =") else '[agent]\nname = "a"\n' + table
+    with pytest.raises(ManifestError, match=message):
+        load_agent_manifest(_write(tmp_path, body))
