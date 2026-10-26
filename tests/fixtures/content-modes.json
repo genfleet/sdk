@@ -1,5 +1,5 @@
 {
-  "comment": "The modes file the engine writes beside the content (/content/.genfleet-modes.json), shared byte-for-byte with the platform. version: an integer >= 1; a later version keeps files as a {path: mode} object and may add keys, which readers ignore. Modes: loaded, data; a mode a reader doesn't know is not loaded. Paths: relative, NFC, '/'-separated, no empty, '.', '..' or hidden segments, no backslash or control characters; every listed path must be a file in the folder. Each case: files on disk, the modes file (an object, or raw text), and the loaded paths or error: true.",
+  "comment": "The modes file the engine writes beside the content (/content/.genfleet-modes.json), shared byte-for-byte with the platform. version: an integer >= 1; a later version keeps files as a {path: mode} object and may add keys, which readers ignore. Modes: loaded, data; a mode a reader doesn't know is not loaded. Paths: relative, NFC, '/'-separated, no empty, '.', '..' or hidden segments, no backslash or control characters; every path listed as loaded or data must be a file in the folder; a path under a mode a reader doesn't know need not be there. Each case: files on disk, the modes file (an object, or raw text), and the loaded paths or error: true.",
   "cases": [
     {
       "name": "loaded and data",
@@ -83,6 +83,22 @@
           "x.md": [
             "loaded"
           ]
+        }
+      },
+      "loaded": [
+        "persona.md"
+      ]
+    },
+    {
+      "name": "an unknown mode names a file that isn't mounted",
+      "files": [
+        "persona.md"
+      ],
+      "modes": {
+        "version": 2,
+        "files": {
+          "persona.md": "loaded",
+          "docs/manual.pdf": "retrieved"
         }
       },
       "loaded": [

@@ -156,11 +156,16 @@ def _nfc(value: str) -> str:
     return unicodedata.normalize("NFC", value)
 
 
+def _shown(path: str) -> str:
+    """A path as an error or log line shows it: quoted, at most 200 characters."""
+    return repr(path[:200])
+
+
 def _check_path(path: object) -> str:
     """A modes-file path, checked and NFC-normalised."""
     if not isinstance(path, str) or not path:
         raise ContentError(f"{MODES_FILE}: a path is not a non-empty string")
-    shown = repr(path[:200])
+    shown = _shown(path)
     if _CONTROL.search(path) or "\\" in path or path.startswith("/"):
         raise ContentError(f"{MODES_FILE}: path {shown} is not a plain relative path")
     if any(segment in ("", ".", "..") or segment.startswith(".") for segment in path.split("/")):
@@ -191,7 +196,7 @@ def _read_modes(root: Path) -> dict[str, str] | None:
     for path, mode in raw["files"].items():
         key = _check_path(path)
         if key in modes:
-            raise ContentError(f"{MODES_FILE}: {key!r} is listed twice")
+            raise ContentError(f"{MODES_FILE}: {_shown(key)} is listed twice")
         if isinstance(mode, str) and mode in _MODES:
             modes[key] = mode
         else:
@@ -217,7 +222,7 @@ def _inside(root: Path, full: Path, path: str) -> Path:
     resolved_root = root.resolve()
     target = full.resolve()
     if not target.is_relative_to(resolved_root) or target == resolved_root:
-        raise ContentError(f"{path!r} is outside the content folder")
+        raise ContentError(f"{_shown(path)} is outside the content folder")
     return target
 
 
@@ -225,11 +230,12 @@ def _text(full: Path, path: str, size: int) -> str | None:
     if PurePosixPath(path).suffix.lower() not in TEXT_SUFFIXES:
         return None
     if size > MAX_LOADED_FILE_BYTES:
-        raise ContentError(f"{path!r} is over {MAX_LOADED_FILE_BYTES} bytes, too large to load")
+        log.warning("content file %s is over %d bytes; it is not loaded", _shown(path), MAX_LOADED_FILE_BYTES)
+        return None
     try:
         text = full.read_bytes().decode("utf-8")
     except UnicodeDecodeError:
-        log.warning("content file %r is not UTF-8 text; it is not loaded", path)
+        log.warning("content file %s is not UTF-8 text; it is not loaded", _shown(path))
         return None
     return text.removeprefix("\ufeff")
 
@@ -263,10 +269,11 @@ def loaded_files(
     last default may be absent (``[]``); a root you named that isn't a
     folder raises ``ContentError``.
 
-    A loaded file over ``MAX_LOADED_FILE_BYTES`` (4 MiB), or loaded files
-    over ``MAX_LOADED_TOTAL_BYTES`` (8 MiB) together, raise ``ContentError``:
-    far above any plan's loaded budget, well below the platform's 64 MB
-    mounted cap, so they bound a local folder without limiting real content.
+    A loaded file over ``MAX_LOADED_FILE_BYTES`` (4 MiB), or one that would
+    take the loaded files past ``MAX_LOADED_TOTAL_BYTES`` (8 MiB) together, is
+    left out with a logged warning (sizes are checked before reading): far
+    above any plan's loaded budget, well below the platform's 64 MB mounted
+    cap, so they bound what an agent reads without failing its start.
 
     Raises ``ContentError`` when the modes file is malformed, is a symlink,
     or names a path that is hidden, escapes the content folder, or isn't
@@ -290,9 +297,13 @@ def loaded_files(
             paths = list(on_disk)
         else:
             paths = [path for path, mode in modes.items() if mode == "loaded"]
-            for path in modes:
-                if path not in on_disk:
-                    raise ContentError(f"{path!r} is listed in {MODES_FILE} but is not a file in the content folder")
+            # Only mounted modes must be there: a mode this SDK doesn't know
+            # may name a file that isn't mounted (forward compatibility).
+            for path, mode in modes.items():
+                if mode in _MODES and path not in on_disk:
+                    raise ContentError(
+                        f"{_shown(path)} is listed in {MODES_FILE} but is not a file in the content folder"
+                    )
         result: list[LoadedFile] = []
         total = 0
         for path in sorted(paths):
@@ -303,9 +314,14 @@ def loaded_files(
             text = _text(full, path, size)
             if text is None:
                 continue
+            if total + size > MAX_LOADED_TOTAL_BYTES:
+                log.warning(
+                    "content file %s would pass %d loaded bytes; it is not loaded",
+                    _shown(path),
+                    MAX_LOADED_TOTAL_BYTES,
+                )
+                continue
             total += size
-            if total > MAX_LOADED_TOTAL_BYTES:
-                raise ContentError(f"the loaded files are over {MAX_LOADED_TOTAL_BYTES} bytes together")
             result.append(LoadedFile(path, text))
         return result
     except ContentError:

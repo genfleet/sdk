@@ -122,8 +122,9 @@ logged). On the platform only the files the workspace set to loaded are
 returned, and `data` files are already left out, so `exclude=` only matters
 for local runs against a plain folder, where every text file counts as
 loaded: pass it the same globs as `data`. Paths and globs are compared
-NFC-normalised. A loaded file over 4 MiB, or loaded files over 8 MiB together,
-raise `ContentError`; both are far above what fits in an agent's context.
+NFC-normalised. A loaded file over 4 MiB, or one past 8 MiB of loaded files
+together, is left out with a logged warning; both are far above what fits in
+an agent's context.
 
 ### `[tools]` and `[mcps]`
 

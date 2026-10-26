@@ -198,19 +198,24 @@ def test_a_non_utf8_text_file_is_logged_and_left_out(tmp_path, caplog):
     assert "bad.md" in caplog.text
 
 
-def test_a_file_over_the_cap_is_refused_before_it_is_read(tmp_path):
+def test_a_file_over_the_cap_is_logged_and_left_out_unread(tmp_path, caplog):
     big = tmp_path / "big.md"
     with big.open("wb") as fh:
-        fh.truncate(MAX_LOADED_FILE_BYTES + 1)
-    with pytest.raises(ContentError, match="too large"):
-        loaded_files(tmp_path)
+        fh.truncate(MAX_LOADED_FILE_BYTES + 1)  # sparse: never read
+    _tree(tmp_path, {"persona.md": "p"})
+    with caplog.at_level("WARNING", logger="genfleet.sdk.content"):
+        assert [f.path for f in loaded_files(tmp_path)] == ["persona.md"]
+    assert "big.md" in caplog.text
 
 
-def test_loaded_files_over_the_total_cap_are_refused(tmp_path):
-    for i in range(MAX_LOADED_TOTAL_BYTES // MAX_LOADED_FILE_BYTES + 1):
+def test_files_past_the_total_cap_are_logged_and_left_out(tmp_path, caplog):
+    n = MAX_LOADED_TOTAL_BYTES // MAX_LOADED_FILE_BYTES
+    for i in range(n + 1):
         (tmp_path / f"f{i}.md").write_bytes(b"a" * MAX_LOADED_FILE_BYTES)
-    with pytest.raises(ContentError, match="together"):
-        loaded_files(tmp_path)
+    with caplog.at_level("WARNING", logger="genfleet.sdk.content"):
+        got = loaded_files(tmp_path)
+    assert len(got) == n
+    assert f"f{n}.md" in caplog.text
 
 
 def test_returns_named_tuples(tmp_path):
