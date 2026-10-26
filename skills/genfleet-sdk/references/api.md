@@ -427,7 +427,13 @@ entry = "agent:build_agent"            # default
 "@acme/crm" = { spec = "1.2.x" }
 
 [mcps]                                 # same form
+
+[content]
+required = true                        # don't serve until the workspace supplies content
+data = ["knowledge.json", "flows/**"]  # globs of files the code reads by path
 ```
+
+Content: `genfleet.sdk.content.loaded_files(root=None, *, exclude=())` returns the workspace's loaded text files as sorted `[(path, text)]` from `$CONTENT_DIR` (else `/content`); `loaded_prompt(...)` joins them under `--- path ---` headers. `data` files are never returned. Without the platform's modes file every text file counts as loaded, so pass `exclude=` your `data` globs. Globs: `*` within a name, `?` one character, `**` any folders; relative, `/`-separated, no brackets or braces. A malformed modes file or a path outside the folder raises `ContentError`.
 
 `push` resolves each spec to a version and digest recorded in the published artifact; nobody types a hash. `AgentManifest.is_fully_pinned` says whether every dependency is resolved.
 

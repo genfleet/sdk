@@ -1,0 +1,28 @@
+{
+  "comment": "Content glob cases, shared byte-for-byte with the platform's matcher. Each case: glob, path, match.",
+  "matches": [
+    {"glob": "knowledge.json", "path": "knowledge.json", "match": true},
+    {"glob": "knowledge.json", "path": "a/knowledge.json", "match": false},
+    {"glob": "*.json", "path": "graph.json", "match": true},
+    {"glob": "*.json", "path": "flows/a.json", "match": false},
+    {"glob": "**/*.json", "path": "graph.json", "match": true},
+    {"glob": "**/*.json", "path": "flows/a/b.json", "match": true},
+    {"glob": "flows/**", "path": "flows/a.flow.json", "match": true},
+    {"glob": "flows/**", "path": "flows/x/y.json", "match": true},
+    {"glob": "flows/**", "path": "flows", "match": false},
+    {"glob": "flows/**", "path": "flowsx/a.json", "match": false},
+    {"glob": "a/**/b.md", "path": "a/b.md", "match": true},
+    {"glob": "a/**/b.md", "path": "a/x/y/b.md", "match": true},
+    {"glob": "a/**/b.md", "path": "ab.md", "match": false},
+    {"glob": "**", "path": "anything/at/all.bin", "match": true},
+    {"glob": "?.toml", "path": "a.toml", "match": true},
+    {"glob": "?.toml", "path": "ab.toml", "match": false},
+    {"glob": "graphs/*.kg.json", "path": "graphs/main.kg.json", "match": true},
+    {"glob": "graphs/*.kg.json", "path": "graphs/main.json", "match": false},
+    {"glob": "Knowledge.json", "path": "knowledge.json", "match": false},
+    {"glob": "a.b", "path": "axb", "match": false},
+    {"glob": "a+(b).md", "path": "a+(b).md", "match": true},
+    {"glob": "دليل/*.md", "path": "دليل/ملف.md", "match": true}
+  ],
+  "invalid": ["", "/abs.json", "../x", "a/../b", "a//b", "a/", "./a", "a\\b", "a/**b", "**x", "[ab].json", "{a,b}.json", "a\u0000b"]
+}

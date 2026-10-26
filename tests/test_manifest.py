@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from genfleet.sdk.manifest import (
@@ -228,3 +230,41 @@ def test_a_section_error_names_the_file_once(tmp_path):
     with pytest.raises(ManifestError) as raised:
         load_agent_manifest(_write(tmp_path, '[agent]\nname = "a"\n[content]\nrequired = "yes"\n'))
     assert str(raised.value).count("genfleet.toml") == 1
+
+
+def test_content_data_defaults_to_empty(tmp_path):
+    manifest = load_agent_manifest(_write(tmp_path, '[agent]\nname = "a"\n[content]\nrequired = true\n'))
+    assert manifest.content.data == []
+
+
+def test_content_data_globs_are_read(tmp_path):
+    manifest = load_agent_manifest(
+        _write(tmp_path, '[agent]\nname = "a"\n[content]\ndata = ["knowledge.json", "flows/**", "**/*.toml"]\n')
+    )
+    assert manifest.content.data == ["knowledge.json", "flows/**", "**/*.toml"]
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        ('"knowledge.json"', "'data' must be a list of glob strings"),
+        ("[1]", "'data' must be a list of glob strings"),
+        ('["/etc/passwd"]', "relative to the content root"),
+        ('["../x"]', "'..'"),
+        ('["a//b"]', "empty"),
+        ('["a\\\\b"]', "backslash"),
+        ('["a/**b"]', "whole folder segment"),
+        ('["{a,b}.json"]', "brackets or braces"),
+        ('[""]', "non-empty"),
+        ('["a", "a"]', "twice"),
+    ],
+)
+def test_a_bad_content_data_glob_is_refused(tmp_path, data, message):
+    with pytest.raises(ManifestError, match=re.escape(message)):
+        load_agent_manifest(_write(tmp_path, f'[agent]\nname = "a"\n[content]\ndata = {data}\n'))
+
+
+def test_too_many_content_data_globs_are_refused(tmp_path):
+    globs = ", ".join(f'"f{i}.json"' for i in range(101))
+    with pytest.raises(ManifestError, match="more than 100 globs"):
+        load_agent_manifest(_write(tmp_path, f'[agent]\nname = "a"\n[content]\ndata = [{globs}]\n'))
