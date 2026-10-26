@@ -269,9 +269,11 @@ def loaded_files(
     last default may be absent (``[]``); a root you named that isn't a
     folder raises ``ContentError``.
 
-    A loaded file over ``MAX_LOADED_FILE_BYTES`` (4 MiB), or one that would
-    take the loaded files past ``MAX_LOADED_TOTAL_BYTES`` (8 MiB) together, is
-    left out with a logged warning (sizes are checked before reading): far
+    A loaded file over ``MAX_LOADED_FILE_BYTES`` (4 MiB) is left out with a
+    logged warning; at the first file that would take the loaded files past
+    ``MAX_LOADED_TOTAL_BYTES`` (8 MiB) together, reading stops, so what is
+    returned is always a prefix of the sorted paths (sizes are checked
+    before reading): far
     above any plan's loaded budget, well below the platform's 64 MB mounted
     cap, so they bound what an agent reads without failing its start.
 
@@ -315,12 +317,13 @@ def loaded_files(
             if text is None:
                 continue
             if total + size > MAX_LOADED_TOTAL_BYTES:
+                # Stop here, so the loaded set is always a prefix of the sorted paths.
                 log.warning(
-                    "content file %s would pass %d loaded bytes; it is not loaded",
+                    "content file %s would pass %d loaded bytes; it and the files after it are not loaded",
                     _shown(path),
                     MAX_LOADED_TOTAL_BYTES,
                 )
-                continue
+                break
             total += size
             result.append(LoadedFile(path, text))
         return result

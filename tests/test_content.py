@@ -208,13 +208,14 @@ def test_a_file_over_the_cap_is_logged_and_left_out_unread(tmp_path, caplog):
     assert "big.md" in caplog.text
 
 
-def test_files_past_the_total_cap_are_logged_and_left_out(tmp_path, caplog):
+def test_reading_stops_at_the_total_cap_so_the_loaded_set_is_a_prefix(tmp_path, caplog):
     n = MAX_LOADED_TOTAL_BYTES // MAX_LOADED_FILE_BYTES
     for i in range(n + 1):
         (tmp_path / f"f{i}.md").write_bytes(b"a" * MAX_LOADED_FILE_BYTES)
+    (tmp_path / "z.md").write_text("small, but after the cap", encoding="utf-8")
     with caplog.at_level("WARNING", logger="genfleet.sdk.content"):
         got = loaded_files(tmp_path)
-    assert len(got) == n
+    assert [f.path for f in got] == [f"f{i}.md" for i in range(n)]
     assert f"f{n}.md" in caplog.text
 
 
