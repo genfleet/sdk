@@ -1,0 +1,219 @@
+{
+  "comment": "The modes file the engine writes beside the content (/content/.genfleet-modes.json), shared byte-for-byte with the platform. version: an integer >= 1; a later version keeps files as a {path: mode} object and may add keys, which readers ignore. Modes: loaded, data; a mode a reader doesn't know is not loaded. Paths: relative, NFC, '/'-separated, no empty, '.', '..' or hidden segments, no backslash or control characters; every listed path must be a file in the folder. Each case: files on disk, the modes file (an object, or raw text), and the loaded paths or error: true.",
+  "cases": [
+    {
+      "name": "loaded and data",
+      "files": [
+        "persona.md",
+        "knowledge.json",
+        "faq.md"
+      ],
+      "modes": {
+        "version": 1,
+        "files": {
+          "persona.md": "loaded",
+          "faq.md": "loaded",
+          "knowledge.json": "data"
+        }
+      },
+      "loaded": [
+        "faq.md",
+        "persona.md"
+      ]
+    },
+    {
+      "name": "unlisted files are not loaded",
+      "files": [
+        "persona.md",
+        "extra.md"
+      ],
+      "modes": {
+        "version": 1,
+        "files": {
+          "persona.md": "loaded"
+        }
+      },
+      "loaded": [
+        "persona.md"
+      ]
+    },
+    {
+      "name": "a later version with extra keys",
+      "files": [
+        "persona.md"
+      ],
+      "modes": {
+        "version": 2,
+        "files": {
+          "persona.md": "loaded"
+        },
+        "rules": []
+      },
+      "loaded": [
+        "persona.md"
+      ]
+    },
+    {
+      "name": "an unknown mode is skipped",
+      "files": [
+        "persona.md",
+        "x.md"
+      ],
+      "modes": {
+        "version": 1,
+        "files": {
+          "persona.md": "loaded",
+          "x.md": "summarised"
+        }
+      },
+      "loaded": [
+        "persona.md"
+      ]
+    },
+    {
+      "name": "a non-string mode is skipped",
+      "files": [
+        "persona.md",
+        "x.md"
+      ],
+      "modes": {
+        "version": 1,
+        "files": {
+          "persona.md": "loaded",
+          "x.md": [
+            "loaded"
+          ]
+        }
+      },
+      "loaded": [
+        "persona.md"
+      ]
+    },
+    {
+      "name": "an NFD file listed in NFC",
+      "files": [
+        "cafe\u0301.md"
+      ],
+      "modes": {
+        "version": 1,
+        "files": {
+          "caf\u00e9.md": "loaded"
+        }
+      },
+      "loaded": [
+        "caf\u00e9.md"
+      ]
+    },
+    {
+      "name": "version 0",
+      "files": [],
+      "modes": {
+        "version": 0,
+        "files": {}
+      },
+      "error": true
+    },
+    {
+      "name": "version true",
+      "files": [],
+      "modes": {
+        "version": true,
+        "files": {}
+      },
+      "error": true
+    },
+    {
+      "name": "version 1.0",
+      "files": [],
+      "modes": {
+        "version": 1.0,
+        "files": {}
+      },
+      "error": true
+    },
+    {
+      "name": "files is a list",
+      "files": [],
+      "modes": {
+        "version": 1,
+        "files": []
+      },
+      "error": true
+    },
+    {
+      "name": "not JSON",
+      "files": [],
+      "modes": "not json",
+      "error": true
+    },
+    {
+      "name": "a parent path",
+      "files": [],
+      "modes": {
+        "version": 1,
+        "files": {
+          "../x.md": "loaded"
+        }
+      },
+      "error": true
+    },
+    {
+      "name": "an absolute path",
+      "files": [],
+      "modes": {
+        "version": 1,
+        "files": {
+          "/etc/passwd": "loaded"
+        }
+      },
+      "error": true
+    },
+    {
+      "name": "a hidden path",
+      "files": [],
+      "modes": {
+        "version": 1,
+        "files": {
+          ".genfleet-modes.json": "loaded"
+        }
+      },
+      "error": true
+    },
+    {
+      "name": "a backslash",
+      "files": [],
+      "modes": {
+        "version": 1,
+        "files": {
+          "a\\b.md": "loaded"
+        }
+      },
+      "error": true
+    },
+    {
+      "name": "a listed file that is missing",
+      "files": [],
+      "modes": {
+        "version": 1,
+        "files": {
+          "persona.md": "loaded"
+        }
+      },
+      "error": true
+    },
+    {
+      "name": "a missing data file",
+      "files": [
+        "persona.md"
+      ],
+      "modes": {
+        "version": 1,
+        "files": {
+          "persona.md": "loaded",
+          "kb.json": "data"
+        }
+      },
+      "error": true
+    }
+  ]
+}

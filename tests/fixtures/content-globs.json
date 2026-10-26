@@ -1,28 +1,194 @@
 {
-  "comment": "Content glob cases, shared byte-for-byte with the platform's matcher. Each case: glob, path, match.",
+  "comment": "Content glob cases, shared byte-for-byte with the platform's matcher. Paths and globs are compared NFC-normalised, case-sensitive, on the whole path. Each case: glob, path, match.",
   "matches": [
-    {"glob": "knowledge.json", "path": "knowledge.json", "match": true},
-    {"glob": "knowledge.json", "path": "a/knowledge.json", "match": false},
-    {"glob": "*.json", "path": "graph.json", "match": true},
-    {"glob": "*.json", "path": "flows/a.json", "match": false},
-    {"glob": "**/*.json", "path": "graph.json", "match": true},
-    {"glob": "**/*.json", "path": "flows/a/b.json", "match": true},
-    {"glob": "flows/**", "path": "flows/a.flow.json", "match": true},
-    {"glob": "flows/**", "path": "flows/x/y.json", "match": true},
-    {"glob": "flows/**", "path": "flows", "match": false},
-    {"glob": "flows/**", "path": "flowsx/a.json", "match": false},
-    {"glob": "a/**/b.md", "path": "a/b.md", "match": true},
-    {"glob": "a/**/b.md", "path": "a/x/y/b.md", "match": true},
-    {"glob": "a/**/b.md", "path": "ab.md", "match": false},
-    {"glob": "**", "path": "anything/at/all.bin", "match": true},
-    {"glob": "?.toml", "path": "a.toml", "match": true},
-    {"glob": "?.toml", "path": "ab.toml", "match": false},
-    {"glob": "graphs/*.kg.json", "path": "graphs/main.kg.json", "match": true},
-    {"glob": "graphs/*.kg.json", "path": "graphs/main.json", "match": false},
-    {"glob": "Knowledge.json", "path": "knowledge.json", "match": false},
-    {"glob": "a.b", "path": "axb", "match": false},
-    {"glob": "a+(b).md", "path": "a+(b).md", "match": true},
-    {"glob": "دليل/*.md", "path": "دليل/ملف.md", "match": true}
+    {
+      "glob": "knowledge.json",
+      "path": "knowledge.json",
+      "match": true
+    },
+    {
+      "glob": "knowledge.json",
+      "path": "a/knowledge.json",
+      "match": false
+    },
+    {
+      "glob": "*.json",
+      "path": "graph.json",
+      "match": true
+    },
+    {
+      "glob": "*.json",
+      "path": "flows/a.json",
+      "match": false
+    },
+    {
+      "glob": "**/*.json",
+      "path": "graph.json",
+      "match": true
+    },
+    {
+      "glob": "**/*.json",
+      "path": "flows/a/b.json",
+      "match": true
+    },
+    {
+      "glob": "flows/**",
+      "path": "flows/a.flow.json",
+      "match": true
+    },
+    {
+      "glob": "flows/**",
+      "path": "flows/x/y.json",
+      "match": true
+    },
+    {
+      "glob": "flows/**",
+      "path": "flows",
+      "match": false
+    },
+    {
+      "glob": "flows/**",
+      "path": "flowsx/a.json",
+      "match": false
+    },
+    {
+      "glob": "a/**/b.md",
+      "path": "a/b.md",
+      "match": true
+    },
+    {
+      "glob": "a/**/b.md",
+      "path": "a/x/y/b.md",
+      "match": true
+    },
+    {
+      "glob": "a/**/b.md",
+      "path": "ab.md",
+      "match": false
+    },
+    {
+      "glob": "**",
+      "path": "anything/at/all.bin",
+      "match": true
+    },
+    {
+      "glob": "?.toml",
+      "path": "a.toml",
+      "match": true
+    },
+    {
+      "glob": "?.toml",
+      "path": "ab.toml",
+      "match": false
+    },
+    {
+      "glob": "graphs/*.kg.json",
+      "path": "graphs/main.kg.json",
+      "match": true
+    },
+    {
+      "glob": "graphs/*.kg.json",
+      "path": "graphs/main.json",
+      "match": false
+    },
+    {
+      "glob": "Knowledge.json",
+      "path": "knowledge.json",
+      "match": false
+    },
+    {
+      "glob": "a.b",
+      "path": "axb",
+      "match": false
+    },
+    {
+      "glob": "a+(b).md",
+      "path": "a+(b).md",
+      "match": true
+    },
+    {
+      "glob": "\u062f\u0644\u064a\u0644/*.md",
+      "path": "\u062f\u0644\u064a\u0644/\u0645\u0644\u0641.md",
+      "match": true
+    },
+    {
+      "glob": "*",
+      "path": ".env",
+      "match": true
+    },
+    {
+      "glob": "**",
+      "path": ".git/x",
+      "match": true
+    },
+    {
+      "glob": "flows/*.json",
+      "path": "flows/.json",
+      "match": true
+    },
+    {
+      "glob": "!a.md",
+      "path": "!a.md",
+      "match": true
+    },
+    {
+      "glob": "!a.md",
+      "path": "b.md",
+      "match": false
+    },
+    {
+      "glob": "**",
+      "path": "a.md",
+      "match": true
+    },
+    {
+      "glob": "**/a.md",
+      "path": "a.md",
+      "match": true
+    },
+    {
+      "glob": "?.md",
+      "path": "q\u0301.md",
+      "match": false
+    },
+    {
+      "glob": "??.md",
+      "path": "q\u0301.md",
+      "match": true
+    },
+    {
+      "glob": "caf\u00e9.md",
+      "path": "cafe\u0301.md",
+      "match": true
+    },
+    {
+      "glob": "cafe\u0301.md",
+      "path": "caf\u00e9.md",
+      "match": true
+    },
+    {
+      "glob": "*.md",
+      "path": "README.MD",
+      "match": false
+    }
   ],
-  "invalid": ["", "/abs.json", "../x", "a/../b", "a//b", "a/", "./a", "a\\b", "a/**b", "**x", "[ab].json", "{a,b}.json", "a\u0000b"]
+  "invalid": [
+    "",
+    "/abs.json",
+    "../x",
+    "a/../b",
+    "a//b",
+    "a/",
+    "./a",
+    "a\\b",
+    "a/**b",
+    "**x",
+    "[ab].json",
+    "{a,b}.json",
+    "a\u0000b",
+    "a\u007fb",
+    "a\u0085b",
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "{a}.md"
+  ]
 }

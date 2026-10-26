@@ -8,8 +8,11 @@ from pathlib import Path
 import pytest
 
 from genfleet.sdk.content import (
+    MAX_LOADED_FILE_BYTES,
+    MAX_LOADED_TOTAL_BYTES,
     MODES_FILE,
     ContentError,
+    LoadedFile,
     content_glob_problem,
     content_root,
     loaded_files,
@@ -17,7 +20,9 @@ from genfleet.sdk.content import (
     matches_content_glob,
 )
 
-CASES = json.loads((Path(__file__).parent / "fixtures" / "content-globs.json").read_text(encoding="utf-8"))
+FIXTURES = Path(__file__).parent / "fixtures"
+CASES = json.loads((FIXTURES / "content-globs.json").read_text(encoding="utf-8"))
+MODES_CASES = json.loads((FIXTURES / "content-modes.json").read_text(encoding="utf-8"))["cases"]
 
 
 @pytest.mark.parametrize("case", CASES["matches"], ids=lambda c: f"{c['glob']}~{c['path']}")
@@ -85,7 +90,7 @@ def test_a_loaded_image_is_not_returned(tmp_path):
 
 
 def test_a_byte_order_mark_is_dropped(tmp_path):
-    _tree(tmp_path, {"persona.md": "﻿Hello".encode()})
+    _tree(tmp_path, {"persona.md": "\ufeffHello".encode()})
     assert loaded_files(tmp_path) == [("persona.md", "Hello")]
 
 
@@ -101,9 +106,19 @@ def test_without_content_dir_the_root_is_slash_content(monkeypatch):
     assert content_root() == Path("/content")
 
 
-def test_a_missing_root_has_no_files(tmp_path):
-    assert loaded_files(tmp_path / "nope") == []
-    assert loaded_prompt(tmp_path / "nope") == ""
+def test_a_named_root_that_is_missing_is_refused(tmp_path, monkeypatch):
+    with pytest.raises(ContentError, match="not a directory"):
+        loaded_files(tmp_path / "nope")
+    monkeypatch.setenv("CONTENT_DIR", str(tmp_path / "nope"))
+    with pytest.raises(ContentError, match="not a directory"):
+        loaded_files()
+
+
+def test_the_default_root_may_be_absent(monkeypatch):
+    monkeypatch.delenv("CONTENT_DIR", raising=False)
+    monkeypatch.setattr("genfleet.sdk.content.DEFAULT_CONTENT_DIR", "/nonexistent-genfleet-content")
+    assert loaded_files() == []
+    assert loaded_prompt() == ""
 
 
 @pytest.mark.parametrize("path", ["../outside.md", "/etc/passwd", "a/../../x.md", "a\\b.md", "a//b.md", "./a.md", ""])
@@ -119,7 +134,8 @@ def test_a_symlink_out_of_the_root_is_refused(tmp_path):
     (tmp_path / "secret.md").write_text("secret", encoding="utf-8")
     (root / "persona.md").symlink_to(tmp_path / "secret.md")
     _modes(root, {"persona.md": "loaded"})
-    with pytest.raises(ContentError, match="outside"):
+    # A symlink is never a content file: refused whether it points in or out.
+    with pytest.raises(ContentError, match="not a file"):
         loaded_files(root)
 
 
@@ -140,20 +156,73 @@ def test_a_listed_file_that_is_missing_is_refused(tmp_path):
         loaded_files(tmp_path)
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        "not json",
-        json.dumps([]),
-        json.dumps({"version": 2, "files": {}}),
-        json.dumps({"version": 1, "files": []}),
-        json.dumps({"version": 1, "files": {"a.md": "retrieved-ish"}}),
-    ],
-)
-def test_a_malformed_modes_file_is_refused(tmp_path, body):
+@pytest.mark.parametrize("case", MODES_CASES, ids=lambda c: c["name"])
+def test_the_modes_file_contract(tmp_path, case):
+    for rel in case["files"]:
+        _tree(tmp_path, {rel: "x"})
+    body = case["modes"] if isinstance(case["modes"], str) else json.dumps(case["modes"])
     (tmp_path / MODES_FILE).write_text(body, encoding="utf-8")
+    if case.get("error"):
+        with pytest.raises(ContentError):
+            loaded_files(tmp_path)
+    else:
+        assert [f.path for f in loaded_files(tmp_path)] == case["loaded"]
+
+
+def test_a_symlinked_modes_file_is_refused(tmp_path):
+    root = tmp_path / "content"
+    root.mkdir()
+    (tmp_path / "evil.json").write_text(json.dumps({"version": 1, "files": {}}), encoding="utf-8")
+    (root / MODES_FILE).symlink_to(tmp_path / "evil.json")
+    with pytest.raises(ContentError, match="symlink"):
+        loaded_files(root)
+
+
+def test_a_symlink_loop_is_a_content_error(tmp_path):
+    (tmp_path / "a.md").symlink_to(tmp_path / "b.md")
+    (tmp_path / "b.md").symlink_to(tmp_path / "a.md")
+    _modes(tmp_path, {"a.md": "loaded"})
     with pytest.raises(ContentError):
         loaded_files(tmp_path)
+
+
+def test_a_bare_string_exclude_is_refused(tmp_path):
+    with pytest.raises(TypeError, match="list of globs"):
+        loaded_files(tmp_path, exclude="knowledge.json")
+
+
+def test_a_non_utf8_text_file_is_logged_and_left_out(tmp_path, caplog):
+    _tree(tmp_path, {"bad.md": b"\xff\xfe"})
+    with caplog.at_level("WARNING", logger="genfleet.sdk.content"):
+        assert loaded_files(tmp_path) == []
+    assert "bad.md" in caplog.text
+
+
+def test_a_file_over_the_cap_is_refused_before_it_is_read(tmp_path):
+    big = tmp_path / "big.md"
+    with big.open("wb") as fh:
+        fh.truncate(MAX_LOADED_FILE_BYTES + 1)
+    with pytest.raises(ContentError, match="too large"):
+        loaded_files(tmp_path)
+
+
+def test_loaded_files_over_the_total_cap_are_refused(tmp_path):
+    for i in range(MAX_LOADED_TOTAL_BYTES // MAX_LOADED_FILE_BYTES + 1):
+        (tmp_path / f"f{i}.md").write_bytes(b"a" * MAX_LOADED_FILE_BYTES)
+    with pytest.raises(ContentError, match="together"):
+        loaded_files(tmp_path)
+
+
+def test_returns_named_tuples(tmp_path):
+    _tree(tmp_path, {"persona.md": "p"})
+    (got,) = loaded_files(tmp_path)
+    assert isinstance(got, LoadedFile) and got.path == "persona.md" and got.text == "p"
+
+
+def test_nfd_names_on_disk_are_returned_in_nfc(tmp_path):
+    _tree(tmp_path, {"cafe\u0301.md": "x"})
+    assert [f.path for f in loaded_files(tmp_path, exclude=["nothing"])] == ["caf\u00e9.md"]
+    assert loaded_files(tmp_path, exclude=["caf\u00e9.md"]) == []
 
 
 def test_an_error_never_quotes_the_file(tmp_path):

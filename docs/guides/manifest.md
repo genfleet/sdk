@@ -102,9 +102,9 @@ case-sensitive. A glob must be relative, use `/` between folders, and have no
 `.` or `..` folders; brackets and braces aren't supported. At most 100 globs.
 
 **Reading loaded files.** `genfleet.sdk.content.loaded_files()` returns the
-loaded text files as `[(path, text)]`, sorted by path, and `loaded_prompt()`
-renders them as one block with a `--- path ---` header per file, ready for a
-system prompt:
+loaded text files as `LoadedFile(path, text)` tuples, sorted by path, and
+`loaded_prompt()` renders them as one block with a `--- path ---` header per
+file, ready for a system prompt:
 
 ```python
 from genfleet.sdk.content import loaded_prompt
@@ -113,12 +113,17 @@ def build_agent(remote_tools=()):
     return Agent(role=loaded_prompt(exclude=["knowledge.json", "flows/**"]), ...)
 ```
 
-They read the content folder (`$CONTENT_DIR`, else `/content`). Text files
-are `.md`, `.markdown`, `.txt`, `.json`, `.toml`, `.yaml`, `.yml`, `.csv`,
-`.html` and `.htm` that are valid UTF-8; other files are never returned. On
-the platform only the files the workspace set to loaded are returned. Run
-locally against a plain folder, every text file counts as loaded, so pass
-`exclude=` the same globs as `data` to leave your data files out.
+They read the content folder: the `root` you pass, else `$CONTENT_DIR`, else
+`/content`. Only that last default may be missing (no files); a folder you
+named that doesn't exist is an error. Text files are `.md`, `.markdown`,
+`.txt`, `.json`, `.toml`, `.yaml`, `.yml`, `.csv`, `.html` and `.htm` that are
+valid UTF-8; other files are never returned (a text file that isn't UTF-8 is
+logged). On the platform only the files the workspace set to loaded are
+returned, and `data` files are already left out, so `exclude=` only matters
+for local runs against a plain folder, where every text file counts as
+loaded: pass it the same globs as `data`. Paths and globs are compared
+NFC-normalised. A loaded file over 4 MiB, or loaded files over 8 MiB together,
+raise `ContentError`; both are far above what fits in an agent's context.
 
 ### `[tools]` and `[mcps]`
 
