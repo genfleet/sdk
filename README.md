@@ -188,7 +188,10 @@ one async `StateStore` interface:
 
 - **Hosted:** an `Agent` running on the platform selects `PlatformStateStore`,
   and `agent.state` is kept by the platform. `Agent(state="platform")` fails
-  fast when the agent is not running on the platform.
+  fast when the agent is not running on the platform. Inside a turn, every
+  platform memory and state call carries the turn's id in the
+  `x-genfleet-turn-id` header (the turn's `turn_id`, else `request_id`, else
+  `message_id`), so the platform can tell which turn made it.
 - **Local/self-hosted:** `LocalStateStore(path)` wraps `SQLiteStateStore` on a
   worker thread. It refuses to open in a hosted sandbox, whose files don't
   survive a restart.
@@ -255,7 +258,13 @@ within the agent. State and result payloads are limited to 64 KiB
 (`StateTooLarge`). Hosted, the platform also caps runs per agent, effects per
 run, stored bytes and the request rate, and answers over a cap with
 `StateQuotaExceeded`. Every failure is a `StateError` (a hosted one is also a
-`PlatformStateError` with the HTTP `status`, 0 when unreachable). For an
+`PlatformStateError` with the HTTP `status`, 0 when unreachable). When the
+workspace is at its storage limit, the platform refuses a hosted memory or
+state write with HTTP 402, and the SDK raises `StorageLimitExceeded` (also a
+`PlatformStateError` and a `PlatformMemoryError`). It carries `limit_bytes`,
+`current`, `required_bytes` and `categories`, any of which is `None` if the
+platform did not send it. The limit is the workspace's, not the agent's, and
+the SDK does not retry the call: free space or raise the limit first. For an
 external side effect, `claim_effect` records intent before the call and gives
 a stable idempotency key to pass to a remote API that supports it. A second
 claim is rejected, including after a restart. If a worker dies between the

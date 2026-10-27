@@ -19,12 +19,14 @@ from genfleet.sdk.schemas import Message, ToolCall
 
 class _Proxy(BaseHTTPRequestHandler):
     calls: list[tuple[str, dict, str | None]] = []
+    turn_ids: list[str | None] = []
     responses: dict[str, tuple[int, object]] = {}
 
     def do_POST(self):  # noqa: N802
         length = int(self.headers.get("content-length", 0))
         body = json.loads(self.rfile.read(length) or b"{}")
         _Proxy.calls.append((self.path, body, self.headers.get("authorization")))
+        _Proxy.turn_ids.append(self.headers.get("x-genfleet-turn-id"))
         status, payload = _Proxy.responses.get(self.path, (200, {}))
         raw = json.dumps(payload).encode()
         self.send_response(status)
@@ -40,6 +42,7 @@ class _Proxy(BaseHTTPRequestHandler):
 @pytest.fixture
 def proxy():
     _Proxy.calls = []
+    _Proxy.turn_ids = []
     _Proxy.responses = {}
     server = HTTPServer(("127.0.0.1", 0), _Proxy)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -165,3 +168,102 @@ async def test_append_sends_the_turn_id_as_the_idempotency_key(proxy):
     )
     (_, body, _), = _Proxy.calls
     assert body["turn_id"] == "turn-7"
+
+
+async def test_calls_inside_a_turn_carry_its_id_as_a_header(proxy):
+    from genfleet.sdk.turn import call_within
+
+    mem = PlatformMemory(proxy, "spawn-token")
+    _Proxy.responses = {"/memory/episodic/search": (200, {"results": []})}
+    await call_within({"turn_id": "turn-7"}, mem.load("s"))
+    await call_within({"turn_id": "turn-7"}, mem.append("s", [Message(role="user", content="hi")]))
+    await call_within({"turn_id": "turn-7"}, mem.search("cust-1", "q"))
+    assert _Proxy.turn_ids == ["turn-7", "turn-7", "turn-7"]
+
+
+async def test_a_call_outside_a_turn_sends_no_turn_id(proxy):
+    await PlatformMemory(proxy, "spawn-token").load("s")
+    assert _Proxy.turn_ids == [None]
+
+
+@pytest.mark.parametrize("unsafe", ["has space", "line\nbreak", "é-accent", "x" * 300])
+async def test_an_id_that_is_not_a_header_value_is_left_out(proxy, unsafe):
+    from genfleet.sdk.turn import call_within
+
+    await call_within({"turn_id": unsafe}, PlatformMemory(proxy, "spawn-token").load("s"))
+    assert _Proxy.turn_ids == [None]
+
+
+async def test_an_agent_turn_sends_its_id_on_the_history_load_and_the_append(proxy):
+    from genfleet.sdk import Agent, AgentInput
+    from genfleet.sdk.models import ScriptedModelClient
+
+    agent = Agent(
+        role="r",
+        model={"model": "catalog-model"},
+        model_client=ScriptedModelClient(["hello"]),
+        memory=PlatformMemory(proxy, "spawn-token"),
+    )
+    _Proxy.responses = {"/memory/episodic/load": (200, {"messages": []})}
+    async for _ in agent.run(AgentInput(message="hi", metadata={"session_id": "s", "turn_id": "turn-9"})):
+        pass
+    paths = [path for path, _, _ in _Proxy.calls]
+    assert paths == ["/memory/episodic/load", "/memory/episodic/append"], paths
+    assert _Proxy.turn_ids == ["turn-9", "turn-9"]
+
+
+async def test_a_tool_calling_memory_inside_a_turn_sends_its_id(proxy):
+    from genfleet.sdk import Agent, AgentInput, tool
+    from genfleet.sdk.models import ScriptedModelClient, Step
+
+    mem = PlatformMemory(proxy, "spawn-token")
+
+    @tool
+    async def lookup() -> str:
+        """Search past messages."""
+        await mem.search("cust-1", "q")
+        return "found"
+
+    agent = Agent(
+        role="r",
+        model={"model": "catalog-model"},
+        model_client=ScriptedModelClient([Step(tool_calls=[{"name": "lookup"}]), "done"]),
+        tools=[lookup],
+    )
+    _Proxy.responses = {"/memory/episodic/search": (200, {"results": []})}
+    async for _ in agent.run(AgentInput(message="hi", metadata={"session_id": "s", "turn_id": "turn-9"})):
+        pass
+    assert [path for path, _, _ in _Proxy.calls] == ["/memory/episodic/search"]
+    assert _Proxy.turn_ids == ["turn-9"]
+
+
+_STORAGE_LIMIT_BODY = {
+    "statusCode": 402, "error": "Plan Limit", "code": "storage_limit",
+    "message": "Storage limit reached", "limitMax": 5000, "currentCount": 4990,
+    "requiredBytes": 120, "categories": {"content": 1, "data": 4989, "index": 0, "channels": 0},
+}
+
+
+@pytest.mark.asyncio
+async def test_a_storage_limit_402_raises_storage_limit_exceeded_and_is_not_retried(proxy):
+    from genfleet.sdk import StorageLimitExceeded
+
+    _Proxy.responses["/memory/episodic/append"] = (402, _STORAGE_LIMIT_BODY)
+    with pytest.raises(StorageLimitExceeded) as exc:
+        await PlatformMemory(proxy, "t").append("s", [Message(role="user", content="hi")])
+    err = exc.value
+    assert isinstance(err, PlatformMemoryError)
+    assert (err.status, err.limit_bytes, err.current, err.required_bytes) == (402, 5000, 4990, 120)
+    assert err.categories == {"content": 1, "data": 4989, "index": 0, "channels": 0}
+    assert len(_Proxy.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_another_402_stays_a_plain_memory_error(proxy):
+    from genfleet.sdk import StorageLimitExceeded
+
+    _Proxy.responses["/memory/episodic/load"] = (402, {"code": "plan_limit", "error": "nope"})
+    with pytest.raises(PlatformMemoryError) as exc:
+        await PlatformMemory(proxy, "t").load("s")
+    assert not isinstance(exc.value, StorageLimitExceeded)
+    assert exc.value.status == 402

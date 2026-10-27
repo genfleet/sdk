@@ -37,6 +37,7 @@ from .files import (
 from .manifest import (
     AgentManifest,
     ConfigField,
+    ContentSpec,
     ManifestError,
     SecretField,
     ToolManifest,
@@ -74,6 +75,7 @@ from .schemas import (
 from .skills import Skill, SkillOption, discover_skills, load_skills
 from .state import EffectState, RunState, StateError, StateQuotaExceeded, StateTooLarge
 from .state_store import LocalStateStore, StateStore, state_for
+from .storage_limit import StorageLimitExceeded
 from .tool import ToolWrapper, tool
 from .tool_context import ToolContext, ToolSecretError, tool_env_namespace
 from .tools_loader import (
@@ -96,6 +98,7 @@ __all__ = [
     "StateError",
     "StateTooLarge",
     "StateQuotaExceeded",
+    "StorageLimitExceeded",
     "Skill",
     "SkillOption",
     "discover_skills",
@@ -161,6 +164,7 @@ __all__ = [
     "AuditEvent",
     # Manifests
     "AgentManifest",
+    "ContentSpec",
     "ToolManifest",
     "ToolRef",
     "ConfigField",

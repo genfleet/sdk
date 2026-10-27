@@ -28,7 +28,7 @@ import urllib.request
 from typing import Any
 
 from .state import EffectState, RunState, StateError, StateQuotaExceeded, StateTooLarge
-from .turn import current_turn
+from .turn import current_turn, turn_headers
 
 STATE_URL_ENV = "GENFLEET_STATE_URL"
 STATE_TOKEN_ENV = "GENFLEET_STATE_TOKEN"
@@ -159,17 +159,28 @@ class PlatformStateStore:
 
     async def _call(self, op: str, agent: str, body: dict[str, Any]) -> dict[str, Any]:
         self._scope(agent)
-        return await asyncio.to_thread(self._call_sync, op, {**body, **_turn_ref()})
+        # Read the turn here, on the event loop: the worker thread need not see it.
+        return await asyncio.to_thread(self._call_sync, op, {**body, **_turn_ref()}, turn_headers())
 
-    def _call_sync(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+    def _call_sync(self, op: str, body: dict[str, Any], turn: dict[str, str]) -> dict[str, Any]:
         req = urllib.request.Request(
             f"{self._base}/{op}", data=json.dumps(body, allow_nan=False).encode(), method="POST",
-            headers={"content-type": "application/json", "authorization": f"Bearer {self._token}"},
+            headers={
+                "content-type": "application/json",
+                "authorization": f"Bearer {self._token}",
+                **turn,
+            },
         )
         try:
             with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310 — platform URL
                 payload = response.read()
         except urllib.error.HTTPError as exc:
+            if exc.code == 402:
+                from .storage_limit import storage_limit_from_body  # circular at import time
+
+                limit = storage_limit_from_body(op, exc.code, exc.read())
+                if limit is not None:
+                    raise limit from None
             raise _BY_STATUS.get(exc.code, PlatformStateError)(op, exc.code, "request rejected") from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise PlatformStateError(op, 0, str(exc)) from None

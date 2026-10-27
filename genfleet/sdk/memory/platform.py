@@ -22,6 +22,7 @@ import urllib.request
 from typing import Any
 
 from ..schemas import Message
+from ..turn import turn_headers
 
 log = logging.getLogger("genfleet.sdk.memory.platform")
 
@@ -167,9 +168,10 @@ class PlatformMemory:
     # -- transport --------------------------------------------------------
 
     async def _call(self, op: str, body: dict[str, Any]) -> Any:
-        return await asyncio.to_thread(self._call_sync, op, body)
+        # Read the turn here, on the event loop: the worker thread need not see it.
+        return await asyncio.to_thread(self._call_sync, op, body, turn_headers())
 
-    def _call_sync(self, op: str, body: dict[str, Any]) -> Any:
+    def _call_sync(self, op: str, body: dict[str, Any], turn: dict[str, str]) -> Any:
         req = urllib.request.Request(
             f"{self._base}/{op}",
             data=json.dumps(body).encode(),
@@ -177,6 +179,7 @@ class PlatformMemory:
             headers={
                 "content-type": "application/json",
                 "authorization": f"Bearer {self._token}",
+                **turn,
             },
         )
         try:
@@ -184,7 +187,14 @@ class PlatformMemory:
                 raw = resp.read()
                 status = resp.status
         except urllib.error.HTTPError as exc:
-            detail = _error_detail(exc.read())
+            body = exc.read()
+            if exc.code == 402:
+                from ..storage_limit import storage_limit_from_body  # circular at import time
+
+                limit = storage_limit_from_body(op, exc.code, body)
+                if limit is not None:
+                    raise limit from None
+            detail = _error_detail(body)
             raise PlatformMemoryError(op, exc.code, detail) from None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise PlatformMemoryError(op, 0, str(exc)) from None
