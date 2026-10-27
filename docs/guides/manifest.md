@@ -75,18 +75,58 @@ platform doesn't use it, so set who an agent serves in the dashboard.
 ```toml
 [content]
 required = true
+data = ["knowledge.json", "flows/**"]
 ```
 
 | Key | Required | Default | Meaning |
 |-----|----------|---------|---------|
 | `required` | no | `false` | `true` when the agent can't serve without content supplied by the workspace that installs it. |
+| `data` | no | `[]` | Globs, relative to the content folder, of the files your code reads by path. |
 
 Use it for a generic agent whose business comes from its installer: a persona,
 knowledge, rules. With `required = true` the platform doesn't serve the agent
-until that content is in place. How the agent reads that content is up to the
-agent. `required` must be `true` or `false` (not a string), and any other key
-in `[content]` is an error, which also means an SDK release that adds a key is
-needed before a manifest can use it.
+until that content is in place. `required` must be `true` or `false` (not a
+string), and any other key in `[content]` is an error, which also means an SDK
+release that adds a key is needed before a manifest can use it.
+
+**Data files.** The workspace chooses, per file, whether it is *loaded* (meant
+to go into the agent's context whole) or *retrieved* (searched when needed,
+not in the content folder). A file your code opens by name, such as a JSON
+knowledge base or a graph, must always be there, so list it in `data`: the
+workspace sees it as used by the agent and can't change it, and it is never
+returned as a loaded file. Data files have their own size limit.
+
+In a glob, `*` matches any characters within one name, `?` one character, and
+a `**` segment any number of folders (`flows/**`, `**/*.json`). Matching is
+case-sensitive. A glob must be relative, use `/` between folders, and have no
+`.` or `..` folders; brackets and braces aren't supported. At most 100 globs.
+
+**Reading loaded files.** `genfleet.sdk.content.loaded_files()` returns the
+loaded text files as `LoadedFile(path, text)` tuples, sorted by path, and
+`loaded_prompt()` renders them as one block with a `--- path ---` header per
+file, ready for a system prompt:
+
+```python
+from genfleet.sdk.content import loaded_prompt
+
+def build_agent(remote_tools=()):
+    return Agent(role=loaded_prompt(exclude=["knowledge.json", "flows/**"]), ...)
+```
+
+They read the content folder: the `root` you pass, else `$CONTENT_DIR`, else
+`/content`. Only that last default may be missing (no files); a folder you
+named that doesn't exist is an error. Text files are `.md`, `.markdown`,
+`.txt`, `.json`, `.toml`, `.yaml`, `.yml`, `.csv`, `.html` and `.htm` that are
+valid UTF-8; other files are never returned (a text file that isn't UTF-8 is
+logged). On the platform only the files the workspace set to loaded are
+returned, and `data` files are already left out, so `exclude=` only matters
+for local runs against a plain folder, where every text file counts as
+loaded: pass it the same globs as `data`. Paths and globs are compared
+NFC-normalised. A loaded file over 4 MiB is left out with a logged warning,
+and reading stops (with a warning) at the first file that would take the
+loaded files past 8 MiB together, so you always get a prefix of the sorted
+eligible files (skipped files can sit in between); both caps are far above
+what fits in an agent's context.
 
 ### `[tools]` and `[mcps]`
 
