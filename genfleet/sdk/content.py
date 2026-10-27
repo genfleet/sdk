@@ -272,10 +272,10 @@ def loaded_files(
     A loaded file over ``MAX_LOADED_FILE_BYTES`` (4 MiB) is left out with a
     logged warning; at the first file that would take the loaded files past
     ``MAX_LOADED_TOTAL_BYTES`` (8 MiB) together, reading stops, so what is
-    returned is always a prefix of the sorted paths (sizes are checked
-    before reading): far
-    above any plan's loaded budget, well below the platform's 64 MB mounted
-    cap, so they bound what an agent reads without failing its start.
+    returned is always a prefix of the sorted eligible files (skipped files
+    can sit in between). Sizes are checked before reading. Both caps are far
+    above any plan's loaded budget and well below the platform's 64 MB
+    mounted cap, so they bound what an agent reads without failing its start.
 
     Raises ``ContentError`` when the modes file is malformed, is a symlink,
     or names a path that is hidden, escapes the content folder, or isn't
@@ -317,7 +317,7 @@ def loaded_files(
             if text is None:
                 continue
             if total + size > MAX_LOADED_TOTAL_BYTES:
-                # Stop here, so the loaded set is always a prefix of the sorted paths.
+                # Stop here, so the loaded set is always a prefix of the sorted eligible files.
                 log.warning(
                     "content file %s would pass %d loaded bytes; it and the files after it are not loaded",
                     _shown(path),

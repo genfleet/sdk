@@ -125,7 +125,8 @@ loaded: pass it the same globs as `data`. Paths and globs are compared
 NFC-normalised. A loaded file over 4 MiB is left out with a logged warning,
 and reading stops (with a warning) at the first file that would take the
 loaded files past 8 MiB together, so you always get a prefix of the sorted
-paths; both are far above what fits in an agent's context.
+eligible files (skipped files can sit in between); both caps are far above
+what fits in an agent's context.
 
 ### `[tools]` and `[mcps]`
 
