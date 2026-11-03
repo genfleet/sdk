@@ -136,23 +136,39 @@ async def staff_directory() -> list[StaffMember]:
 async def escalate_tool(to: list[str], text: str) -> str:
     """The model-facing form: plain answers the model can act on, never an
     exception that ends its turn. An outcome the platform could not confirm
-    says so, so the model does not page staff twice."""
+    says so, so the model does not page staff twice.
+
+    Every answer is a fixed string. The platform's own refusal text and the
+    recipients' names never pass through: on a customer-facing turn the
+    model could repeat them to the customer. Agent code that needs names
+    reads :func:`staff_directory`."""
     try:
         result = await escalate(to, text)
-    except ValueError as exc:
-        return f"not sent: {exc}"
+    except ValueError:
+        return f"not sent: invalid request; `to` is 1 to {MAX_RECIPIENTS} staff names, roles or \"default\", and `text` is at most {MAX_TEXT} characters"
     except EscalationError as exc:
-        if exc.code == "already_escalated":
-            return "already escalated: staff were already alerted about this conversation; do not resend"
         if exc.delivery_unknown:
-            return "delivery unknown, do not resend"
-        return f"not sent: {exc}"
+            return _DELIVERY_UNKNOWN
+        return _TOOL_REFUSALS.get(exc.code or "", _NOT_SENT)
     if result.outcome == "sent":
-        skipped = [r.name for r in result.recipients if r.outcome == "already_escalated"]
-        return "sent" + (f" (already escalated to {', '.join(skipped)})" if skipped else "")
+        skipped = any(r.outcome == "already_escalated" for r in result.recipients)
+        return "sent (some staff were already alerted about this conversation)" if skipped else "sent"
     if result.outcome == "unknown":
-        return "delivery unknown, do not resend"
-    return "not sent: staff could not be reached; tell the person you could not pass it on right now"
+        return _DELIVERY_UNKNOWN
+    return _NOT_SENT
+
+
+_DELIVERY_UNKNOWN = "delivery unknown, do not resend"
+_NOT_SENT = "not sent: staff could not be reached; tell the person you could not pass it on right now"
+#: The tool's answer per refusal code: fixed words, never the platform's message.
+_TOOL_REFUSALS = {
+    "already_escalated": "already escalated: staff were already alerted about this conversation; do not resend",
+    "unknown_recipient": 'not sent: unknown recipient; use "default" or a role from staff_directory()',
+    "rate_limited": "not sent: too many alerts to staff right now; do not retry, tell the person someone will follow up",
+    "invalid_request": "not sent: invalid request; check `to` and `text`",
+    "no_session": "not sent: there is no conversation to escalate",
+    "not_in_sandbox": "not sent: escalation needs the platform; it is not available here",
+}
 
 
 def _escalate(targets: list[str], text: str, session: str | None) -> EscalationResult:

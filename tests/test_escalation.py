@@ -153,12 +153,15 @@ async def test_staff_directory_is_names_and_roles(proxy):
         ((200, SENT), "sent"),
         (
             (200, {"outcome": "sent", "recipients": [{"name": "A", "outcome": "already_escalated"}, {"name": "B", "outcome": "sent"}]}),
-            "sent (already escalated to A)",
+            "sent (some staff were already alerted about this conversation)",
         ),
         ((200, {"outcome": "unknown", "recipients": []}), "delivery unknown, do not resend"),
         ((200, {"outcome": "not_sent", "recipients": []}), "not sent: staff could not be reached; tell the person you could not pass it on right now"),
         ((409, {"error": "already", "code": "already_escalated"}), "already escalated: staff were already alerted about this conversation; do not resend"),
-        ((404, {"error": "No staff member matches \"Mona\". Valid: Ahmed, default.", "code": "unknown_recipient"}), 'not sent: No staff member matches "Mona". Valid: Ahmed, default.'),
+        ((404, {"error": "No staff member matches. Use one of: role:sales, default.", "code": "unknown_recipient"}), 'not sent: unknown recipient; use "default" or a role from staff_directory()'),
+        ((429, {"error": "This agent has alerted staff 30 times", "code": "rate_limited"}), "not sent: too many alerts to staff right now; do not retry, tell the person someone will follow up"),
+        ((422, {"error": "Ahmed's text was bad", "code": "invalid_request"}), "not sent: invalid request; check `to` and `text`"),
+        ((403, {"error": "some new refusal naming Ahmed", "code": "something_new"}), "not sent: staff could not be reached; tell the person you could not pass it on right now"),
         ((502, {"error": "channels backend error"}), "delivery unknown, do not resend"),
         ((200, {"nonsense": True}), "delivery unknown, do not resend"),
     ],
@@ -173,7 +176,21 @@ async def test_the_tool_answers_in_plain_words(proxy, response, answer):
 async def test_the_tool_outside_a_sandbox_is_not_sent(monkeypatch):
     monkeypatch.delenv(CHANNELS_URL_ENV, raising=False)
     result = await escalate_tool(to=["default"], text="help")
-    assert result.startswith("not sent: escalate needs a platform sandbox")
+    assert result == "not sent: escalation needs the platform; it is not available here"
+
+
+@pytest.mark.asyncio
+async def test_the_tool_never_passes_names_or_platform_words_through(proxy):
+    """On a customer-facing turn the model may repeat whatever the tool answers."""
+    answers = []
+    for response in [
+        (404, {"error": "Valid: Ahmed Ali, role:sales", "code": "unknown_recipient"}),
+        (200, {"outcome": "sent", "recipients": [{"name": "Ahmed Ali", "outcome": "already_escalated"}, {"name": "Sara", "outcome": "sent"}]}),
+        (200, {"outcome": "not_sent", "recipients": [{"name": "Ahmed Ali", "outcome": "not_sent"}]}),
+    ]:
+        _Proxy.response = response
+        answers.append(await _turn.call_within({"session_id": "s"}, escalate_tool(to=["role:sales"], text="help")))
+    assert not any("Ahmed" in a or "Sara" in a or "Valid" in a for a in answers)
 
 
 def test_the_tool_schema_takes_names_and_text_only():

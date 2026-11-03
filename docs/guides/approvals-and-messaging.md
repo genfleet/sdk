@@ -317,7 +317,7 @@ await staff_directory()  # [StaffMember(name="Ahmed", role="sales", is_default=T
 - `to` is one entry or a list of up to 5: a staff member's name (matched
   without case), `"role:<role>"` (everyone with that role) or `"default"`.
   Every entry must name someone, or nothing is sent and the refusal lists the
-  valid names and roles.
+  valid roles (never names: use `staff_directory()` for those).
 - `text` is plain text, at most 4000 characters. Say who the person is, what
   they need and what you already told them.
 - `session` is the conversation the alert is about. By default it is the
@@ -336,7 +336,7 @@ agent alerts staff at most 30 times an hour.
 ### `EscalationError`
 
 A subclass of `ChannelSendError`. `code` is `unknown_recipient` (the message
-lists the valid names and roles), `already_escalated` (everyone named was
+lists the valid roles and `default`), `already_escalated` (everyone named was
 already alerted about this conversation: do not resend), `rate_limited`,
 `invalid_request`, `no_session` (no session given and no turn running),
 `not_in_sandbox` outside the platform, or None. With no code,
@@ -351,15 +351,18 @@ agent = Agent(role="…", model={…}, tools=[escalate_tool])
 ```
 
 A tool named `escalate` taking `to` (a list of names, `role:<role>` or
-`default`) and `text`, for the running conversation. It answers in plain
-words the model can act on: `sent`, `already escalated: …; do not resend`,
-`delivery unknown, do not resend`, or `not sent: <reason>` (an unknown name
-comes back with the valid ones). Unlike `send_message_tool`, it is offered to
+`default`) and `text`, for the running conversation. It answers in fixed
+plain words the model can act on: `sent`, `already escalated: …; do not
+resend`, `delivery unknown, do not resend`, or `not sent: …` (for an unknown
+name: `not sent: unknown recipient; use "default" or a role from
+staff_directory()`). It never repeats the platform's message or a staff
+member's name, so a customer-facing model has nothing of the staff list to
+pass on. Unlike `send_message_tool`, it is offered to
 customers as well as operators: the model can only pick people from the
 workspace's own staff list, and the platform bounds how often they are
-alerted. Put the staff names and roles in the agent's instructions (from
-`staff_directory()`, or written into its prompt) so the model picks the
-right person; `default` works when it does not know.
+alerted. To let the model pick a person or a role, put the names and roles
+you want it to use in the agent's instructions (for example from
+`staff_directory()`); `default` works when it does not know.
 
 Run locally, `escalate` raises `EscalationError` with code `not_in_sandbox`
 and the tool answers `not sent: …`.

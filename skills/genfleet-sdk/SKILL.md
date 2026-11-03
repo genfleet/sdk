@@ -193,10 +193,10 @@ from genfleet.sdk import EscalationError, escalate, escalate_tool, staff_directo
 result = await escalate(["role:sales"], "Mona wants a quote; waiting for a call.")  # session defaults to the turn's session_id
 result.outcome                 # "sent" | "unknown" | "not_sent"
 await staff_directory()        # [StaffMember(name, role, is_default), ...]
-agent = Agent(..., tools=[escalate_tool])   # operators and customers; answers "sent", "already escalated", "delivery unknown, do not resend" or "not sent: ..."
+agent = Agent(..., tools=[escalate_tool])   # operators and customers; fixed answers "sent", "already escalated: ...", "delivery unknown, do not resend" or "not sent: ...", never names
 ```
 
-`to` is up to 5 of: a staff name (any case), `"role:<role>"`, `"default"`; every entry must name someone. `text` is plain, at most 4000 characters. The platform alerts each person once per conversation per 10 minutes (3 tries if not reached) and at most 30 times an hour per agent. `EscalationError` (a `ChannelSendError`) codes: `unknown_recipient` (message lists valid names), `already_escalated`, `rate_limited`, `invalid_request`, `no_session`, `not_in_sandbox`; no code means `delivery_unknown`: do not resend.
+`to` is up to 5 of: a staff name (any case), `"role:<role>"`, `"default"`; every entry must name someone. `text` is plain, at most 4000 characters. The platform alerts each person once per conversation per 10 minutes (3 tries if not reached) and at most 30 times an hour per agent. `EscalationError` (a `ChannelSendError`) codes: `unknown_recipient` (message lists valid roles, never names), `already_escalated`, `rate_limited`, `invalid_request`, `no_session`, `not_in_sandbox`; no code means `delivery_unknown`: do not resend.
 
 ## Files and parts (0.20)
 
