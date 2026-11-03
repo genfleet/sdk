@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- **Added: `escalate`, `staff_directory` and `escalate_tool`** (`genfleet.sdk`, module `genfleet.sdk.escalation`). An agent alerts the workspace's staff about a conversation by naming them: a staff member's name (any case), `"role:<role>"` or `"default"`, at most 5. The platform delivers to your workspace's staff; the agent never sees or names an address. `escalate(to, text, *, session=None)` takes plain text of at most 4000 characters and the conversation's session, by default the running turn's `session_id`, and returns an `EscalationResult` (`outcome`: `sent`, `unknown` or `not_sent`, the best of the people reached; `recipients`: an `EscalationRecipient(name, outcome)` per person named, `already_escalated` for one skipped). The platform alerts each person once per conversation per 10 minutes (up to 3 tries when they were not reached) and at most 30 times an hour per agent. Refusals raise `EscalationError`, a `ChannelSendError`, with code `unknown_recipient` (the message lists the valid names and roles), `already_escalated`, `rate_limited`, `invalid_request`, `no_session` or `not_in_sandbox`; with no code, `delivery_unknown` says the alert may have gone out. `staff_directory()` returns `StaffMember(name, role, is_default)` for the agent's workspace. `escalate_tool` is the model-facing form (tool `escalate`, parameters `to` and `text`), offered to operators and customers, answering `sent`, `already escalated: …`, `delivery unknown, do not resend` or `not sent: <reason>`.
+- **Changed:** `send_message`'s HTTP call is shared with the new escalation calls; its behaviour and errors are unchanged.
+
 ## 0.25.0
 
 Everything since 0.24.0: workspace content for agents, the `[content]` manifest table (#95) with `data` globs and `genfleet.sdk.content` (#99), `StorageLimitExceeded` (#98), and the turn id on platform memory and state calls (#96).

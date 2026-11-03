@@ -14,6 +14,15 @@ from .caller import (
     tool_audiences_of,
 )
 from .channels import ChannelSendError, send_message, send_message_tool
+from .escalation import (
+    EscalationError,
+    EscalationRecipient,
+    EscalationResult,
+    StaffMember,
+    escalate,
+    escalate_tool,
+    staff_directory,
+)
 from .confirmations import (
     APPROVAL_KEY_ENV,
     APPROVED_CALL_KEY,
@@ -186,4 +195,12 @@ __all__ = [
     "send_message",
     "send_message_tool",
     "ChannelSendError",
+    # Escalation
+    "escalate",
+    "escalate_tool",
+    "staff_directory",
+    "EscalationError",
+    "EscalationResult",
+    "EscalationRecipient",
+    "StaffMember",
 ]
