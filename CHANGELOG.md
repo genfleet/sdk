@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- **Added: agent views** (`genfleet.sdk.views`, guide `docs/guides/views.md`). An agent serves its own pages to the workspace that installed it. `genfleet.toml` takes `[agent] views_app = "module:symbol"` and `[[views]]` tables (`id`, `title`, `path`, `min_role` of `owner`, `admin` or `member`, default `admin`; at most 8; `ViewSpec`, `AgentManifest.views`, `AgentManifest.views_app`; `[[views]]` without `views_app` is a `ManifestError`). `Views` is the ASGI app: `static(path, directory)` for the page, script and style (served without a viewer) and `@route(path, methods=, min_role=)` for data, whose handler gets the signed-in `Viewer(user_id, role, view)` and which answers 401 without one and 403 below its `min_role`. `viewer_from_headers`, `role_meets`, and the header names `VIEWER_ID_HEADER`, `VIEWER_ROLE_HEADER`, `VIEW_ID_HEADER`. `dev_server` / `dev_app` and `python -m genfleet.sdk.views module:views` serve views locally with a fake viewer and the platform's security headers (`SECURITY_HEADERS`: no inline script or style). Needs the `serve` extra.
+
 ## 0.26.0 — 2026-11-05
 
 Staff escalation: `escalate`, `staff_directory` and the model-facing `escalate_tool`.

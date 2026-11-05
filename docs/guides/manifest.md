@@ -289,3 +289,9 @@ def test_manifest():
     assert manifest.name == "support"
     assert [ref.slug for ref in manifest.tools] == ["@acme/tickets"]
 ```
+
+## `[[views]]` and `views_app`
+
+Pages the agent serves to the workspace. `[agent] views_app` names the ASGI
+app (`module:symbol`); each `[[views]]` table has `id`, `title`, `path` and
+`min_role`. See [Agent views](views.md).
