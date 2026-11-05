@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.26.0 — 2026-11-05
+
+Staff escalation: `escalate`, `staff_directory` and the model-facing `escalate_tool`.
+
 - **Added: `escalate`, `staff_directory` and `escalate_tool`** (`genfleet.sdk`, module `genfleet.sdk.escalation`). An agent alerts the workspace's staff about a conversation by naming them: a staff member's name (any case), `"role:<role>"` or `"default"`, at most 5. The platform delivers to your workspace's staff; the agent never sees or names an address. `escalate(to, text, *, session=None)` takes plain text of at most 4000 characters and the conversation's session, by default the running turn's `session_id`, and returns an `EscalationResult` (`outcome`: `sent`, `unknown` or `not_sent`, the best of the people reached; `recipients`: an `EscalationRecipient(name, outcome)` per person named, `already_escalated` for one skipped). The platform alerts each person once per conversation per 10 minutes (up to 3 tries when they were not reached) at most 10 times an hour per conversation, and at most 30 times an hour per agent. Refusals raise `EscalationError`, a `ChannelSendError`, with code `unknown_recipient` (the message lists the valid roles and `default`, never names), `already_escalated`, `rate_limited`, `invalid_request`, `no_session` or `not_in_sandbox`; with no code, `delivery_unknown` says the alert may have gone out. `staff_directory()` returns `StaffMember(name, role, is_default)` for the agent's workspace. `escalate_tool` is the model-facing form (tool `escalate`, parameters `to` and `text`), offered to operators and customers, answering only fixed strings and told to write `text` in its own words (`sent`, `already escalated: …`, `delivery unknown, do not resend`, `not sent: unknown recipient; use "default" or a name or role from your instructions` and the like): never the platform's message or a staff name.
 - **Changed:** `send_message`'s HTTP call is shared with the new escalation calls; its behaviour and errors are unchanged.
 
