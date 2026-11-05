@@ -56,7 +56,6 @@ Requires the ``serve`` extra: ``pip install 'genfleet-sdk[serve]'``.
 
 from __future__ import annotations
 
-import inspect
 import json
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -75,7 +74,8 @@ MinRole = Literal["owner", "admin", "member"]
 MIN_ROLES: tuple[MinRole, ...] = ("owner", "admin", "member")
 _MEMBER_ROLES = frozenset({"owner", "admin", "developer", "billing", "member", "viewer"})
 
-#: The security headers the platform sends with every view response, as the dev server sends them.
+#: The security headers the platform sends with every view response (``frame-ancestors`` names
+#: the app, which the dev server has none of), as the dev server sends them.
 SECURITY_HEADERS = {
     "content-security-policy": (
         "default-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; object-src 'none'"
@@ -83,7 +83,23 @@ SECURITY_HEADERS = {
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "cross-origin-opener-policy": "same-origin",
+    "cross-origin-resource-policy": "same-origin",
 }
+
+#: The only headers of yours the platform passes to the browser. ``set-cookie``,
+#: CORS, framing and your own CSP are dropped; a ``location`` only when relative.
+PASSED_RESPONSE_HEADERS = ("content-type", "content-language", "etag", "last-modified", "location", "content-disposition")
+
+
+def cache_control_for(content_type: str | None) -> str:
+    """``private, no-store`` for HTML and JSON (and untyped), ``private, no-cache`` otherwise, as the platform sets it."""
+    kind = (content_type or "").lower()
+    return "private, no-store" if kind == "" or kind.startswith("text/html") or "json" in kind else "private, no-cache"
+
+
+def _relative_location(value: str) -> bool:
+    lowered = value.lower()
+    return "://" not in lowered and not value.startswith(("//", "/\\")) and not lowered.startswith(("javascript:", "data:"))
 
 
 def role_meets(role: str, min_role: MinRole) -> bool:
@@ -137,8 +153,13 @@ def _starlette() -> Any:
 class Views:
     """The ASGI app that serves an agent's views. Name it in ``[agent] views_app``."""
 
-    def __init__(self) -> None:
+    def __init__(self, root: str | Path | None = None) -> None:
+        """``root``: where relative ``static`` directories are found, usually
+        ``Path(__file__).parent`` of the module that builds the app (the
+        sandbox's working directory is not the agent's folder)."""
+        self._root = Path(root).resolve() if root is not None else None
         self._routes: list[Any] = []
+        self._mounts: list[tuple[str, Any]] = []
         self._app: Any = None
 
     def static(self, path: str, directory: str | Path, *, html: bool = True) -> None:
@@ -146,14 +167,20 @@ class Views:
 
         Static files load without a viewer: put your page, script and style
         here, and your data behind :meth:`route`. A relative ``directory`` is
-        resolved from the module that calls this.
+        resolved against the ``root`` given to :class:`Views` (a relative one
+        without a ``root`` is an error).
+
+        The page lives at ``path + "/"``: the bare ``path`` answers with a
+        relative redirect there, so the page's relative URLs (``app.js``,
+        ``genfleet.fetch("api/...")``) resolve inside the view.
         """
-        _, _, routing, staticfiles = _starlette()
+        _, _, _, staticfiles = _starlette()
         folder = Path(directory)
         if not folder.is_absolute():
-            caller = Path(inspect.stack()[1].filename).resolve().parent
-            folder = caller / folder
-        self._routes.append(routing.Mount(_route_path(path), app=staticfiles.StaticFiles(directory=folder, html=html)))
+            if self._root is None:
+                raise ValueError("a relative static directory needs Views(root=Path(__file__).parent)")
+            folder = self._root / folder
+        self._mounts.append((_route_path(path), staticfiles.StaticFiles(directory=folder, html=html)))
         self._app = None
 
     def route(self, path: str, *, methods: list[str] | None = None, min_role: MinRole = "member") -> Callable[[Handler], Handler]:
@@ -188,11 +215,31 @@ class Views:
 
     def asgi(self) -> Any:
         if self._app is None:
-            applications, _, routing, _ = _starlette()
-            # Routes before static mounts, so `/team/api/...` is never shadowed by `/team`.
-            mounts = [r for r in self._routes if isinstance(r, routing.Mount)]
-            ordered = [r for r in self._routes if not isinstance(r, routing.Mount)] + mounts
-            self._app = applications.Starlette(routes=ordered)
+            applications, responses, routing, _ = _starlette()
+
+            def to_slash(path: str) -> Any:
+                # Relative, so it works under whatever prefix the platform
+                # mounts the app at; Starlette's own slash redirect is absolute.
+                target = (path.rsplit("/", 1)[-1] or ".") + "/"
+
+                async def redirect(request: Any) -> Any:
+                    return responses.Response(status_code=307, headers={"location": target})
+
+                return redirect
+
+            # Data routes first, then each mount's bare-path redirect, then the
+            # mounts, longest path first, so `/team/api/...` and `/team/admin`
+            # are never shadowed by `/team`, whatever order they were added in.
+            mounts = sorted(self._mounts, key=lambda m: len(m[0]), reverse=True)
+            ordered = [
+                *self._routes,
+                *(routing.Route(p, to_slash(p), methods=["GET", "HEAD"]) for p, _ in mounts if p != "/"),
+                *(routing.Mount(p if p != "/" else "", app=a) for p, a in mounts),
+            ]
+            app = applications.Starlette(routes=ordered)
+            # No absolute redirects to a URL the platform would drop.
+            app.router.redirect_slashes = False
+            self._app = app
         return self._app
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
@@ -206,23 +253,34 @@ def _route_path(path: str) -> str:
 
 
 #: The dev server's stand-in for the platform script: same API, no handshake.
+#: ``genfleet.fetch`` sends a dev bearer token, which is what makes the dev
+#: server stamp the viewer, as the platform does only for a token.
 DEV_CLIENT_SCRIPT = (
     "(function(){window.genfleet=Object.freeze({"
-    "fetch:function(i,o){return fetch(i,o)},ready:function(){return Promise.resolve()},"
+    "fetch:function(i,o){o=o||{};var h=new Headers(o.headers||{});h.set('Authorization','Bearer dev');"
+    "return fetch(i,Object.assign({},o,{headers:h,credentials:'omit'}))},"
+    "ready:function(){return Promise.resolve()},"
     "navigate:function(p){console.log('genfleet.navigate',p)}})})();"
 )
 
+_SAFE_METHODS = frozenset({"GET", "HEAD"})
+_VIEWER_HEADER_NAMES = {VIEWER_ID_HEADER.encode(), VIEWER_ROLE_HEADER.encode(), VIEW_ID_HEADER.encode()}
+
 
 def dev_app(views: Views, viewer: Viewer | None) -> Any:
-    """``views`` as the platform would serve it, for local runs.
+    """``views`` as the platform would serve it, for local runs and tests.
 
-    Every request gets ``viewer`` (``None``: none, like the page's first
-    load), any viewer header the browser sent is replaced, ``/__gf/view.js``
-    is a stand-in for the platform script, and every response carries the
-    platform's security headers, so an inline script fails here as it would
-    on the platform.
+    - A request with ``Authorization: Bearer …`` (``genfleet.fetch`` in the
+      stand-in script sends one) gets ``viewer``; one without gets no viewer,
+      like the page's first load. The bearer is removed, and any viewer
+      header the browser sent is replaced.
+    - ``POST``/``PUT``/``PATCH``/``DELETE`` without a bearer: 401, as on the platform.
+    - Only ``PASSED_RESPONSE_HEADERS`` of yours reach the browser (a
+      ``location`` only when relative), then ``SECURITY_HEADERS`` and
+      ``cache-control``, once each: an inline script fails here as it would
+      on the platform.
+    - ``/__gf/view.js`` is a stand-in for the platform script.
     """
-    stamped = viewer
 
     async def app(scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -231,19 +289,29 @@ def dev_app(views: Views, viewer: Viewer | None) -> Any:
         if scope["path"] == CLIENT_SCRIPT_PATH:
             await _send(send, 200, DEV_CLIENT_SCRIPT.encode(), "application/javascript")
             return
-        drop = {VIEWER_ID_HEADER.encode(), VIEWER_ROLE_HEADER.encode(), VIEW_ID_HEADER.encode()}
-        headers = [(k, v) for k, v in scope.get("headers", []) if k.lower() not in drop]
-        if stamped is not None:
+        incoming = scope.get("headers", [])
+        signed_in = any(k.lower() == b"authorization" and v.lower().startswith(b"bearer ") for k, v in incoming)
+        if not signed_in and scope.get("method", "GET") not in _SAFE_METHODS:
+            await _send(send, 401, b'{"error":"token_required"}', "application/json")
+            return
+        headers = [(k, v) for k, v in incoming if k.lower() not in _VIEWER_HEADER_NAMES and k.lower() != b"authorization"]
+        if signed_in and viewer is not None:
             headers += [
-                (VIEWER_ID_HEADER.encode(), stamped.user_id.encode()),
-                (VIEWER_ROLE_HEADER.encode(), stamped.role.encode()),
-                (VIEW_ID_HEADER.encode(), stamped.view.encode()),
+                (VIEWER_ID_HEADER.encode(), viewer.user_id.encode()),
+                (VIEWER_ROLE_HEADER.encode(), viewer.role.encode()),
+                (VIEW_ID_HEADER.encode(), viewer.view.encode()),
             ]
 
         async def secured(message: Any) -> None:
             if message["type"] == "http.response.start":
-                kept = [(k, v) for k, v in message.get("headers", []) if k.lower() != b"content-security-policy"]
-                message = {**message, "headers": kept + [(k.encode(), v.encode()) for k, v in SECURITY_HEADERS.items()]}
+                agent = {k.decode().lower(): v.decode() for k, v in message.get("headers", [])}
+                kept = {
+                    name: agent[name]
+                    for name in PASSED_RESPONSE_HEADERS
+                    if name in agent and (name != "location" or _relative_location(agent[name]))
+                }
+                out = {**kept, **SECURITY_HEADERS, "cache-control": cache_control_for(agent.get("content-type"))}
+                message = {**message, "headers": [(k.encode(), v.encode()) for k, v in out.items()]}
             await send(message)
 
         await views({**scope, "headers": headers}, receive, secured)
@@ -252,13 +320,17 @@ def dev_app(views: Views, viewer: Viewer | None) -> Any:
 
 
 async def _send(send: Any, status: int, body: bytes, content_type: str) -> None:
-    headers = [(b"content-type", content_type.encode())] + [(k.encode(), v.encode()) for k, v in SECURITY_HEADERS.items()]
-    await send({"type": "http.response.start", "status": status, "headers": headers})
+    headers = {"content-type": content_type, **SECURITY_HEADERS, "cache-control": cache_control_for(content_type)}
+    await send({"type": "http.response.start", "status": status, "headers": [(k.encode(), v.encode()) for k, v in headers.items()]})
     await send({"type": "http.response.body", "body": body})
 
 
 def dev_server(views: Views, *, viewer: Viewer | None = None, host: str = "127.0.0.1", port: int = 8765) -> None:
-    """Serve ``views`` locally with a fake viewer (default: an admin on the first view). Blocks."""
+    """Serve ``views`` locally (``dev_app``) on ``host:port``. Blocks.
+
+    ``viewer`` is stamped on token-bearing requests; by default user
+    ``dev-user``, role ``admin``, view ``dev``.
+    """
     import uvicorn
 
     uvicorn.run(dev_app(views, viewer or Viewer(user_id="dev-user", role="admin", view="dev")), host=host, port=port)

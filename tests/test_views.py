@@ -7,6 +7,9 @@ import pytest
 
 from genfleet.sdk.manifest import ManifestError, load_agent_manifest
 from genfleet.sdk.views import SECURITY_HEADERS, Viewer, Views, dev_app, role_meets, viewer_from_headers
+from starlette.applications import Starlette
+from starlette.routing import Mount
+from starlette.responses import Response
 
 MANIFEST = """
 [agent]
@@ -102,15 +105,71 @@ async def test_static_page_loads_without_a_viewer(tmp_path):
     assert res.status_code == 200 and "/__gf/view.js" in res.text
 
 
-async def test_dev_server_fakes_the_viewer_replaces_spoofs_and_sends_the_platform_csp(tmp_path):
+async def test_dev_server_stamps_the_viewer_only_for_a_token_and_replaces_spoofs(tmp_path):
     app = dev_app(make_views(tmp_path), Viewer("dev", "member", "team"))
-    res = await call(app, "GET", "/team/api/me", headers={"x-genfleet-viewer-role": "owner"})
+    anonymous = await call(app, "GET", "/team/api/me", headers={"x-genfleet-viewer-id": "u", "x-genfleet-viewer-role": "owner", "x-genfleet-view": "team"})
+    assert anonymous.status_code == 401
+    res = await call(app, "GET", "/team/api/me", headers={"authorization": "Bearer dev", "x-genfleet-viewer-role": "owner"})
     assert res.json() == {"user": "dev", "role": "member"}
-    assert res.headers["content-security-policy"] == SECURITY_HEADERS["content-security-policy"]
-    assert "unsafe-inline" not in res.headers["content-security-policy"]
+    assert (await call(app, "POST", "/team/api/save")).status_code == 401
     script = await call(app, "GET", "/__gf/view.js")
-    assert script.status_code == 200 and "genfleet" in script.text
-    assert (await call(dev_app(make_views(tmp_path), None), "GET", "/team/api/me")).status_code == 401
+    assert script.status_code == 200 and "Bearer dev" in script.text
+
+
+async def test_dev_server_sends_the_platform_headers_once_and_drops_the_agents(tmp_path):
+    views = make_views(tmp_path)
+
+    @views.route("/team/api/cookie")
+    async def cookie(request, viewer):
+        return Response("x", media_type="text/plain", headers={"set-cookie": "a=b; Domain=views.test", "access-control-allow-origin": "*",
+                                      "content-security-policy": "default-src *", "location": "https://evil.example/"})
+
+    res = await call(dev_app(views, Viewer("dev", "admin", "team")), "GET", "/team/api/cookie", headers={"authorization": "Bearer dev"})
+    for dropped in ("set-cookie", "access-control-allow-origin", "location"):
+        assert dropped not in res.headers
+    assert res.headers.get_list("content-security-policy") == [SECURITY_HEADERS["content-security-policy"]]
+    assert "unsafe-inline" not in res.headers["content-security-policy"]
+    assert res.headers["cross-origin-resource-policy"] == "same-origin"
+    assert res.headers["cache-control"] == "private, no-cache"
+    page = await call(dev_app(views, None), "GET", "/team/")
+    assert page.headers["cache-control"] == "private, no-store"
+
+
+async def test_the_bare_view_path_redirects_relatively_under_a_mount(tmp_path):
+    host = Starlette(routes=[Mount("/views", app=make_views(tmp_path))])
+    bare = await call(host, "GET", "/views/team")
+    assert bare.status_code == 307 and bare.headers["location"] == "team/"
+    assert httpx.URL("http://v/views/team").join(bare.headers["location"]).path == "/views/team/"
+    page = await call(host, "GET", "/views/team/")
+    assert page.status_code == 200 and "app.js" in page.text
+    # The page's relative URLs land inside the view.
+    assert httpx.URL("http://v/views/team/").join("api/me").path == "/views/team/api/me"
+    assert (await call(host, "GET", "/views/team/api/me", headers={"x-genfleet-viewer-id": "u", "x-genfleet-viewer-role": "admin", "x-genfleet-view": "team"})).status_code == 200
+
+
+async def test_no_path_traversal_out_of_a_static_folder(tmp_path):
+    (tmp_path / "secret.txt").write_text("nope")
+    views = make_views(tmp_path)
+    for path in ("/team/../secret.txt", "/team/%2e%2e/secret.txt", "/team/..%2fsecret.txt"):
+        res = await call(views, "GET", path)
+        assert res.status_code == 404 and "nope" not in res.text, path
+
+
+def test_static_mounts_are_ordered_longest_first(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    views = Views()
+    views.static("/team", tmp_path / "a")
+    views.static("/team/admin", tmp_path / "b")
+    paths = [getattr(r, "path", None) for r in views.asgi().routes]
+    assert paths.index("/team/admin") < paths.index("/team")
+
+
+def test_a_relative_static_folder_needs_a_root(tmp_path):
+    with pytest.raises(ValueError, match="root"):
+        Views().static("/team", "static/team")
+    (tmp_path / "static").mkdir()
+    Views(root=tmp_path).static("/team", "static")
 
 
 def test_view_paths_are_checked():

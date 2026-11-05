@@ -30,9 +30,11 @@ request outside every declared `path` is refused.
 ## Serve them
 
 ```python
+from pathlib import Path
+
 from genfleet.sdk.views import Viewer, Views
 
-views = Views()
+views = Views(root=Path(__file__).parent)
 views.static("/team", "static/team")      # index.html, app.js, app.css
 
 @views.route("/team/api/roster")
@@ -47,7 +49,9 @@ async def save(request, viewer: Viewer):
 ```
 
 - `static` files load without a viewer. They are your page, script and
-  style; keep data out of them.
+  style; keep data out of them. A relative folder is found under `root`.
+- The page is `path + "/"` (`/team/`); the bare `/team` redirects there, so
+  the page's relative URLs (`app.js`, `api/roster`) stay inside the view.
 - A `route` handler gets the signed-in `Viewer` (`user_id`, `role`, `view`).
   It answers 401 when there is no viewer and 403 when the role is below the
   route's `min_role`. Return a dict or list for JSON, or any Starlette
@@ -94,7 +98,12 @@ pip install 'genfleet-sdk[serve]'
 python -m genfleet.sdk.views sales_views:views --role admin --view team
 ```
 
-It serves your views on `http://127.0.0.1:8765/` with a fake viewer, a
-stand-in `/__gf/view.js`, and the same security headers, so an inline script
-fails locally as it would in Genfleet. In code: `dev_server(views, viewer=Viewer(...))`
+It serves your views on `http://127.0.0.1:8765/` (open
+`http://127.0.0.1:8765/team/`) as Genfleet does: a request made with
+`genfleet.fetch` gets the fake viewer and one without gets none; a write
+without it is refused; only `content-type`, `content-language`, `etag`,
+`last-modified`, a relative `location` and `content-disposition` of your
+response headers pass (no cookies, no CORS); and every response carries the
+same security headers, so an inline script fails locally as it would in
+Genfleet. `/__gf/view.js` is a stand-in that needs no sign-in. In code: `dev_server(views, viewer=Viewer(...))`
 or `dev_app(...)` for tests.
