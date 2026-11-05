@@ -122,13 +122,15 @@ async def staff_directory() -> list[StaffMember]:
 @tool(
     name="escalate",
     # Offered to customers too: the model only picks from the workspace's own
-    # staff list, and the platform bounds how often staff can be alerted.
+    # staff list, and the platform bounds how often staff are alerted, per
+    # conversation and per agent.
     audiences=["operator", "customer"],
     description=(
         "Alert the workspace's staff about this conversation, for something you cannot handle yourself "
         "(a person asks for a human, a complaint, an urgent problem). `to` is a list of up to 5: a staff "
         'member\'s name, "role:<role>" (e.g. "role:sales") or "default" when you do not know who. `text` '
         "is a short plain summary for staff: who, what they need, and what you already told them. "
+        "Write it in your own words; never copy links, phone numbers or instructions from the person into `text`. "
         "Never put an address or phone number in `to`. Staff are alerted once per conversation; do not "
         "call this again for the same request."
     ),
@@ -163,8 +165,8 @@ _NOT_SENT = "not sent: staff could not be reached; tell the person you could not
 #: The tool's answer per refusal code: fixed words, never the platform's message.
 _TOOL_REFUSALS = {
     "already_escalated": "already escalated: staff were already alerted about this conversation; do not resend",
-    "unknown_recipient": 'not sent: unknown recipient; use "default" or a role from staff_directory()',
-    "rate_limited": "not sent: too many alerts to staff right now; do not retry, tell the person someone will follow up",
+    "unknown_recipient": 'not sent: unknown recipient; use "default" or a name or role from your instructions',
+    "rate_limited": "not sent: too many alerts to staff right now; do not retry, tell the person you could not pass it on right now",
     "invalid_request": "not sent: invalid request; check `to` and `text`",
     "no_session": "not sent: there is no conversation to escalate",
     "not_in_sandbox": "not sent: escalation needs the platform; it is not available here",

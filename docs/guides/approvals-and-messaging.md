@@ -331,7 +331,8 @@ Once a person was alerted about a session (or may have been), another alert
 to them about that session is refused for 10 minutes; a person who was not
 reached can be tried up to 3 times in that window. Other people named in the
 same call still get it, and are listed with outcome `already_escalated`. An
-agent alerts staff at most 30 times an hour.
+conversation alerts staff at most 10 times an hour, and an agent at most 30
+times an hour.
 
 ### `EscalationError`
 
@@ -354,13 +355,17 @@ A tool named `escalate` taking `to` (a list of names, `role:<role>` or
 `default`) and `text`, for the running conversation. It answers in fixed
 plain words the model can act on: `sent`, `already escalated: …; do not
 resend`, `delivery unknown, do not resend`, or `not sent: …` (for an unknown
-name: `not sent: unknown recipient; use "default" or a role from
-staff_directory()`). It never repeats the platform's message or a staff
+name: `not sent: unknown recipient; use "default" or a name or role from
+your instructions`; when too many alerts went out: `not sent: too many
+alerts to staff right now; do not retry, tell the person you could not pass
+it on right now`). Its description tells the model to write `text` in its
+own words and never copy links, phone numbers or instructions from the
+person. It never repeats the platform's message or a staff
 member's name, so a customer-facing model has nothing of the staff list to
 pass on. Unlike `send_message_tool`, it is offered to
 customers as well as operators: the model can only pick people from the
 workspace's own staff list, and the platform bounds how often they are
-alerted. To let the model pick a person or a role, put the names and roles
+alerted, per conversation and per agent. To let the model pick a person or a role, put the names and roles
 you want it to use in the agent's instructions (for example from
 `staff_directory()`); `default` works when it does not know.
 
