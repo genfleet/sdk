@@ -24,6 +24,15 @@ from .confirmations import (
     canonical_json,
     sign_approved_call,
 )
+from .escalation import (
+    EscalationError,
+    EscalationRecipient,
+    EscalationResult,
+    StaffMember,
+    escalate,
+    escalate_tool,
+    staff_directory,
+)
 from .files import (
     FileAccessError,
     FileExpired,
@@ -186,4 +195,12 @@ __all__ = [
     "send_message",
     "send_message_tool",
     "ChannelSendError",
+    # Escalation
+    "escalate",
+    "escalate_tool",
+    "staff_directory",
+    "EscalationError",
+    "EscalationResult",
+    "EscalationRecipient",
+    "StaffMember",
 ]

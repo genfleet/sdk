@@ -1,13 +1,15 @@
 # Approvals and outbound messages
 
-Two features that reach beyond a single reply:
+Three features that reach beyond a single reply:
 
 - **Sensitive tools.** A tool call that waits for a workspace owner or admin to
   approve it, then runs once in a follow-up turn.
 - **`send_message`.** Sending a message to someone other than the person the
   agent is replying to, or sending it later than the reply.
+- **`escalate`.** Alerting the workspace's staff about a conversation, by name
+  or role, without the agent ever handling an address.
 
-Both are handled by `Agent`, and both only do their real work on the
+All are handled by `Agent`, and all only do their real work on the
 platform. This guide covers what your code and your model see at each step,
 and how to test it locally.
 
@@ -291,3 +293,81 @@ async def alert_staff(summary: str) -> str:
 Run locally, it returns `Couldn't alert staff (not_in_sandbox).`: there are
 no channels outside the platform, and `send_message` says so instead of
 pretending to send.
+
+## Alerting staff: `escalate`
+
+The workspace keeps a staff list on the platform: each person has a name, a
+role (`sales`, `support`) and whether they are reached by default, and the
+workspace's owners and admins set how each one is reached. The agent names
+who should know; the platform delivers to your workspace's staff. The agent
+never sees, stores or types an address.
+
+```python
+from genfleet.sdk import EscalationError, escalate, staff_directory
+
+result = await escalate(["role:sales"], "Mona wants a quote for 3 heaters; she is waiting for a call.")
+result.outcome      # "sent", "unknown" or "not_sent"
+result.recipients   # (EscalationRecipient(name="Ahmed", outcome="sent"), ...)
+
+await staff_directory()  # [StaffMember(name="Ahmed", role="sales", is_default=True), ...]
+```
+
+`escalate(to, text, *, session=None)`:
+
+- `to` is one entry or a list of up to 5: a staff member's name (matched
+  without case), `"role:<role>"` (everyone with that role) or `"default"`.
+  Every entry must name someone, or nothing is sent and the refusal lists the
+  valid roles (never names: use `staff_directory()` for those).
+- `text` is plain text, at most 4000 characters. Say who the person is, what
+  they need and what you already told them.
+- `session` is the conversation the alert is about. By default it is the
+  running turn's `session_id`, so inside a tool or a turn you leave it out.
+
+The outcome is the best of the people reached: `sent` when any alert was
+delivered, `unknown` when one may have been (a timeout), else `not_sent`.
+
+The platform keeps an agent from paging staff twice about one conversation.
+Once a person was alerted about a session (or may have been), another alert
+to them about that session is refused for 10 minutes; a person who was not
+reached can be tried up to 3 times in that window. Other people named in the
+same call still get it, and are listed with outcome `already_escalated`. An
+conversation alerts staff at most 10 times an hour, and an agent at most 30
+times an hour.
+
+### `EscalationError`
+
+A subclass of `ChannelSendError`. `code` is `unknown_recipient` (the message
+lists the valid roles and `default`), `already_escalated` (everyone named was
+already alerted about this conversation: do not resend), `rate_limited`,
+`invalid_request`, `no_session` (no session given and no turn running),
+`not_in_sandbox` outside the platform, or None. With no code,
+`delivery_unknown` is True: the alert may have gone out, so do not resend it.
+
+### The model-facing tool: `escalate_tool`
+
+```python
+from genfleet.sdk import Agent, escalate_tool
+
+agent = Agent(role="…", model={…}, tools=[escalate_tool])
+```
+
+A tool named `escalate` taking `to` (a list of names, `role:<role>` or
+`default`) and `text`, for the running conversation. It answers in fixed
+plain words the model can act on: `sent`, `already escalated: …; do not
+resend`, `delivery unknown, do not resend`, or `not sent: …` (for an unknown
+name: `not sent: unknown recipient; use "default" or a name or role from
+your instructions`; when too many alerts went out: `not sent: too many
+alerts to staff right now; do not retry, tell the person you could not pass
+it on right now`). Its description tells the model to write `text` in its
+own words and never copy links, phone numbers or instructions from the
+person. It never repeats the platform's message or a staff
+member's name, so a customer-facing model has nothing of the staff list to
+pass on. Unlike `send_message_tool`, it is offered to
+customers as well as operators: the model can only pick people from the
+workspace's own staff list, and the platform bounds how often they are
+alerted, per conversation and per agent. To let the model pick a person or a role, put the names and roles
+you want it to use in the agent's instructions (for example from
+`staff_directory()`); `default` works when it does not know.
+
+Run locally, `escalate` raises `EscalationError` with code `not_in_sandbox`
+and the tool answers `not sent: …`.

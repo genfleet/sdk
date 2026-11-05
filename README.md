@@ -60,7 +60,7 @@ curl -X POST http://localhost:8000 \
 - [`genfleet.toml` reference](docs/guides/manifest.md): agent and tool manifests, version specs, and what gets pinned
 - [The agent factory](docs/guides/agent-factory.md): `build_agent(remote_tools=())`, peer agents as tools, and model config
 - [Writing a connector](docs/guides/connectors.md): a marketplace tool with `ToolContext`, local testing, and publishing
-- [Approvals and outbound messages](docs/guides/approvals-and-messaging.md): sensitive tools, and `send_message`
+- [Approvals and outbound messages](docs/guides/approvals-and-messaging.md): sensitive tools, `send_message`, and `escalate` to alert staff
 - [Scheduled and event-driven work](docs/guides/triggers.md): triggers without a scheduler, idempotency, and the background scope
 
 ## Publish on Genfleet (private beta)

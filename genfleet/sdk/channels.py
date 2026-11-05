@@ -123,45 +123,61 @@ async def send_message_tool(
 
 
 def _post(body: dict[str, Any]) -> dict[str, Any]:
+    return _call("send", body, what="send_message")
+
+
+def _call(
+    path: str,
+    body: dict[str, Any] | None,
+    *,
+    what: str,
+    timeout: float = _TIMEOUT_S,
+    error: type[ChannelSendError] = ChannelSendError,
+) -> dict[str, Any]:
+    """One call to the platform's channels endpoint: a POST of ``body``, or a
+    GET when ``body`` is None. Raises ``error`` the way `send_message` does."""
     url = os.environ.get(CHANNELS_URL_ENV)
     token = os.environ.get(CHANNELS_TOKEN_ENV)
     if not url or not token:
-        raise ChannelSendError(
-            "send_message needs a platform sandbox: "
+        raise error(
+            f"{what} needs a platform sandbox: "
             f"{CHANNELS_URL_ENV} and {CHANNELS_TOKEN_ENV} are not set",
             status=0,
             code="not_in_sandbox",
         )
+    headers = {"authorization": f"Bearer {token}"}
+    if body is not None:
+        headers["content-type"] = "application/json"
     req = urllib.request.Request(
-        f"{url.rstrip('/')}/send",
-        data=json.dumps(body).encode(),
-        method="POST",
-        headers={"content-type": "application/json", "authorization": f"Bearer {token}"},
+        f"{url.rstrip('/')}/{path}",
+        data=json.dumps(body).encode() if body is not None else None,
+        method="POST" if body is not None else "GET",
+        headers=headers,
     )
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:  # noqa: S310 — URL is platform-provided
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — URL is platform-provided
             raw = resp.read()
     except urllib.error.HTTPError as exc:
-        message, code = _refusal(exc.read())
-        raise ChannelSendError(message, status=exc.code, code=code) from None
+        message, code = _refusal(exc.read(), what)
+        raise error(message, status=exc.code, code=code) from None
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise ChannelSendError(f"send_message could not reach the platform: {exc}", status=0) from None
+        raise error(f"{what} could not reach the platform: {exc}", status=0) from None
     try:
         parsed = json.loads(raw) if raw else {}
     except ValueError:
-        raise ChannelSendError("send_message got an undecodable answer", status=200) from None
+        raise error(f"{what} got an undecodable answer", status=200) from None
     if not isinstance(parsed, dict):
-        raise ChannelSendError(f"send_message expected an object, got {type(parsed).__name__}", status=200)
+        raise error(f"{what} expected an object, got {type(parsed).__name__}", status=200)
     return parsed
 
 
-def _refusal(raw: bytes) -> tuple[str, str | None]:
+def _refusal(raw: bytes, what: str = "send_message") -> tuple[str, str | None]:
     try:
         parsed = json.loads(raw)
     except ValueError:
-        return (raw[:200].decode(errors="replace") or "send_message failed"), None
+        return (raw[:200].decode(errors="replace") or f"{what} failed"), None
     if not isinstance(parsed, dict):
-        return "send_message failed", None
+        return f"{what} failed", None
     code = parsed.get("code") if isinstance(parsed.get("code"), str) else None
-    message = parsed.get("error") if isinstance(parsed.get("error"), str) else "send_message failed"
+    message = parsed.get("error") if isinstance(parsed.get("error"), str) else f"{what} failed"
     return message, code

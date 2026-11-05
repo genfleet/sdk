@@ -183,6 +183,21 @@ agent = Agent(..., tools=[send_message_tool])   # model-facing form: failures co
 
 `to` is `"<channel>:<address>"` (the inbound turn's `session_id` has that shape). Free text reaches only a contact who wrote in the last 24 hours; otherwise send an approved `template`. `ChannelSendError.code` names a refusal the agent can act on: `outside_window` (send a template), `cold_send_disabled`, `no_binding`, `invalid_request`, `send_rejected`, and `not_in_sandbox` when the agent is not hosted. A refusal means nothing was sent; with no `code`, `delivery_unknown` says the message may have gone out, so do not blindly resend.
 
+### Alerting staff: `escalate`
+
+To hand a conversation to a human, name staff from the workspace's staff list; the platform delivers to your workspace's staff, and the agent never handles an address:
+
+```python
+from genfleet.sdk import EscalationError, escalate, escalate_tool, staff_directory
+
+result = await escalate(["role:sales"], "Mona wants a quote; waiting for a call.")  # session defaults to the turn's session_id
+result.outcome                 # "sent" | "unknown" | "not_sent"
+await staff_directory()        # [StaffMember(name, role, is_default), ...]
+agent = Agent(..., tools=[escalate_tool])   # operators and customers; fixed answers "sent", "already escalated: ...", "delivery unknown, do not resend" or "not sent: ...", never names
+```
+
+`to` is up to 5 of: a staff name (any case), `"role:<role>"`, `"default"`; every entry must name someone. `text` is plain, at most 4000 characters. The platform alerts each person once per conversation per 10 minutes (3 tries if not reached) and at most 30 times an hour per agent. `EscalationError` (a `ChannelSendError`) codes: `unknown_recipient` (message lists valid roles, never names), `already_escalated`, `rate_limited`, `invalid_request`, `no_session`, `not_in_sandbox`; no code means `delivery_unknown`: do not resend.
+
 ## Files and parts (0.20)
 
 A turn is a list of typed parts: `AgentInput.parts` and `AgentOutput.parts` hold `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `FilePart`. `message` and `content` stay the turn's text, so a text-only agent never looks at `parts`. Build one with `part_for(mime_type, data=... | uri=...)`.
