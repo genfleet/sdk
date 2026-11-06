@@ -60,7 +60,7 @@ import hmac
 import json
 import re
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -277,28 +277,34 @@ def _route_path(path: str) -> str:
     return path.rstrip("/") or "/"
 
 
-def dev_client_script(token: str, origin: str) -> str:
-    """The dev server's stand-in for the platform script: same API, no handshake.
+#: The dev server's stand-in for the platform script: same API, no handshake.
+#: Static and the same for every request: it carries **no token**. The dev
+#: token reaches only the view's own HTML pages (a nonce'd inline script that
+#: sets ``__gfDev``), which no other site can read, and ``genfleet.fetch``
+#: sends it only to the dev server's own origin.
+DEV_CLIENT_SCRIPT = (
+    "(function(){window.genfleet=Object.freeze({"
+    "fetch:function(i,o){o=o||{};var d=window.__gfDev||{},u=new URL(typeof i==='string'?i:i.url,location.href),"
+    "h=new Headers(o.headers||{});if(d.token&&u.origin===d.origin)h.set('Authorization','Bearer '+d.token);"
+    "return fetch(u.href,Object.assign({},o,{headers:h,mode:'cors',credentials:'omit'}))},"
+    "ready:function(){return Promise.resolve()},"
+    "navigate:function(p){console.log('genfleet.navigate',p)}})})();"
+)
 
-    ``genfleet.fetch`` sends this run's dev token, the only bearer the dev
-    server treats as signed in, and only to the dev server's own ``origin``
-    (baked in: an opaque-origin page has no ``location.origin`` to compare).
-    """
-    return (
-        "(function(){var T=" + json.dumps(token) + ",O=" + json.dumps(origin) + ";window.genfleet=Object.freeze({"
-        "fetch:function(i,o){o=o||{};var u=new URL(typeof i==='string'?i:i.url,location.href),h=new Headers(o.headers||{});"
-        "if(u.origin===O)h.set('Authorization','Bearer '+T);"
-        "return fetch(u.href,Object.assign({},o,{headers:h,mode:'cors',credentials:'omit'}))},"
-        "ready:function(){return Promise.resolve()},"
-        "navigate:function(p){console.log('genfleet.navigate',p)}})})();"
-    )
+
+def _dev_token_script(token: str, origin: str) -> str:
+    # JSON in a script element: `<`, `>` and `&` escaped so the value can't close the tag.
+    value = json.dumps({"token": token, "origin": origin}).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    return f"window.__gfDev={value};"
 
 
 _SAFE_METHODS = frozenset({"GET", "HEAD"})
 _VIEWER_HEADER_NAMES = {VIEWER_ID_HEADER.encode(), VIEWER_ROLE_HEADER.encode(), VIEW_ID_HEADER.encode()}
 
 
-def dev_app(views: Views, viewer: Viewer | None, *, token: str | None = None) -> Any:
+def dev_app(
+    views: Views, viewer: Viewer | None, *, token: str | None = None, allowed_hosts: Collection[str] | None = None,
+) -> Any:
     """``views`` as the platform would serve it, for local runs and tests.
 
     - The page runs sandboxed (CSP ``sandbox``, no ``allow-same-origin``), so it
@@ -306,8 +312,12 @@ def dev_app(views: Views, viewer: Viewer | None, *, token: str | None = None) ->
       fetches carry ``Origin: null``, answered with CORS for ``null``.
     - A request with ``Authorization: Bearer <token>`` gets ``viewer``. The
       token is random per run (``token``, else ``secrets.token_urlsafe``) and
-      only the stand-in ``/__gf/view.js`` knows it: any page on any site can
+      only the view's own HTML pages carry it (a nonce'd inline script; HTML
+      gets no CORS, so no other site can read it). Any page on any site can
       send an ``Origin: null`` fetch here, so any other bearer is anonymous.
+    - A ``Host`` not in ``allowed_hosts`` is a 421 (DNS rebinding);
+      ``dev_server`` passes ``127.0.0.1``, ``localhost`` and its bound host,
+      with its port. ``None`` (in-process tests) checks nothing.
       The bearer is removed, and any viewer header the browser sent is replaced.
     - ``POST``/``PUT``/``PATCH``/``DELETE`` without a bearer: 401.
     - Without a bearer only the page and its files come back: any other type is
@@ -320,19 +330,22 @@ def dev_app(views: Views, viewer: Viewer | None, *, token: str | None = None) ->
 
     dev_token = token or secrets.token_urlsafe(24)
     expected = f"Bearer {dev_token}".encode()
+    hosts = {h.lower() for h in allowed_hosts} if allowed_hosts is not None else None
 
     async def app(scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
             await views(scope, receive, send)
             return
         incoming = scope.get("headers", [])
+        host = next((v.decode("latin-1").lower() for k, v in incoming if k.lower() == b"host"), "")
+        if hosts is not None and host not in hosts:
+            await _send(send, 421, b'{"error":"misdirected_request"}', "application/json", {})
+            return
         origin = _origin_of(scope)
         cors = _cors(incoming)
         security = {**security_headers(origin), **cors}
         if scope["path"] == CLIENT_SCRIPT_PATH:
-            # No CORS on the script: a `<script src>` loads it without CORS, and
-            # no other page may `fetch()` it and read the dev token.
-            await _send(send, 200, dev_client_script(dev_token, origin).encode(), "application/javascript", security_headers(origin))
+            await _send(send, 200, DEV_CLIENT_SCRIPT.encode(), "application/javascript", security)
             return
         method = scope.get("method", "GET")
         if method == "OPTIONS":
@@ -351,7 +364,8 @@ def dev_app(views: Views, viewer: Viewer | None, *, token: str | None = None) ->
                 (VIEWER_ROLE_HEADER.encode(), viewer.role.encode()),
                 (VIEW_ID_HEADER.encode(), viewer.view.encode()),
             ]
-        state = {"drop_body": False, "refused": False}
+        state: dict[str, Any] = {"drop_body": False, "refused": False, "html": None, "start": None}
+        nonce = secrets.token_urlsafe(16)
 
         async def secured(message: Any) -> None:
             if message["type"] == "http.response.start":
@@ -369,12 +383,31 @@ def dev_app(views: Views, viewer: Viewer | None, *, token: str | None = None) ->
                     if name in agent and (name != "location" or _location_ok(agent[name]))
                 }
                 out = {**kept, **security, "cache-control": cache_control_for(agent.get("content-type"))}
+                if (agent.get("content-type") or "").lower().startswith("text/html") and not state["drop_body"]:
+                    # The view's own page: the dev token goes in here, by a nonce'd
+                    # inline script, and the page gets no CORS (no other site reads it).
+                    out.pop("access-control-allow-origin", None)
+                    out["content-security-policy"] = out["content-security-policy"].replace(
+                        "base-uri", f"script-src {origin} 'nonce-{nonce}'; base-uri", 1)
+                    state["html"] = bytearray()
+                    state["start"] = {**message, "headers": [(k.encode(), v.encode()) for k, v in out.items()]}
+                    return
                 message = {**message, "headers": [(k.encode(), v.encode()) for k, v in out.items()]}
             elif message["type"] == "http.response.body":
                 if state["refused"]:
                     return
                 if state["drop_body"]:
                     message = {**message, "body": b""}
+                elif state["html"] is not None:
+                    state["html"] += message.get("body", b"")
+                    if message.get("more_body"):
+                        return
+                    tag = f'<script nonce="{nonce}">{_dev_token_script(dev_token, origin)}</script>'.encode()
+                    body = bytes(state["html"])
+                    at = body.lower().find(b"<head>")
+                    body = body[: at + 6] + tag + body[at + 6 :] if at >= 0 else tag + body
+                    await send(state["start"])
+                    message = {"type": "http.response.body", "body": body}
             await send(message)
 
         await views({**scope, "headers": headers}, receive, secured)
@@ -406,7 +439,9 @@ def dev_server(views: Views, *, viewer: Viewer | None = None, host: str = "127.0
     """
     import uvicorn
 
-    uvicorn.run(dev_app(views, viewer or Viewer(user_id="dev-user", role="admin", view="dev")), host=host, port=port)
+    allowed = {f"127.0.0.1:{port}", f"localhost:{port}", f"{host}:{port}"}
+    app = dev_app(views, viewer or Viewer(user_id="dev-user", role="admin", view="dev"), allowed_hosts=allowed)
+    uvicorn.run(app, host=host, port=port)
 
 
 def _main(argv: list[str] | None = None) -> None:

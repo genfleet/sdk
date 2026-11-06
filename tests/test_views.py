@@ -113,7 +113,7 @@ async def test_dev_server_stamps_the_viewer_only_for_a_token_and_replaces_spoofs
     assert res.json() == {"user": "dev", "role": "member"}
     assert (await call(app, "POST", "/team/api/save")).status_code == 401
     script = await call(app, "GET", "/__gf/view.js")
-    assert script.status_code == 200 and 'var T="dev"' in script.text
+    assert script.status_code == 200 and "dev" not in script.text.replace("__gfDev", "")
 
 
 async def test_dev_server_sends_the_platform_headers_once_and_drops_the_agents(tmp_path):
@@ -229,15 +229,28 @@ async def test_dev_server_treats_any_other_bearer_as_anonymous(tmp_path):
         res = await call(app, "GET", "/team/api/me", headers={"origin": "null", "authorization": bearer})
         assert res.status_code == 401, bearer
         assert (await call(app, "POST", "/team/api/save", headers={"origin": "null", "authorization": bearer})).status_code == 401
-    script = (await call(app, "GET", "/__gf/view.js")).text
-    token = script.split('var T="', 1)[1].split('"', 1)[0]
+    page = (await call(app, "GET", "/team/")).text
+    token = page.split('"token": "', 1)[1].split('"', 1)[0]
     assert len(token) >= 24
     assert (await call(app, "GET", "/team/api/me", headers={"authorization": f"Bearer {token}"})).status_code == 200
 
 
-async def test_dev_server_never_hands_its_script_to_another_page(tmp_path):
-    app = dev_app(make_views(tmp_path), Viewer("dev", "admin", "team"), token="dev")
-    res = await call(app, "GET", "/__gf/view.js", headers={"origin": "null"})
-    assert res.status_code == 200
-    assert "access-control-allow-origin" not in res.headers  # a sandboxed page can't fetch() it to read the token
-    assert '"http://v"' in res.text  # the token goes only to the dev server's own origin
+async def test_dev_server_keeps_its_token_out_of_the_script_and_off_cors(tmp_path):
+    app = dev_app(make_views(tmp_path), Viewer("dev", "admin", "team"), token="sekrit-token")
+    first = await call(app, "GET", "/__gf/view.js", headers={"origin": "null"})
+    second = await call(app, "GET", "/__gf/view.js")
+    assert first.status_code == 200 and first.text == second.text  # static, the same for everyone
+    assert "sekrit-token" not in first.text
+    page = await call(app, "GET", "/team/", headers={"origin": "null"})
+    assert "sekrit-token" in page.text  # only the view's own page carries it…
+    assert "access-control-allow-origin" not in page.headers  # …and no other site can read that page
+    csp = page.headers["content-security-policy"]
+    nonce = page.text.split('<script nonce="', 1)[1].split('"', 1)[0]
+    assert f"'nonce-{nonce}'" in csp and "unsafe-inline" not in csp
+
+
+async def test_dev_server_refuses_another_host(tmp_path):
+    app = dev_app(make_views(tmp_path), None, allowed_hosts={"127.0.0.1:8765", "localhost:8765"})
+    assert (await call(app, "GET", "/team/")).status_code == 421  # Host: v (a rebinding name)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8765") as c:
+        assert (await c.get("/team/")).status_code == 200
