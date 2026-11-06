@@ -9,8 +9,8 @@ from __future__ import annotations
 import base64
 import json
 import threading
-from typing import ClassVar
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import ClassVar
 
 import pytest
 
