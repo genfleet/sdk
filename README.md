@@ -58,6 +58,7 @@ curl -X POST http://localhost:8000 \
 ## Guides
 
 - [`genfleet.toml` reference](docs/guides/manifest.md): agent and tool manifests, version specs, and what gets pinned
+- [Agent views](docs/guides/views.md): pages your agent serves to the workspace, with the signed-in viewer
 - [The agent factory](docs/guides/agent-factory.md): `build_agent(remote_tools=())`, peer agents as tools, and model config
 - [Writing a connector](docs/guides/connectors.md): a marketplace tool with `ToolContext`, local testing, and publishing
 - [Approvals and outbound messages](docs/guides/approvals-and-messaging.md): sensitive tools, `send_message`, `escalate` to alert staff, and `call_connection` for the workspace's own API

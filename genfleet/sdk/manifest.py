@@ -21,7 +21,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, ValidationError, field_validator, model_validator
 
 from .content import content_glob_problem
 
@@ -136,6 +136,57 @@ class ContentSpec(BaseModel):
         return value
 
 
+_VIEW_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+_VIEW_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9._~-]+$")
+_ENTRY = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$")
+MAX_VIEWS = 8
+
+
+class ViewSpec(BaseModel):
+    """One `[[views]]` entry: a page the agent serves, shown to the workspace in the app.
+
+    ``id`` names it; ``title`` is the tab label (the id when left out);
+    ``path`` is the page, and everything it loads lives under it;
+    ``min_role`` is who may open it: ``owner``, ``admin`` (owners and admins,
+    the default) or ``member`` (every member). The platform checks the same
+    rules when the agent is published.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: StrictStr
+    title: StrictStr | None = None
+    path: StrictStr
+    min_role: Literal["owner", "admin", "member"] = "admin"
+
+    @field_validator("id")
+    @classmethod
+    def _id_is_a_slug(cls, value: str) -> str:
+        if not _VIEW_ID.match(value):
+            raise ValueError("id must be 1-40 lowercase letters, digits or '-'")
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def _title_fits(cls, value: str | None) -> str | None:
+        if value is not None and (not value.strip() or len(value) > 60):
+            raise ValueError("title must be 1-60 characters")
+        return value.strip() if value is not None else None
+
+    @field_validator("path")
+    @classmethod
+    def _path_is_clean(cls, value: str) -> str:
+        if not value.startswith("/") or len(value) > 200:
+            raise ValueError("path must start with '/' and be at most 200 characters")
+        if value != "/":
+            segments = value[1:].rstrip("/").split("/")
+            if any(not _VIEW_PATH_SEGMENT.match(s) or s in (".", "..") for s in segments):
+                raise ValueError("path may hold only letters, digits and . _ ~ - between single slashes")
+        if value.lower() == "/__gf" or value.lower().startswith("/__gf/"):
+            raise ValueError("path may not start with /__gf (the platform's own)")
+        return value
+
+
 class AgentManifest(BaseModel):
     """The `genfleet.toml` sitting next to an agent's entry point."""
 
@@ -151,6 +202,31 @@ class AgentManifest(BaseModel):
     audiences: list[Literal["operator", "customer"]] | None = None
     #: The ``[content]`` table. Absent means the agent needs no content.
     content: ContentSpec = Field(default_factory=ContentSpec)
+    #: ``module:symbol`` of the ASGI app serving the agent's views
+    #: (``genfleet.sdk.views.Views``), next to the manifest.
+    views_app: str | None = None
+    #: The ``[[views]]`` list. Needs ``views_app``.
+    views: list[ViewSpec] = Field(default_factory=list, max_length=MAX_VIEWS)
+
+    @field_validator("views_app")
+    @classmethod
+    def _views_app_is_an_entry(cls, value: str | None) -> str | None:
+        if value is not None and not _ENTRY.match(value):
+            raise ValueError("views_app must be 'module:symbol', e.g. 'sales_views:views'")
+        return value
+
+    @field_validator("views")
+    @classmethod
+    def _view_ids_are_unique(cls, value: list[ViewSpec]) -> list[ViewSpec]:
+        if len({v.id for v in value}) != len(value):
+            raise ValueError("[[views]] gives two views the same id")
+        return value
+
+    @model_validator(mode="after")
+    def _views_need_an_app(self) -> "AgentManifest":
+        if self.views and self.views_app is None:
+            raise ValueError("[[views]] needs [agent] views_app, the app that serves them")
+        return self
 
     @field_validator("audiences")
     @classmethod
@@ -270,11 +346,34 @@ def load_agent_manifest(directory: Path | str) -> AgentManifest:
             tools=_parse_refs(raw.get("tools"), "tools", path),
             mcps=_parse_refs(raw.get("mcps"), "mcps", path),
             content=_parse_content(raw.get("content"), path),
+            views=_parse_views(raw.get("views"), path),
         )
     except ManifestError:
         raise
     except ValueError as exc:
         raise ManifestError(path, str(exc)) from exc
+
+
+def _parse_views(table: Any, path: Path) -> list[ViewSpec]:
+    if table is None:
+        return []
+    if not isinstance(table, list):
+        raise ManifestError(path, "[[views]] must be an array of tables")
+    if len(table) > MAX_VIEWS:
+        raise ManifestError(path, f"[[views]] lists more than {MAX_VIEWS} views")
+    views = []
+    for i, entry in enumerate(table, start=1):
+        if not isinstance(entry, dict):
+            raise ManifestError(path, f"[[views]] #{i} must be a table")
+        try:
+            views.append(ViewSpec(**entry))
+        except ValidationError as exc:
+            problems = "; ".join(
+                f"unknown key {e['loc'][0]!r}" if e["type"] == "extra_forbidden" else f"{'.'.join(map(str, e['loc']))}: {e['msg']}"
+                for e in exc.errors()
+            )
+            raise ManifestError(path, f"[[views]] #{i}: {problems}") from None
+    return views
 
 
 def _data_problem(error: Any) -> str:
