@@ -24,6 +24,7 @@ from .confirmations import (
     canonical_json,
     sign_approved_call,
 )
+from .connections import ConnectionCallError, ConnectionResponse, call_connection
 from .escalation import (
     EscalationError,
     EscalationRecipient,
@@ -203,4 +204,8 @@ __all__ = [
     "EscalationResult",
     "EscalationRecipient",
     "StaffMember",
+    # Workspace connections
+    "call_connection",
+    "ConnectionCallError",
+    "ConnectionResponse",
 ]

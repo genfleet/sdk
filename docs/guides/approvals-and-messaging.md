@@ -1,6 +1,6 @@
 # Approvals and outbound messages
 
-Three features that reach beyond a single reply:
+Four features that reach beyond a single reply:
 
 - **Sensitive tools.** A tool call that waits for a workspace owner or admin to
   approve it, then runs once in a follow-up turn.
@@ -8,6 +8,8 @@ Three features that reach beyond a single reply:
   agent is replying to, or sending it later than the reply.
 - **`escalate`.** Alerting the workspace's staff about a conversation, by name
   or role, without the agent ever handling an address.
+- **`call_connection`.** Calling the workspace's own API (an ERP) through a
+  connection it set up, without the agent ever handling the key.
 
 All are handled by `Agent`, and all only do their real work on the
 platform. This guide covers what your code and your model see at each step,
@@ -371,3 +373,48 @@ you want it to use in the agent's instructions (for example from
 
 Run locally, `escalate` raises `EscalationError` with code `not_in_sandbox`
 and the tool answers `not sent: …`.
+
+## Calling your workspace's API: `call_connection`
+
+A workspace owner or admin can set up a **Custom API** connection under
+Connections in the dashboard: a name (`erp`), a base URL
+(`https://erp.example.com/api`), the header the key goes in (`X-Api-Key`, or
+`Authorization` with a value of `Bearer <token>`), and the key. The agent
+calls it by name; the platform adds the key and makes the request.
+
+```python
+from genfleet.sdk import ConnectionCallError, call_connection
+
+response = await call_connection("erp", "GET", "/integrations/sales_people")
+if response.ok:
+    people = response.json()
+
+lead = await call_connection(
+    "erp", "POST", "/integrations/leads",
+    {"name": "Mona", "phone": "201001234567"},
+    idempotency_key=f"{event_id}:lead",
+)
+```
+
+- `path` is relative to the base URL and may carry a query string.
+- `json` is the body, any JSON value; GET and DELETE take none.
+- The agent sets no headers. The platform sends `Accept` and `Content-Type`
+  as JSON, a `User-Agent` of `genfleet-<agent name>/<version>`, the key, and
+  `idempotency_key` as `Idempotency-Key` when given.
+- `timeout` is 1 to 20 seconds for the whole call (default 10).
+- The request only goes to the connection's host. Redirects are never
+  followed: a 3xx comes back as the response.
+
+Any status the API answers is a `ConnectionResponse(status, headers,
+content)` with `ok`, `text` and `json()`. `headers` keeps `content-type`,
+`cf-ray` and `retry-after`.
+
+### `ConnectionCallError`
+
+A subclass of `ChannelSendError`, raised when the API gave no answer.
+`code` is `unknown_connection` (no connection of that name in the
+workspace), `agent_not_allowed` (this agent may not use the workspace's
+connections), `host_refused`, `invalid_request`, `timeout`, `transport`,
+`too_large` (an answer over 1 MB), `not_in_sandbox` outside the platform, or
+None. `may_have_reached_api` is True for `timeout`, `transport`, `too_large`
+and None: resend a write only when the API dedupes it by `idempotency_key`.
