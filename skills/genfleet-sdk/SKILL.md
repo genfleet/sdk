@@ -204,7 +204,7 @@ agent = Agent(..., tools=[escalate_tool])   # operators and customers; fixed ans
 from genfleet.sdk import ConnectionCallError, call_connection
 
 r = await call_connection("erp", "POST", "/integrations/leads", {"phone": "2010..."}, idempotency_key="evt-1:lead", timeout=10)
-r.status, r.ok, r.json(), r.headers["content-type"]
+r.status, r.ok, r.json(), r.headers.get("content-type")  # headers holds only what the API sent
 ```
 
 The workspace sets up a Custom API connection (name, base URL, key header, key) in the dashboard; the platform adds the key and calls that host only. No headers from the agent; `User-Agent` is `genfleet-<agent>/<version>`. Any API status is a `ConnectionResponse`; redirects are not followed. `ConnectionCallError` codes: `unknown_connection`, `agent_not_allowed`, `host_refused`, `invalid_request`, `timeout`, `transport`, `too_large`, `not_in_sandbox`; `may_have_reached_api` for a write's resend decision.
