@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.27.0 — 2026-11-06
+
+Agent views with content saves, and Custom API connections.
+
 - **Added: `[[views]] editable`** (`ViewSpec.editable`): the workspace content files a view may read and save through the platform at `<view path>/__gf/content` (exact paths, at most 16; saves by owners and admins, with `basedOn`). Guide: "Save workspace content".
 
 - **Added: `call_connection`** (`genfleet.sdk`, module `genfleet.sdk.connections`). An agent calls one of its workspace's Custom API connections by name: `await call_connection(connection, method, path, json=None, *, idempotency_key=None, timeout=None)`. The workspace sets the connection up in the dashboard (a base URL, the header the key goes in, and the key); the platform adds the key and makes the request, to that connection's host only, so the agent never sees the key. `path` is relative to the base URL and may carry a query; `json` is the body (not for GET or DELETE); `idempotency_key` is sent as `Idempotency-Key`; `timeout` is 1 to 20 seconds (default 10). The agent sets no headers. Any status the API answers, redirects included (never followed), is a `ConnectionResponse(status, headers, content)` with `ok`, `text` and `json()`; `headers` holds `content-type`, `cf-ray` and `retry-after`. Otherwise `ConnectionCallError` (a `ChannelSendError`) with code `unknown_connection`, `agent_not_allowed`, `host_refused`, `invalid_request`, `timeout`, `transport`, `too_large` (a reply over 1 MB) or `not_in_sandbox`; `may_have_reached_api` says whether a write may have arrived.
