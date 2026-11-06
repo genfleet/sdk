@@ -97,8 +97,10 @@ const saved = await genfleet.fetch(
 
 - Saving is for workspace owners and admins, whoever else may open the view.
 - A save is a new version of the workspace's content, with the viewer
-  recorded as its author. Validate the text with your own routes before you
-  save it: the agent loads the new version when it starts again.
+  recorded as its author. The agent loads it when it starts again; if the
+  agent can't load it, Genfleet reverts to the previous version. Validate
+  the text with your own routes before you save it, so a save isn't lost
+  that way.
 - At most 256 KiB of UTF-8 text per file. `basedOn` is required on a save.
 - Your code never sees these requests, and the local dev server does not
   serve them.
