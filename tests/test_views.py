@@ -20,6 +20,7 @@ views_app = "sa_views:views"
 id = "team"
 title = "Sales team"
 path = "/team"
+editable = ["assignment_rules.toml"]
 
 [[views]]
 id = "ops"
@@ -37,6 +38,7 @@ def test_manifest_reads_views(tmp_path):
     m = load_agent_manifest(write(tmp_path, MANIFEST))
     assert m.views_app == "sa_views:views"
     assert [(v.id, v.title, v.path, v.min_role) for v in m.views] == [("team", "Sales team", "/team", "admin"), ("ops", None, "/ops", "owner")]
+    assert [v.editable for v in m.views] == [["assignment_rules.toml"], []]
 
 
 @pytest.mark.parametrize("bad", [
@@ -47,6 +49,10 @@ def test_manifest_reads_views(tmp_path):
     '[[views]]\nid = "t"\npath = "/t"\nmin_role = "root"\n',
     '[[views]]\nid = "t"\npath = "/t"\nroles = ["owner"]\n',
     '[[views]]\nid = "t"\npath = "/a"\n\n[[views]]\nid = "t"\npath = "/b"\n',
+    '[[views]]\nid = "t"\npath = "/t"\neditable = ["/rules.toml"]\n',
+    '[[views]]\nid = "t"\npath = "/t"\neditable = ["../rules.toml"]\n',
+    '[[views]]\nid = "t"\npath = "/t"\neditable = ["*.toml"]\n',
+    '[[views]]\nid = "t"\npath = "/t"\neditable = ["a.toml", "a.toml"]\n',
 ])
 def test_manifest_refuses_bad_views(tmp_path, bad):
     with pytest.raises(ManifestError):

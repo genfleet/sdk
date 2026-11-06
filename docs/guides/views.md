@@ -68,6 +68,41 @@ async def save(request, viewer: Viewer):
   a browser sent. `viewer_from_headers(request.headers)` reads them if you use
   your own ASGI app (FastAPI or Starlette) instead of `Views`.
 
+## Save workspace content
+
+A view can read and save content files of the workspace that installed the
+agent, such as its routing rules. List them in the view:
+
+```toml
+[[views]]
+id = "team"
+path = "/team"
+editable = ["assignment_rules.toml"]   # exact content paths, at most 16
+```
+
+The platform serves them at `__gf/content` under the view's path, so from
+the page at `/team/` the URL is the relative `__gf/content`:
+
+```js
+const res = await genfleet.fetch('__gf/content?path=assignment_rules.toml')
+const { basedOn, text } = await res.json()      // text is null when the file is missing
+
+const saved = await genfleet.fetch(
+  `__gf/content?path=assignment_rules.toml&basedOn=${basedOn}`,
+  { method: 'PUT', body: newText },
+)
+// 200 {basedOn, status}: a new content version, made by the viewer
+// 409 {error: "content_stale"}: someone saved since you read; read again
+```
+
+- Saving is for workspace owners and admins, whoever else may open the view.
+- A save is a new version of the workspace's content, with the viewer
+  recorded as its author. Validate the text with your own routes before you
+  save it: the agent loads the new version when it starts again.
+- At most 256 KiB of UTF-8 text per file. `basedOn` is required on a save.
+- Your code never sees these requests, and the local dev server does not
+  serve them.
+
 ## The page
 
 Load the platform script first, then fetch your data through it:

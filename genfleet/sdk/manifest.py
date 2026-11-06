@@ -148,8 +148,10 @@ class ViewSpec(BaseModel):
     ``id`` names it; ``title`` is the tab label (the id when left out);
     ``path`` is the page, and everything it loads lives under it;
     ``min_role`` is who may open it: ``owner``, ``admin`` (owners and admins,
-    the default) or ``member`` (every member). The platform checks the same
-    rules when the agent is published.
+    the default) or ``member`` (every member); ``editable`` lists the
+    workspace content files the view may read and save through the platform
+    (exact paths, at most 16; saving is for owners and admins). The platform
+    checks the same rules when the agent is published.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -158,6 +160,7 @@ class ViewSpec(BaseModel):
     title: StrictStr | None = None
     path: StrictStr
     min_role: Literal["owner", "admin", "member"] = "admin"
+    editable: list[StrictStr] = []
 
     @field_validator("id")
     @classmethod
@@ -184,6 +187,18 @@ class ViewSpec(BaseModel):
                 raise ValueError("path may hold only letters, digits and . _ ~ - between single slashes")
         if value.lower() == "/__gf" or value.lower().startswith("/__gf/"):
             raise ValueError("path may not start with /__gf (the platform's own)")
+        return value
+
+    @field_validator("editable")
+    @classmethod
+    def _editable_are_content_paths(cls, value: list[str]) -> list[str]:
+        if len(value) > 16:
+            raise ValueError("editable lists at most 16 content files")
+        for path in value:
+            if not path or len(path) > 200 or any(not _VIEW_PATH_SEGMENT.match(s) or s in (".", "..") for s in path.split("/")):
+                raise ValueError("editable entries are content paths: letters, digits and . _ ~ - between single slashes, no leading slash")
+        if len(set(value)) != len(value):
+            raise ValueError("editable lists a path twice")
         return value
 
 
