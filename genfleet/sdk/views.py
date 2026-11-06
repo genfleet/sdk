@@ -29,22 +29,21 @@ Then serve them with :class:`Views`::
 
 How a view runs:
 
-- The platform frames the view's page in its app, on an origin of the
-  view's own. The page itself (``static``) loads without a viewer: keep data
-  out of it.
+- The platform frames the view's page in its app, sandboxed: the page has
+  no cookies and no storage. The page itself (``static``) loads without a
+  viewer: keep data out of it.
 - The page loads the platform script first, ``<script src="/__gf/view.js">``,
-  and calls ``genfleet.fetch(url, init)`` for its data: same origin only, and
-  each request carries the viewer's short-lived credential.
+  and calls ``genfleet.fetch(url, init)`` for its data: the view's own URLs
+  only, and each request carries the viewer's short-lived credential.
 - A :meth:`Views.route` handler gets the signed-in :class:`Viewer` (the
   member's user id, workspace role and the view). The platform sets it and
   removes any copy a browser sent. A route refuses a request with no viewer
   (401) or a role below its ``min_role`` (403).
 - **No inline script or style.** Every view is served with a Content
-  Security Policy of ``default-src 'self'`` and no inline allowance, so a
-  single HTML file with ``<script>`` or ``<style>`` blocks won't run. Ship
-  your script and style as files next to the page. Nothing loads from
-  another origin either (no CDN scripts, fonts or images), and forms post
-  only to the view's own origin.
+  Security Policy with no inline allowance, so a single HTML file with
+  ``<script>`` or ``<style>`` blocks won't run. Ship your script and style
+  as files next to the page. Nothing loads from another site either (no CDN
+  scripts, fonts or images), and forms post only to the view itself.
 - Changes that belong to the workspace (its content files) are written
   through the platform, not kept in the agent.
 

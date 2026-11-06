@@ -100,12 +100,11 @@ fetches are cross-origin requests from that opaque origin; `genfleet.fetch`
 handles that.
 
 **No inline script or style.** Every view is served with a Content Security
-Policy of `default-src 'self'` with no inline allowance. A single HTML file
-with `<script>` or `<style>` blocks won't run: ship script and style as
-separate files next to the page. Nothing loads from another origin either
-(no CDN scripts, fonts or images), and forms post only to the view itself.
-Responses are not cached, and the page can't set cookies that Genfleet
-keeps.
+Policy with no inline allowance. A single HTML file with `<script>` or
+`<style>` blocks won't run: ship script and style as separate files next to
+the page. Nothing loads from another site either (no CDN scripts, fonts or
+images), and forms post only to the view itself. HTML and JSON responses
+are never cached; scripts, styles and images are revalidated on each load.
 
 ## Try it locally
 
