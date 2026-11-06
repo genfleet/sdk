@@ -57,6 +57,7 @@ Requires the ``serve`` extra: ``pip install 'genfleet-sdk[serve]'``.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,20 +75,30 @@ MinRole = Literal["owner", "admin", "member"]
 MIN_ROLES: tuple[MinRole, ...] = ("owner", "admin", "member")
 _MEMBER_ROLES = frozenset({"owner", "admin", "developer", "billing", "member", "viewer"})
 
-#: The security headers the platform sends with every view response (``frame-ancestors`` names
-#: the app, which the dev server has none of), as the dev server sends them.
-SECURITY_HEADERS = {
-    "content-security-policy": (
-        "default-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; object-src 'none'"
-    ),
-    "x-content-type-options": "nosniff",
-    "referrer-policy": "no-referrer",
-    "cross-origin-opener-policy": "same-origin",
-    "cross-origin-resource-policy": "same-origin",
-}
+#: The iframe sandbox a view runs in (no ``allow-same-origin``: an opaque origin,
+#: so no cookies and no ``localStorage``/``sessionStorage``), also sent as CSP.
+SANDBOX_FLAGS = "allow-scripts allow-forms allow-downloads"
+
+
+def security_headers(origin: str) -> dict[str, str]:
+    """The security headers the platform sends with every view response, for a view served from ``origin``.
+
+    The CSP names the origin (``'self'`` means nothing in an opaque origin) and
+    has no inline allowance; ``frame-ancestors`` (the app) is left out locally.
+    """
+    return {
+        "content-security-policy": (
+            f"default-src {origin}; connect-src {origin}; form-action {origin}; base-uri 'none'; "
+            f"object-src 'none'; sandbox {SANDBOX_FLAGS}"
+        ),
+        "x-content-type-options": "nosniff",
+        "referrer-policy": "no-referrer",
+        "cross-origin-opener-policy": "same-origin",
+    }
+
 
 #: The only headers of yours the platform passes to the browser. ``set-cookie``,
-#: CORS, framing and your own CSP are dropped; a ``location`` only when relative.
+#: CORS, framing and your own CSP are dropped; a ``location`` only when it stays on the view.
 PASSED_RESPONSE_HEADERS = ("content-type", "content-language", "etag", "last-modified", "location", "content-disposition")
 
 
@@ -97,9 +108,21 @@ def cache_control_for(content_type: str | None) -> str:
     return "private, no-store" if kind == "" or kind.startswith("text/html") or "json" in kind else "private, no-cache"
 
 
-def _relative_location(value: str) -> bool:
-    lowered = value.lower()
-    return "://" not in lowered and not value.startswith(("//", "/\\")) and not lowered.startswith(("javascript:", "data:"))
+_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+#: Types a request without a viewer may get back (the platform's backstop): the page and its files.
+_ANONYMOUS_TYPES = ("text/html", "text/css", "text/javascript", "application/javascript", "image/", "font/", "application/font", "application/wasm")
+
+
+def _location_ok(value: str) -> bool:
+    """A redirect that stays on the view: relative or a path; no scheme, ``//``, backslash or whitespace."""
+    if not value or any(ord(c) <= 0x20 or ord(c) == 0x7F for c in value) or "\\" in value:
+        return False
+    return not _SCHEME.match(value) and not value.startswith("//")
+
+
+def _anonymous_type_ok(content_type: str | None) -> bool:
+    kind = (content_type or "").split(";")[0].strip().lower()
+    return bool(kind) and any(kind == t or (t.endswith("/") and kind.startswith(t)) for t in _ANONYMOUS_TYPES)
 
 
 def role_meets(role: str, min_role: MinRole) -> bool:
@@ -223,7 +246,7 @@ class Views:
                 target = (path.rsplit("/", 1)[-1] or ".") + "/"
 
                 async def redirect(request: Any) -> Any:
-                    return responses.Response(status_code=307, headers={"location": target})
+                    return responses.Response(status_code=307, headers={"location": target}, media_type="text/plain")
 
                 return redirect
 
@@ -258,7 +281,7 @@ def _route_path(path: str) -> str:
 DEV_CLIENT_SCRIPT = (
     "(function(){window.genfleet=Object.freeze({"
     "fetch:function(i,o){o=o||{};var h=new Headers(o.headers||{});h.set('Authorization','Bearer dev');"
-    "return fetch(i,Object.assign({},o,{headers:h,credentials:'omit'}))},"
+    "return fetch(new URL(i,location.href).href,Object.assign({},o,{headers:h,mode:'cors',credentials:'omit'}))},"
     "ready:function(){return Promise.resolve()},"
     "navigate:function(p){console.log('genfleet.navigate',p)}})})();"
 )
@@ -270,15 +293,18 @@ _VIEWER_HEADER_NAMES = {VIEWER_ID_HEADER.encode(), VIEWER_ROLE_HEADER.encode(), 
 def dev_app(views: Views, viewer: Viewer | None) -> Any:
     """``views`` as the platform would serve it, for local runs and tests.
 
+    - The page runs sandboxed (CSP ``sandbox``, no ``allow-same-origin``), so it
+      has an opaque origin as in the app: cookies and storage throw, and its
+      fetches carry ``Origin: null``, answered with CORS for ``null``.
     - A request with ``Authorization: Bearer …`` (``genfleet.fetch`` in the
-      stand-in script sends one) gets ``viewer``; one without gets no viewer,
-      like the page's first load. The bearer is removed, and any viewer
-      header the browser sent is replaced.
-    - ``POST``/``PUT``/``PATCH``/``DELETE`` without a bearer: 401, as on the platform.
-    - Only ``PASSED_RESPONSE_HEADERS`` of yours reach the browser (a
-      ``location`` only when relative), then ``SECURITY_HEADERS`` and
-      ``cache-control``, once each: an inline script fails here as it would
-      on the platform.
+      stand-in script sends one) gets ``viewer``; one without gets none. The
+      bearer is removed, and any viewer header the browser sent is replaced.
+    - ``POST``/``PUT``/``PATCH``/``DELETE`` without a bearer: 401.
+    - Without a bearer only the page and its files come back: any other type is
+      a 401 (redirects and 304s pass, without a body).
+    - Only ``PASSED_RESPONSE_HEADERS`` of yours reach the browser (a ``location``
+      only when it stays on the view), then the security headers and
+      ``cache-control``, once each.
     - ``/__gf/view.js`` is a stand-in for the platform script.
     """
 
@@ -286,13 +312,21 @@ def dev_app(views: Views, viewer: Viewer | None) -> Any:
         if scope["type"] != "http":
             await views(scope, receive, send)
             return
-        if scope["path"] == CLIENT_SCRIPT_PATH:
-            await _send(send, 200, DEV_CLIENT_SCRIPT.encode(), "application/javascript")
-            return
         incoming = scope.get("headers", [])
+        origin = _origin_of(scope)
+        cors = _cors(incoming)
+        security = {**security_headers(origin), **cors}
+        if scope["path"] == CLIENT_SCRIPT_PATH:
+            await _send(send, 200, DEV_CLIENT_SCRIPT.encode(), "application/javascript", security)
+            return
+        method = scope.get("method", "GET")
+        if method == "OPTIONS":
+            await _send(send, 204, b"", "text/plain", {**security, "access-control-allow-methods": "GET, HEAD, POST, PUT, PATCH, DELETE",
+                                                        "access-control-allow-headers": "authorization, content-type", "access-control-max-age": "600"})
+            return
         signed_in = any(k.lower() == b"authorization" and v.lower().startswith(b"bearer ") for k, v in incoming)
-        if not signed_in and scope.get("method", "GET") not in _SAFE_METHODS:
-            await _send(send, 401, b'{"error":"token_required"}', "application/json")
+        if not signed_in and method not in _SAFE_METHODS:
+            await _send(send, 401, b'{"error":"token_required"}', "application/json", security)
             return
         headers = [(k, v) for k, v in incoming if k.lower() not in _VIEWER_HEADER_NAMES and k.lower() != b"authorization"]
         if signed_in and viewer is not None:
@@ -301,17 +335,30 @@ def dev_app(views: Views, viewer: Viewer | None) -> Any:
                 (VIEWER_ROLE_HEADER.encode(), viewer.role.encode()),
                 (VIEW_ID_HEADER.encode(), viewer.view.encode()),
             ]
+        state = {"drop_body": False, "refused": False}
 
         async def secured(message: Any) -> None:
             if message["type"] == "http.response.start":
+                status = message["status"]
                 agent = {k.decode().lower(): v.decode() for k, v in message.get("headers", [])}
+                if status in (204, 304) or 300 <= status < 400:
+                    state["drop_body"] = True
+                elif not signed_in and not _anonymous_type_ok(agent.get("content-type")):
+                    state["refused"] = True
+                    await _send(send, 401, b'{"error":"sign_in_required"}', "application/json", security)
+                    return
                 kept = {
                     name: agent[name]
                     for name in PASSED_RESPONSE_HEADERS
-                    if name in agent and (name != "location" or _relative_location(agent[name]))
+                    if name in agent and (name != "location" or _location_ok(agent[name]))
                 }
-                out = {**kept, **SECURITY_HEADERS, "cache-control": cache_control_for(agent.get("content-type"))}
+                out = {**kept, **security, "cache-control": cache_control_for(agent.get("content-type"))}
                 message = {**message, "headers": [(k.encode(), v.encode()) for k, v in out.items()]}
+            elif message["type"] == "http.response.body":
+                if state["refused"]:
+                    return
+                if state["drop_body"]:
+                    message = {**message, "body": b""}
             await send(message)
 
         await views({**scope, "headers": headers}, receive, secured)
@@ -319,8 +366,18 @@ def dev_app(views: Views, viewer: Viewer | None) -> Any:
     return app
 
 
-async def _send(send: Any, status: int, body: bytes, content_type: str) -> None:
-    headers = {"content-type": content_type, **SECURITY_HEADERS, "cache-control": cache_control_for(content_type)}
+def _origin_of(scope: Any) -> str:
+    host = next((v.decode("latin-1") for k, v in scope.get("headers", []) if k.lower() == b"host"), "127.0.0.1")
+    return f"{scope.get('scheme', 'http')}://{host}"
+
+
+def _cors(incoming: Any) -> dict[str, str]:
+    origin = next((v for k, v in incoming if k.lower() == b"origin"), None)
+    return {"access-control-allow-origin": "null", "vary": "origin"} if origin == b"null" else {"vary": "origin"}
+
+
+async def _send(send: Any, status: int, body: bytes, content_type: str, security: dict[str, str]) -> None:
+    headers = {"content-type": content_type, **security, "cache-control": cache_control_for(content_type)}
     await send({"type": "http.response.start", "status": status, "headers": [(k.encode(), v.encode()) for k, v in headers.items()]})
     await send({"type": "http.response.body", "body": body})
 

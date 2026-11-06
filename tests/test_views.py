@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from genfleet.sdk.manifest import ManifestError, load_agent_manifest
-from genfleet.sdk.views import SECURITY_HEADERS, Viewer, Views, dev_app, role_meets, viewer_from_headers
+from genfleet.sdk.views import Viewer, Views, dev_app, role_meets, security_headers, viewer_from_headers
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from starlette.responses import Response
@@ -127,9 +127,8 @@ async def test_dev_server_sends_the_platform_headers_once_and_drops_the_agents(t
     res = await call(dev_app(views, Viewer("dev", "admin", "team")), "GET", "/team/api/cookie", headers={"authorization": "Bearer dev"})
     for dropped in ("set-cookie", "access-control-allow-origin", "location"):
         assert dropped not in res.headers
-    assert res.headers.get_list("content-security-policy") == [SECURITY_HEADERS["content-security-policy"]]
+    assert res.headers.get_list("content-security-policy") == [security_headers("http://v")["content-security-policy"]]
     assert "unsafe-inline" not in res.headers["content-security-policy"]
-    assert res.headers["cross-origin-resource-policy"] == "same-origin"
     assert res.headers["cache-control"] == "private, no-cache"
     page = await call(dev_app(views, None), "GET", "/team/")
     assert page.headers["cache-control"] == "private, no-store"
@@ -179,3 +178,45 @@ def test_view_paths_are_checked():
         Views().route("/a/../b")
     with pytest.raises(ValueError):
         Views().route("/a", min_role="root")  # type: ignore[arg-type]
+
+
+
+async def test_dev_server_sandboxes_the_page_and_answers_its_opaque_origin(tmp_path):
+    app = dev_app(make_views(tmp_path), Viewer("dev", "admin", "team"))
+    page = await call(app, "GET", "/team/")
+    csp = page.headers["content-security-policy"]
+    assert "sandbox allow-scripts allow-forms allow-downloads" in csp and "allow-same-origin" not in csp
+    assert "default-src http://v" in csp and "'self'" not in csp
+    pre = await call(app, "OPTIONS", "/team/api/me", headers={"origin": "null", "access-control-request-method": "GET"})
+    assert pre.status_code == 204 and pre.headers["access-control-allow-origin"] == "null"
+    res = await call(app, "GET", "/team/api/me", headers={"origin": "null", "authorization": "Bearer dev"})
+    assert res.headers["access-control-allow-origin"] == "null" and "access-control-allow-credentials" not in res.headers
+
+
+async def test_dev_server_copies_the_platform_backstop_and_redirect_rule(tmp_path):
+    views = make_views(tmp_path)
+
+    @views.route("/team/api/go")
+    async def go(request, viewer):
+        return Response("moved", status_code=302, headers={"location": request.query_params.get("to", "next")}, media_type="text/plain")
+
+    app = dev_app(views, Viewer("dev", "admin", "team"))
+    bare = await call(app, "GET", "/team")
+    assert bare.status_code == 307 and bare.headers["location"] == "team/" and bare.content == b""
+    signed = {"authorization": "Bearer dev"}
+    moved = await call(app, "GET", "/team/api/go", headers=signed)
+    assert moved.status_code == 302 and moved.headers["location"] == "next" and moved.content == b""
+    for bad in ("https://evil.example/", "//evil.example", "/\tx"):
+        res = await call(app, "GET", "/team/api/go", params={"to": bad}, headers=signed)
+        assert "location" not in res.headers, bad
+
+
+async def test_dev_server_refuses_data_to_a_request_without_a_viewer(tmp_path):
+    views = make_views(tmp_path)
+
+    @views.route("/team/api/open")
+    async def leaky(request, viewer):  # pragma: no cover - the route refuses first
+        return {"x": 1}
+
+    app = dev_app(views, Viewer("dev", "admin", "team"))
+    assert (await call(app, "GET", "/team/api/open")).status_code == 401
