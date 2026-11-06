@@ -106,14 +106,14 @@ async def test_static_page_loads_without_a_viewer(tmp_path):
 
 
 async def test_dev_server_stamps_the_viewer_only_for_a_token_and_replaces_spoofs(tmp_path):
-    app = dev_app(make_views(tmp_path), Viewer("dev", "member", "team"))
+    app = dev_app(make_views(tmp_path), Viewer("dev", "member", "team"), token="dev")
     anonymous = await call(app, "GET", "/team/api/me", headers={"x-genfleet-viewer-id": "u", "x-genfleet-viewer-role": "owner", "x-genfleet-view": "team"})
     assert anonymous.status_code == 401
     res = await call(app, "GET", "/team/api/me", headers={"authorization": "Bearer dev", "x-genfleet-viewer-role": "owner"})
     assert res.json() == {"user": "dev", "role": "member"}
     assert (await call(app, "POST", "/team/api/save")).status_code == 401
     script = await call(app, "GET", "/__gf/view.js")
-    assert script.status_code == 200 and "Bearer dev" in script.text
+    assert script.status_code == 200 and 'var T="dev"' in script.text
 
 
 async def test_dev_server_sends_the_platform_headers_once_and_drops_the_agents(tmp_path):
@@ -124,7 +124,7 @@ async def test_dev_server_sends_the_platform_headers_once_and_drops_the_agents(t
         return Response("x", media_type="text/plain", headers={"set-cookie": "a=b; Domain=views.test", "access-control-allow-origin": "*",
                                       "content-security-policy": "default-src *", "location": "https://evil.example/"})
 
-    res = await call(dev_app(views, Viewer("dev", "admin", "team")), "GET", "/team/api/cookie", headers={"authorization": "Bearer dev"})
+    res = await call(dev_app(views, Viewer("dev", "admin", "team"), token="dev"), "GET", "/team/api/cookie", headers={"authorization": "Bearer dev"})
     for dropped in ("set-cookie", "access-control-allow-origin", "location"):
         assert dropped not in res.headers
     assert res.headers.get_list("content-security-policy") == [security_headers("http://v")["content-security-policy"]]
@@ -182,7 +182,7 @@ def test_view_paths_are_checked():
 
 
 async def test_dev_server_sandboxes_the_page_and_answers_its_opaque_origin(tmp_path):
-    app = dev_app(make_views(tmp_path), Viewer("dev", "admin", "team"))
+    app = dev_app(make_views(tmp_path), Viewer("dev", "admin", "team"), token="dev")
     page = await call(app, "GET", "/team/")
     csp = page.headers["content-security-policy"]
     assert "sandbox allow-scripts allow-forms allow-downloads" in csp and "allow-same-origin" not in csp
@@ -200,7 +200,7 @@ async def test_dev_server_copies_the_platform_backstop_and_redirect_rule(tmp_pat
     async def go(request, viewer):
         return Response("moved", status_code=302, headers={"location": request.query_params.get("to", "next")}, media_type="text/plain")
 
-    app = dev_app(views, Viewer("dev", "admin", "team"))
+    app = dev_app(views, Viewer("dev", "admin", "team"), token="dev")
     bare = await call(app, "GET", "/team")
     assert bare.status_code == 307 and bare.headers["location"] == "team/" and bare.content == b""
     signed = {"authorization": "Bearer dev"}
@@ -218,5 +218,26 @@ async def test_dev_server_refuses_data_to_a_request_without_a_viewer(tmp_path):
     async def leaky(request, viewer):  # pragma: no cover - the route refuses first
         return {"x": 1}
 
-    app = dev_app(views, Viewer("dev", "admin", "team"))
+    app = dev_app(views, Viewer("dev", "admin", "team"), token="dev")
     assert (await call(app, "GET", "/team/api/open")).status_code == 401
+
+
+async def test_dev_server_treats_any_other_bearer_as_anonymous(tmp_path):
+    # Any page on any site can send an Origin: null fetch to the dev server.
+    app = dev_app(make_views(tmp_path), Viewer("dev", "admin", "team"))
+    for bearer in ("Bearer x", "Bearer dev", "bearer ", "Basic abc"):
+        res = await call(app, "GET", "/team/api/me", headers={"origin": "null", "authorization": bearer})
+        assert res.status_code == 401, bearer
+        assert (await call(app, "POST", "/team/api/save", headers={"origin": "null", "authorization": bearer})).status_code == 401
+    script = (await call(app, "GET", "/__gf/view.js")).text
+    token = script.split('var T="', 1)[1].split('"', 1)[0]
+    assert len(token) >= 24
+    assert (await call(app, "GET", "/team/api/me", headers={"authorization": f"Bearer {token}"})).status_code == 200
+
+
+async def test_dev_server_never_hands_its_script_to_another_page(tmp_path):
+    app = dev_app(make_views(tmp_path), Viewer("dev", "admin", "team"), token="dev")
+    res = await call(app, "GET", "/__gf/view.js", headers={"origin": "null"})
+    assert res.status_code == 200
+    assert "access-control-allow-origin" not in res.headers  # a sandboxed page can't fetch() it to read the token
+    assert '"http://v"' in res.text  # the token goes only to the dev server's own origin

@@ -56,8 +56,10 @@ Requires the ``serve`` extra: ``pip install 'genfleet-sdk[serve]'``.
 
 from __future__ import annotations
 
+import hmac
 import json
 import re
+import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -275,30 +277,38 @@ def _route_path(path: str) -> str:
     return path.rstrip("/") or "/"
 
 
-#: The dev server's stand-in for the platform script: same API, no handshake.
-#: ``genfleet.fetch`` sends a dev bearer token, which is what makes the dev
-#: server stamp the viewer, as the platform does only for a token.
-DEV_CLIENT_SCRIPT = (
-    "(function(){window.genfleet=Object.freeze({"
-    "fetch:function(i,o){o=o||{};var h=new Headers(o.headers||{});h.set('Authorization','Bearer dev');"
-    "return fetch(new URL(i,location.href).href,Object.assign({},o,{headers:h,mode:'cors',credentials:'omit'}))},"
-    "ready:function(){return Promise.resolve()},"
-    "navigate:function(p){console.log('genfleet.navigate',p)}})})();"
-)
+def dev_client_script(token: str, origin: str) -> str:
+    """The dev server's stand-in for the platform script: same API, no handshake.
+
+    ``genfleet.fetch`` sends this run's dev token, the only bearer the dev
+    server treats as signed in, and only to the dev server's own ``origin``
+    (baked in: an opaque-origin page has no ``location.origin`` to compare).
+    """
+    return (
+        "(function(){var T=" + json.dumps(token) + ",O=" + json.dumps(origin) + ";window.genfleet=Object.freeze({"
+        "fetch:function(i,o){o=o||{};var u=new URL(typeof i==='string'?i:i.url,location.href),h=new Headers(o.headers||{});"
+        "if(u.origin===O)h.set('Authorization','Bearer '+T);"
+        "return fetch(u.href,Object.assign({},o,{headers:h,mode:'cors',credentials:'omit'}))},"
+        "ready:function(){return Promise.resolve()},"
+        "navigate:function(p){console.log('genfleet.navigate',p)}})})();"
+    )
+
 
 _SAFE_METHODS = frozenset({"GET", "HEAD"})
 _VIEWER_HEADER_NAMES = {VIEWER_ID_HEADER.encode(), VIEWER_ROLE_HEADER.encode(), VIEW_ID_HEADER.encode()}
 
 
-def dev_app(views: Views, viewer: Viewer | None) -> Any:
+def dev_app(views: Views, viewer: Viewer | None, *, token: str | None = None) -> Any:
     """``views`` as the platform would serve it, for local runs and tests.
 
     - The page runs sandboxed (CSP ``sandbox``, no ``allow-same-origin``), so it
       has an opaque origin as in the app: cookies and storage throw, and its
       fetches carry ``Origin: null``, answered with CORS for ``null``.
-    - A request with ``Authorization: Bearer …`` (``genfleet.fetch`` in the
-      stand-in script sends one) gets ``viewer``; one without gets none. The
-      bearer is removed, and any viewer header the browser sent is replaced.
+    - A request with ``Authorization: Bearer <token>`` gets ``viewer``. The
+      token is random per run (``token``, else ``secrets.token_urlsafe``) and
+      only the stand-in ``/__gf/view.js`` knows it: any page on any site can
+      send an ``Origin: null`` fetch here, so any other bearer is anonymous.
+      The bearer is removed, and any viewer header the browser sent is replaced.
     - ``POST``/``PUT``/``PATCH``/``DELETE`` without a bearer: 401.
     - Without a bearer only the page and its files come back: any other type is
       a 401 (redirects and 304s pass, without a body).
@@ -307,6 +317,9 @@ def dev_app(views: Views, viewer: Viewer | None) -> Any:
       ``cache-control``, once each.
     - ``/__gf/view.js`` is a stand-in for the platform script.
     """
+
+    dev_token = token or secrets.token_urlsafe(24)
+    expected = f"Bearer {dev_token}".encode()
 
     async def app(scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] != "http":
@@ -317,14 +330,17 @@ def dev_app(views: Views, viewer: Viewer | None) -> Any:
         cors = _cors(incoming)
         security = {**security_headers(origin), **cors}
         if scope["path"] == CLIENT_SCRIPT_PATH:
-            await _send(send, 200, DEV_CLIENT_SCRIPT.encode(), "application/javascript", security)
+            # No CORS on the script: a `<script src>` loads it without CORS, and
+            # no other page may `fetch()` it and read the dev token.
+            await _send(send, 200, dev_client_script(dev_token, origin).encode(), "application/javascript", security_headers(origin))
             return
         method = scope.get("method", "GET")
         if method == "OPTIONS":
             await _send(send, 204, b"", "text/plain", {**security, "access-control-allow-methods": "GET, HEAD, POST, PUT, PATCH, DELETE",
                                                         "access-control-allow-headers": "authorization, content-type", "access-control-max-age": "600"})
             return
-        signed_in = any(k.lower() == b"authorization" and v.lower().startswith(b"bearer ") for k, v in incoming)
+        presented = next((v.strip() for k, v in incoming if k.lower() == b"authorization"), b"")
+        signed_in = hmac.compare_digest(presented, expected)
         if not signed_in and method not in _SAFE_METHODS:
             await _send(send, 401, b'{"error":"token_required"}', "application/json", security)
             return
