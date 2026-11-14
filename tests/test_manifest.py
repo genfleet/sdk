@@ -142,6 +142,18 @@ def test_an_agent_declares_the_catalog_models_it_calls(tmp_path):
     assert load_agent_manifest(tmp_path).models == ["catalog-model", "catalog-model-2"]
 
 
+def test_an_agent_says_whether_its_model_can_be_chosen(tmp_path):
+    _write(tmp_path, '[agent]\nname = "support"\nmodel_choice = true\n')
+    assert load_agent_manifest(tmp_path).model_choice is True
+    _write(tmp_path, '[agent]\nname = "support"\n')
+    assert load_agent_manifest(tmp_path).model_choice is False
+
+
+def test_model_choice_must_be_a_boolean(tmp_path):
+    with pytest.raises(ManifestError, match="model_choice"):
+        load_agent_manifest(_write(tmp_path, '[agent]\nname = "support"\nmodel_choice = "yes"\n'))
+
+
 def test_an_agent_without_models_declares_none(tmp_path):
     _write(tmp_path, '[agent]\nname = "support"\n')
     assert load_agent_manifest(tmp_path).models == []
