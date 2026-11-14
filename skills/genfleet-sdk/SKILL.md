@@ -307,12 +307,13 @@ name = "support"                 # required
 kind = "code"                    # "declarative" | "code" | "native_sdk" (default "code")
 description = "Answers order questions"
 entry = "agent:build_agent"      # module:factory (default)
+model_choice = true              # the code reads its model id from AGENT_MODEL (default false)
 
 [tools]
 "@acme/jira" = "*"               # slug = version spec; push pins version and digest
 ```
 
-`[mcps]` takes the same slug form. `load_agent_manifest(dir)` and `load_tool_manifest(dir)` validate a manifest offline and raise `ManifestError` with the file path.
+`model_choice = true` lets workspace owners and admins choose the agent's model; read it in `build_agent` with `os.environ.get("AGENT_MODEL") or <your default>`, and leave the key out if the code ignores it. `[mcps]` takes the same slug form. `load_agent_manifest(dir)` and `load_tool_manifest(dir)` validate a manifest offline and raise `ManifestError` with the file path.
 
 ## Key Rules
 

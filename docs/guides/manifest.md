@@ -56,6 +56,7 @@ entry = "support_agent.agent:build_agent"
 | `kind` | no | `"code"` | One of `"code"`, `"declarative"`, `"native_sdk"`. See below. |
 | `description` | no | `""` | A one-line description. `gf agents push --create` uses it as the agent's description. |
 | `entry` | no | `"agent:build_agent"` | `module:callable` for the agent factory. See the [agent factory guide](agent-factory.md). |
+| `model_choice` | no | `false` | `true` when the agent reads its model id from the `AGENT_MODEL` environment variable. Workspace owners and admins can then choose its model on the agent's page. See below. |
 
 **`kind`.** The parser accepts exactly these three values and rejects any
 other. It doesn't attach behaviour to them. An agent written as a Python
@@ -69,6 +70,33 @@ in the [README](../../README.md#operators-and-customers).
 
 The SDK parser still accepts an `audiences` key for compatibility, but the
 platform doesn't use it, so set who an agent serves in the dashboard.
+
+**Letting the workspace choose the model.** Read the model id from
+`AGENT_MODEL` when the agent is built, with your own default when it is unset,
+and set `model_choice = true`:
+
+```python
+import os
+
+DEFAULT_MODEL = "your-default-model"
+
+def build_agent():
+    return Agent(
+        role="Support",
+        model={"model": os.environ.get("AGENT_MODEL") or DEFAULT_MODEL},
+    )
+```
+
+```toml
+[agent]
+name = "support"
+model_choice = true
+```
+
+The workspace picks from the models the platform offers, and the agent
+restarts on its new model. With no choice, `AGENT_MODEL` is unset and your
+default applies. Leave `model_choice` out when the code ignores `AGENT_MODEL`:
+the page then shows no model picker, since a choice would change nothing.
 
 ### `[content]`
 

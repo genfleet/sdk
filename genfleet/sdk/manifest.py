@@ -252,6 +252,12 @@ class AgentManifest(BaseModel):
             raise ValueError("audiences: list at least one of 'operator', 'customer', or leave it out")
         return list(dict.fromkeys(value))
 
+    #: The agent reads its model id from the ``AGENT_MODEL`` environment
+    #: variable, so a workspace owner or admin may choose the model on the
+    #: agent's page. Leave it ``False`` when the code ignores ``AGENT_MODEL``:
+    #: a choice would then change nothing.
+    model_choice: StrictBool = False
+
     #: Platform model ids the agent calls. In hosted
     #: execution the platform scopes the agent's model credential to these.
     #: A ``provider/model`` id is the agent's own business and isn't listed.

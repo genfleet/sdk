@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- `[agent] model_choice` in `genfleet.toml`: set it to `true` when the agent reads its model id from `AGENT_MODEL`, so workspace owners and admins can choose the agent's model. Defaults to `false`.
+
 ## 0.27.0 — 2026-11-06
 
 Agent views with content saves, and Custom API connections.
