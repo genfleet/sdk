@@ -997,6 +997,11 @@ gf agents push hello-agent --create --secret OPENROUTER_API_KEY --activate</code
         <span><strong>Tools from the marketplace need approval first.</strong> The <code>count_words</code> tool above is plain Python inside your package, so it runs as soon as the agent does. A tool your manifest names under <code>[tools]</code> (for example <code>"@acme/jira" = "1.x"</code>) is different. It is pinned when the agent is submitted, and an agent that names one can't be started until the agent is submitted to the marketplace and approved, with that tool pinned. A tool that isn't published yet can't be pinned, so submission fails. For the beta, keep tools in your package.</span>
       </div>
 
+      <h4>Ship a new version of an agent you already created</h4>
+      <p>Don't delete and re-create the agent. Push the new code onto it:</p>
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">gf agents push hello-agent --update   # the agent named in genfleet.toml; --name to pick another</code></pre>
+      <p>The agent keeps its id, usage and activity, channels, content and secrets. The platform reads the new code's manifest, and an agent that is running restarts on the new code. <code>--update</code> needs the workspace owner or an admin, and doesn't work on an agent installed from the marketplace: those move to a new version with <strong>Upgrade</strong>. To publish the new code, submit the agent to the marketplace as the next version, as before.</p>
+
       <h3>6. Chat with it</h3>
       <p>Start the agent's sandbox (skip this if you passed <code>--activate</code>), then send it a message:</p>
       <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">gf agents activate hello-agent

@@ -195,7 +195,8 @@ You never write a hash. Two things are pinned for you:
   stores it under its `sha256:` digest, the CLI checks that the registry
   computed the same digest, and `gf agents create` and `--create` refer to the
   agent by that digest. `gf agents digest <dir>` prints the same digest without
-  uploading anything.
+  uploading anything. `gf agents push --update <dir>` runs a new push on the
+  agent that already exists, so it keeps its id and history.
 - **The tools it names.** When you submit the agent to the marketplace, each
   `[tools]` spec is resolved to one exact version and that version's digest.
   These are recorded alongside the agent's archive, not written into your
