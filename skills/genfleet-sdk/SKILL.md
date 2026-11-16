@@ -141,7 +141,7 @@ def issue_refund(order_id: str, amount: float) -> str: ...
 - Your marking is only the default: the tenant owner sets each tool's audience on the platform, and that setting wins, wider or narrower. It reaches the agent as `metadata["genfleet.tool_audiences"]`.
 - `sensitive=True`: the call does not run when the model makes it. The model is told it awaits approval, a workspace owner or admin approves the exact call, then it runs once in a follow-up turn. A sensitive tool is refused on a call from another agent. The owner can also mark or unmark tools on the platform.
 - `customer_safe=True` is **deprecated** (0.18, removed in 1.0): it meant both audiences. Use `audiences=[...]`. Do not combine the two.
-- Outside the platform there are no roles and nothing is filtered. Who an agent serves is set by the workspace owner in the dashboard, not in `genfleet.toml`.
+- Outside the platform there are no roles and nothing is filtered. Who an agent serves is set by the workspace owner in the dashboard, not in `agent.toml`.
 
 ### ToolContext: tool settings and secrets (0.21)
 
@@ -299,7 +299,7 @@ class MyAgent:
 
 `serve` does **not** execute `tool_calls` that such an agent yields: it only relays text, files and tool events. Run your tools inside `run` and yield the final text. See `references/frameworks.md`.
 
-## genfleet.toml
+## agent.toml
 
 ```toml
 [agent]
@@ -313,7 +313,7 @@ model_choice = true              # the code reads its model id from AGENT_MODEL 
 "@acme/jira" = "*"               # slug = version spec; push pins version and digest
 ```
 
-`model_choice = true` lets workspace owners and admins choose the agent's model; read it in `build_agent` with `os.environ.get("AGENT_MODEL") or <your default>`, and leave the key out if the code ignores it. `[mcps]` takes the same slug form. `load_agent_manifest(dir)` and `load_tool_manifest(dir)` validate a manifest offline and raise `ManifestError` with the file path.
+`model_choice = true` lets workspace owners and admins choose the agent's model; read it in `build_agent` with `os.environ.get("AGENT_MODEL") or <your default>`, and leave the key out if the code ignores it. `[mcps]` takes the same slug form. `[settings.<key>]` and `[connectors.<slot>]` declare what the installing workspace configures on the agent's page; read them with `genfleet.sdk.config` (`setting`, `is_set`, `connector`, `with_tenant_prompts`). `[data]` (was `[content]`) says whether the agent needs workspace content. The file was `genfleet.toml` before 0.28.0 and that name is still read; a tool's manifest is still `genfleet.toml`. `load_agent_manifest(dir)` and `load_tool_manifest(dir)` validate a manifest offline and raise `ManifestError` with the file path.
 
 ## Key Rules
 

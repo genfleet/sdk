@@ -121,7 +121,7 @@ def test_tool_declares_config_and_secret_names(tmp_path):
 
 def test_missing_manifest_names_the_path(tmp_path):
     # These are authored by hand; an error that does not say where is useless.
-    with pytest.raises(ManifestError, match="genfleet.toml"):
+    with pytest.raises(ManifestError, match="agent.toml"):
         load_agent_manifest(tmp_path)
 
 
@@ -280,3 +280,146 @@ def test_too_many_content_data_globs_are_refused(tmp_path):
     globs = ", ".join(f'"f{i}.json"' for i in range(101))
     with pytest.raises(ManifestError, match="more than 100 globs"):
         load_agent_manifest(_write(tmp_path, f'[agent]\nname = "a"\n[content]\ndata = [{globs}]\n'))
+
+
+# ── agent.toml, [data], [connectors], [settings] (0.28.0) ───────────────────
+
+def _agent_dir(tmp_path, body: str, name: str = "agent.toml"):
+    (tmp_path / name).write_text(body)
+    return tmp_path
+
+
+def test_agent_toml_is_read(tmp_path):
+    manifest = load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n'))
+    assert manifest.name == "a"
+
+
+def test_legacy_name_is_still_read(tmp_path):
+    manifest = load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n', "genfleet.toml"))
+    assert manifest.name == "a"
+
+
+def test_both_manifest_names_is_an_error(tmp_path):
+    _agent_dir(tmp_path, '[agent]\nname = "a"\n')
+    _agent_dir(tmp_path, '[agent]\nname = "a"\n', "genfleet.toml")
+    with pytest.raises(ManifestError, match="keep only agent.toml"):
+        load_agent_manifest(tmp_path)
+
+
+def test_no_manifest_names_agent_toml(tmp_path):
+    with pytest.raises(ManifestError, match="no agent.toml here"):
+        load_agent_manifest(tmp_path)
+
+
+def test_data_table_replaces_content(tmp_path):
+    manifest = load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n[data]\nrequired = true\ndata = ["*.toml"]\n'))
+    assert manifest.content.required is True and manifest.content.data == ["*.toml"]
+
+
+def test_data_and_content_together_is_an_error(tmp_path):
+    with pytest.raises(ManifestError, match=r"both \[data\] and \[content\]"):
+        load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n[data]\nrequired = true\n[content]\nrequired = true\n'))
+
+
+def test_data_errors_name_the_data_table(tmp_path):
+    with pytest.raises(ManifestError, match=r"\[data\] unknown key 'requried'"):
+        load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n[data]\nrequried = true\n'))
+
+
+_FULL = '''
+[agent]
+name = "sales"
+
+[connectors.erp]
+provider = "custom_api"
+description = "The ERP that receives leads."
+
+[connectors.crm]
+provider = "custom_api"
+required = false
+
+[settings.lead_sink]
+type = "enum"
+options = ["erp", "views"]
+default = "views"
+label = "Where leads go"
+group = "Leads"
+
+[settings.open_lead_window_days]
+type = "integer"
+min = 0
+max = 365
+default = 30
+
+[settings.source_map]
+type = "map"
+default = { whatsapp = "WhatsApp" }
+
+[settings.tags]
+type = "list"
+
+[settings.strict]
+type = "boolean"
+required = true
+'''
+
+
+def test_connectors_and_settings_parse(tmp_path):
+    manifest = load_agent_manifest(_agent_dir(tmp_path, _FULL))
+    assert manifest.connectors["erp"].provider == "custom_api" and manifest.connectors["erp"].required is True
+    assert manifest.connectors["crm"].required is False
+    assert manifest.settings["lead_sink"].options == ["erp", "views"]
+    assert manifest.settings["open_lead_window_days"].default == 30
+    assert manifest.settings["source_map"].default == {"whatsapp": "WhatsApp"}
+    assert manifest.settings["strict"].required is True
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ('[connectors.ERP]\nprovider = "custom_api"\n', r"\[connectors.ERP\]: the name"),
+        ('[connectors.erp]\n', r"\[connectors.erp\]: provider"),
+        ('[connectors.erp]\nprovider = "Custom API"\n', "connector id"),
+        ('[connectors.erp]\nprovider = "custom_api"\nsecret = "x"\n', "unknown key 'secret'"),
+        ('[connectors]\nerp = "custom_api"\n', r"\[connectors.erp\] must be a table"),
+        ('[settings.a]\ntype = "secret"\n', r"\[settings.a\]: type"),
+        ('[settings.a]\ntype = "enum"\n', "an enum needs 'options'"),
+        ('[settings.a]\ntype = "enum"\noptions = ["x", "x"]\n', "an enum needs 'options'"),
+        ('[settings.a]\noptions = ["x"]\n', "'options' is only for"),
+        ('[settings.a]\nmin = 1\n', "'min' and 'max' are only for"),
+        ('[settings.a]\ntype = "integer"\nmin = 5\nmax = 1\n', "'min' is above 'max'"),
+        ('[settings.a]\ntype = "integer"\ndefault = 1.5\n', "'default' must be a whole number"),
+        ('[settings.a]\ntype = "integer"\ndefault = true\n', "'default' must be a whole number"),
+        ('[settings.a]\ntype = "integer"\nmax = 3\ndefault = 4\n', "'default' must be at most 3"),
+        ('[settings.a]\ntype = "enum"\noptions = ["x"]\ndefault = "y"\n', "'default' must be one of 'x'"),
+        ('[settings.a]\ntype = "map"\ndefault = { k = 1 }\n', "'default' must be a table of strings"),
+        ('[settings.a]\ntype = "list"\ndefault = [1]\n', "'default' must be a list of strings"),
+        ('[settings.a]\ntype = "boolean"\ndefault = "yes"\n', "'default' must be true or false"),
+        ('[settings.a]\ndefault = 3\n', "'default' must be a string"),
+        ('[settings.a]\nvalue = "x"\n', "unknown key 'value'"),
+    ],
+)
+def test_bad_connectors_and_settings_are_refused(tmp_path, body, message):
+    with pytest.raises(ManifestError, match=message):
+        load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n' + body))
+
+
+def test_too_many_slots_and_settings(tmp_path):
+    slots = "".join(f'[connectors.s{i}]\nprovider = "custom_api"\n' for i in range(9))
+    with pytest.raises(ManifestError, match="more than 8"):
+        load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n' + slots))
+    keys = "".join(f"[settings.k{i}]\n" for i in range(41))
+    with pytest.raises(ManifestError, match="more than 40"):
+        load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n' + keys))
+
+
+def test_setting_value_problem_limits():
+    from genfleet.sdk.manifest import SettingSpec, setting_value_problem
+
+    assert setting_value_problem(SettingSpec(), "x" * 500) is None
+    assert setting_value_problem(SettingSpec(), "x" * 501) == "must be at most 500 characters"
+    assert setting_value_problem(SettingSpec(type="text"), "x" * 20_000) is None
+    assert setting_value_problem(SettingSpec(type="number"), 1.5) is None
+    assert setting_value_problem(SettingSpec(type="number"), True) == "must be a number"
+    assert setting_value_problem(SettingSpec(type="list"), ["a"] * 201) is not None
+    assert setting_value_problem(SettingSpec(type="map"), {"k": "v"}) is None

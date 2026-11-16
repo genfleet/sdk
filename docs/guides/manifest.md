@@ -1,14 +1,15 @@
-# `genfleet.toml` reference
+# `agent.toml` and tool manifest reference
 
-Every agent and every marketplace tool has a `genfleet.toml`. An agent's
-manifest says what the agent is and which tools it depends on. A tool's
+Every agent has an `agent.toml` and every marketplace tool has a
+`genfleet.toml`. An agent's manifest says what the agent is, which tools it
+depends on, and what the workspace that installs it can configure. A tool's
 manifest says what the tool is and which settings and credentials it needs to
 run. The SDK parses both, so you can check a manifest offline:
 
 ```python
 from genfleet.sdk import load_agent_manifest, load_tool_manifest
 
-agent = load_agent_manifest("support_agent")   # the directory holding genfleet.toml
+agent = load_agent_manifest("support_agent")   # the directory holding agent.toml
 tool = load_tool_manifest("acme-tickets")
 ```
 
@@ -22,7 +23,7 @@ check those yourself.
 
 ## Agent manifest
 
-The agent's `genfleet.toml` sits inside the agent's Python package, next to
+The agent's `agent.toml` sits inside the agent's Python package, next to
 the module that holds `build_agent`:
 
 ```text
@@ -30,7 +31,7 @@ support-agent/
   pyproject.toml
   support_agent/
     __init__.py
-    genfleet.toml
+    agent.toml
     agent.py
 ```
 
@@ -47,6 +48,12 @@ entry = "support_agent.agent:build_agent"
 [mcps]
 "@acme/files" = { spec = "*" }
 ```
+
+**The old name.** Before 0.28.0 the agent's manifest was also called
+`genfleet.toml`. That name is still read, so an existing agent keeps working.
+Rename the file when you next touch it: `git mv genfleet.toml agent.toml`. A
+directory holding both is an error. `agent.toml` needs `gf` 0.7.0 or later to
+push.
 
 ### `[agent]`
 
@@ -98,10 +105,10 @@ restarts on its new model. With no choice, `AGENT_MODEL` is unset and your
 default applies. Leave `model_choice` out when the code ignores `AGENT_MODEL`:
 the page then shows no model picker, since a choice would change nothing.
 
-### `[content]`
+### `[data]`
 
 ```toml
-[content]
+[data]
 required = true
 data = ["knowledge.json", "flows/**"]
 ```
@@ -114,8 +121,10 @@ data = ["knowledge.json", "flows/**"]
 Use it for a generic agent whose business comes from its installer: a persona,
 knowledge, rules. With `required = true` the platform doesn't serve the agent
 until that content is in place. `required` must be `true` or `false` (not a
-string), and any other key in `[content]` is an error, which also means an SDK
-release that adds a key is needed before a manifest can use it.
+string), and any other key in `[data]` is an error, which also means an SDK
+release that adds a key is needed before a manifest can use it. The table was
+called `[content]` before 0.28.0; that name is still read, but not together
+with `[data]`.
 
 **Data files.** The workspace chooses, per file, whether it is *loaded* (meant
 to go into the agent's context whole) or *retrieved* (searched when needed,
@@ -155,6 +164,120 @@ and reading stops (with a warning) at the first file that would take the
 loaded files past 8 MiB together, so you always get a prefix of the sorted
 eligible files (skipped files can sit in between); both caps are far above
 what fits in an agent's context.
+
+### `[settings.<key>]`
+
+Values the installing workspace sets on the agent's page, in a form built
+from these tables. Use them for anything the workspace decides and your code
+branches on: where leads go, a time window, a mapping between their names and
+yours.
+
+```toml
+[settings.lead_sink]
+type = "enum"
+options = ["erp", "views"]
+default = "views"
+label = "Where leads go"
+group = "Leads"
+
+[settings.open_lead_window_days]
+type = "integer"
+min = 0
+max = 365
+default = 30
+
+[settings.source_map]
+type = "map"
+description = "Channel name to the lead source in your system."
+```
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `type` | `"string"` | `"string"` (one line, 500 characters), `"text"` (20,000), `"integer"`, `"number"`, `"boolean"`, `"enum"`, `"list"` (of strings) or `"map"` (string to string). A list or map holds at most 200 entries. |
+| `label` | `""` | The field's label, at most 60 characters. The key is shown when left out. |
+| `description` | `""` | Help text under the field, at most 300 characters. |
+| `group` | `""` | A heading that settings with the same group share. |
+| `required` | `false` | The agent's page marks the agent as needing setup until it has a value. |
+| `default` | none | The value in effect until the workspace saves one. It must fit the type. |
+| `options` | | The choices of an `enum`: 1 to 50 distinct strings. Only for `enum`. |
+| `min`, `max` | none | Bounds of an `integer` or `number`. |
+
+The key is 1 to 32 lowercase letters, digits or `_`, starting with a letter;
+at most 40 settings. Any other key in the table is an error.
+
+**A setting never holds a credential.** There is no secret type. Use a
+connector for an API you call, or a tool's `[secrets]`.
+
+Read them with `genfleet.sdk.config`:
+
+```python
+from genfleet.sdk.config import is_set, setting
+
+sink = setting("lead_sink")                 # the saved value, else the manifest default
+days = setting("open_lead_window_days", 30)  # ... else this default
+if is_set("source_map"):                    # True only when the workspace saved one
+    ...
+```
+
+Values are read once, when the agent starts; the platform restarts the agent
+when the workspace changes them. On a local run nothing is set and `setting`
+returns the default you pass. To try values locally, write the file yourself
+and point `GENFLEET_AGENT_CONFIG` at it:
+
+```json
+{"version": 1, "settings": {"lead_sink": "erp"}, "defaults": {"open_lead_window_days": 30}}
+```
+
+### `[connectors.<slot>]`
+
+A connection the agent needs from its workspace. The workspace picks which of
+its connections fills the slot on the agent's page, and your code asks for the
+slot, so it never hard-codes a connection's name:
+
+```toml
+[connectors.erp]
+provider = "custom_api"
+description = "The ERP that receives leads."
+```
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `provider` | required | The kind of connection, e.g. `"custom_api"`. |
+| `required` | `true` | The agent's page marks the agent as needing setup until the slot is filled. |
+| `description` | `""` | Shown next to the slot, at most 300 characters. |
+
+The slot name follows the same rule as a setting key; at most 8 slots.
+
+```python
+from genfleet.sdk import call_connection
+from genfleet.sdk.config import connector
+
+erp = connector("erp")          # None until the workspace fills the slot
+if erp is not None:
+    response = await call_connection(erp.connection, "GET", "/sales_people")
+```
+
+`connector()` returns a `ConnectorBinding` with `connection` (the name to
+call), `provider` and `config`. An agent can only call a connection the
+workspace has let it use; any other call raises `ConnectionCallError` with
+code `connection_not_allowed`.
+
+### Prompts the workspace adds
+
+The workspace can add prompts of its own to an agent, on the agent's page.
+Put them after your system prompt with `with_tenant_prompts`:
+
+```python
+from genfleet.sdk.config import with_tenant_prompts
+
+def build_agent(remote_tools=()):
+    return Agent(role=with_tenant_prompts(ROLE), ...)
+```
+
+It returns your prompt followed by each of the workspace's prompts under its
+title, or your prompt unchanged when there are none. `tenant_prompts()`
+returns them as `TenantPrompt(title, body)` if you want to place them
+yourself.
 
 ### `[tools]` and `[mcps]`
 
@@ -200,7 +323,7 @@ You never write a hash. Two things are pinned for you:
 - **The tools it names.** When you submit the agent to the marketplace, each
   `[tools]` spec is resolved to one exact version and that version's digest.
   These are recorded alongside the agent's archive, not written into your
-  `genfleet.toml`, so the archive's digest still covers exactly the code you
+  `agent.toml`, so the archive's digest still covers exactly the code you
   pushed. A spec that matches no published version, or a tool your workspace's
   plan can't use, fails the submission. An agent that names a
   marketplace tool can't be started until the agent is submitted and approved,

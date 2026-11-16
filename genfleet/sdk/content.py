@@ -8,12 +8,12 @@ knowledge, documents. On the platform it is mounted read-only at ``/content``
   keeps these within a size budget, so an agent can put all of them in its
   prompt.
 - ``data``: a file the agent's own code reads by path (declared by the author
-  in ``genfleet.toml`` ``[content] data``). Never returned here.
+  in ``agent.toml`` ``[data] data``). Never returned here.
 
 The platform writes the modes next to the files, in ``.genfleet-modes.json``.
 With no modes file (a local run, or a folder you made by hand), every text
 file under the root counts as ``loaded``; pass ``exclude=`` the same globs as
-your ``[content] data`` to leave your data files out.
+your ``[data] data`` to leave your data files out.
 
 Paths and globs are compared NFC-normalised and case-sensitive. The modes
 file's contract (``version`` 1, ``files`` a ``{path: mode}`` object) is in

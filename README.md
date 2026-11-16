@@ -57,7 +57,7 @@ curl -X POST http://localhost:8000 \
 
 ## Guides
 
-- [`genfleet.toml` reference](docs/guides/manifest.md): agent and tool manifests, version specs, and what gets pinned
+- [`agent.toml` reference](docs/guides/manifest.md): agent and tool manifests, settings and connectors, version specs, and what gets pinned
 - [Agent views](docs/guides/views.md): pages your agent serves to the workspace, with the signed-in viewer
 - [The agent factory](docs/guides/agent-factory.md): `build_agent(remote_tools=())`, peer agents as tools, and model config
 - [Writing a connector](docs/guides/connectors.md): a marketplace tool with `ToolContext`, local testing, and publishing
@@ -551,7 +551,7 @@ When the model calls it, it doesn't run. The model is told the action awaits app
 
 An agent the platform did not spawn (a local `serve`, a test) has no roles: a turn without the caller key gets every tool. On the platform (`is_hosted()` is true) a missing caller gets the narrowest set, as a malformed one always does. `legacy_tools` gets every tool. An MCP tool whose name is already taken by another tool is skipped.
 
-Who an agent serves is not declared in `genfleet.toml`: the workspace owner sets it in the dashboard.
+Who an agent serves is not declared in `agent.toml`: the workspace owner sets it in the dashboard.
 
 ## AgentProtocol — direct implementation
 

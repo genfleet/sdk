@@ -1,6 +1,6 @@
 """Agent views: pages your agent serves, shown to the workspace inside Genfleet.
 
-Declare each view in ``genfleet.toml`` and name the app that serves them::
+Declare each view in ``agent.toml`` and name the app that serves them::
 
     [agent]
     name = "sales-assistant"
