@@ -47,9 +47,11 @@ from .files import (
 from .manifest import (
     AgentManifest,
     ConfigField,
+    ConnectorSlot,
     ContentSpec,
     ManifestError,
     SecretField,
+    SettingSpec,
     ToolManifest,
     ToolRef,
     load_agent_manifest,
@@ -175,6 +177,8 @@ __all__ = [
     # Manifests
     "AgentManifest",
     "ContentSpec",
+    "ConnectorSlot",
+    "SettingSpec",
     "ToolManifest",
     "ToolRef",
     "ConfigField",

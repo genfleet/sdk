@@ -340,7 +340,7 @@ Declared in the tool's `genfleet.toml` with `[config.<name>]` and `[secrets.<nam
 load_tools(directory=None, *, resolver=None, manifest=None) -> list[Callable]
 ```
 
-Returns the tools named in `[tools]` of the agent's `genfleet.toml`, each carrying its manifest slug. The manifest comes from `manifest=`, else the agent root the runtime sets, else `directory`, else the working directory. Locally, tools resolve from installed packages advertising the `genfleet.tools` entry-point group (`LocalToolResolver`); a missing one raises `ToolResolutionError`. `[mcps]` entries are not included: they go to `Agent(mcps=...)`.
+Returns the tools named in `[tools]` of the agent's `agent.toml`, each carrying its manifest slug. The manifest comes from `manifest=`, else the agent root the runtime sets, else `directory`, else the working directory. Locally, tools resolve from installed packages advertising the `genfleet.tools` entry-point group (`LocalToolResolver`); a missing one raises `ToolResolutionError`. `[mcps]` entries are not included: they go to `Agent(mcps=...)`.
 
 The runtime also hands the agent factory `remote_tools` (other agents and remote tool servers it discovered). Merge them:
 
@@ -413,7 +413,7 @@ Pass exactly one of `text` or `template` (else `ValueError`). `to` is `"<channel
 
 ## Manifests
 
-`genfleet.toml` next to the agent. Validate offline with `load_agent_manifest(dir)` / `load_tool_manifest(dir)`; problems raise `ManifestError` with the file path.
+`agent.toml` next to the agent (`genfleet.toml` before 0.28.0, still read; a tool's manifest is still `genfleet.toml`). Validate offline with `load_agent_manifest(dir)` / `load_tool_manifest(dir)`; problems raise `ManifestError` with the file path.
 
 ```toml
 [agent]

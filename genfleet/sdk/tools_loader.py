@@ -380,7 +380,7 @@ def load_tools(
     manifest: AgentManifest | None = None,
 ) -> list[Callable]:
     """
-    The tools named in an agent's `genfleet.toml`, ready to pass to `Agent`.
+    The tools named in an agent's `agent.toml`, ready to pass to `Agent`.
 
     Each comes back carrying its manifest slug (0.18), so the platform's
     per-tool audience can name it by slug: a plain callable as a fresh proxy

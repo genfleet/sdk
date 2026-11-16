@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.28.0 — 2026-11-16
+
+The agent manifest is `agent.toml`, and a workspace configures an agent on its page.
+
+- **Changed: an agent's manifest is `agent.toml`.** `genfleet.toml` is still read, so existing agents keep working; a directory holding both is an error (`agent_manifest_path` and `AGENT_MANIFEST_NAME` in `genfleet.sdk.manifest`). A tool's manifest is still `genfleet.toml`. Pushing an agent with `agent.toml` needs `gf` 0.7.0.
+- **Changed: `[content]` is `[data]`.** Same keys. `[content]` is still read, but not together with `[data]`. `AgentManifest.content` keeps its name.
+- **Added: `[settings.<key>]`** (`SettingSpec`, `AgentManifest.settings`; `setting_value_problem` in `genfleet.sdk.manifest`). Typed values the installing workspace sets on the agent's page: `string`, `text`, `integer`, `number`, `boolean`, `enum`, `list`, `map`, with `label`, `description`, `group`, `required`, `default`, `options`, `min` and `max`. At most 40. No secret type.
+- **Added: `[connectors.<slot>]`** (`ConnectorSlot`, `AgentManifest.connectors`). A connection the agent needs; the workspace picks which of its connections fills the slot. At most 8.
+- **Added: `genfleet.sdk.config`.** `setting(key, default)`, `is_set(key)`, `settings()`, `connector(slot)`, `tenant_prompts()` and `with_tenant_prompts(system)` read what the workspace configured, from the JSON file named in `$GENFLEET_AGENT_CONFIG` (empty when unset). The file's contract is `tests/fixtures/agent-config.json`.
+- **Added: `ConnectionCallError` code `connection_not_allowed`**, for a connection the workspace has not let the agent use.
+- Guide: `docs/guides/manifest.md` covers settings, connectors and workspace prompts.
+
 - Docs: shipping a new version of an existing agent with `gf agents push --update` (keeps the agent's id, usage, activity, channels, content and secrets). Needs `gf` 0.6.0.
-- `[agent] model_choice` in `genfleet.toml`: set it to `true` when the agent reads its model id from `AGENT_MODEL`, so workspace owners and admins can choose the agent's model. Defaults to `false`.
+- `[agent] model_choice` in the agent manifest: set it to `true` when the agent reads its model id from `AGENT_MODEL`, so workspace owners and admins can choose the agent's model. Defaults to `false`.
 
 ## 0.27.0 — 2026-11-06
 

@@ -1,7 +1,7 @@
 # The agent factory: `build_agent(remote_tools=())`
 
 The platform doesn't import an agent object. It imports a **factory**, the
-`entry` in your [`genfleet.toml`](manifest.md), calls it, and serves what it
+`entry` in your [`agent.toml`](manifest.md), calls it, and serves what it
 returns. Write it like this:
 
 ```python
@@ -51,14 +51,14 @@ configured. The model then declines tasks it seems to have a tool for, with no
 error anywhere.
 
 **Point `load_tools()` at your package.** Without arguments it reads
-`genfleet.toml` from the current working directory. That works when the
+`agent.toml` from the current working directory. That works when the
 platform runs the agent (it tells `load_tools()` where the agent was unpacked,
 and that wins over any argument), but on a laptop the working directory is
 usually the project root, where there is no manifest. Pass the package
 directory:
 
 ```python
-HERE = Path(__file__).parent        # the directory holding genfleet.toml
+HERE = Path(__file__).parent        # the directory holding agent.toml
 load_tools(HERE)
 ```
 
@@ -78,7 +78,7 @@ from genfleet.sdk import Agent, ModelConfig, ToolProtocol, ToolResolver, caller_
 from genfleet.sdk.models import ModelClient
 from genfleet.sdk.turn import current_turn
 
-HERE = Path(__file__).parent  # where genfleet.toml sits
+HERE = Path(__file__).parent  # where agent.toml sits
 DEFAULT_MODEL = "openrouter/nex-agi/nex-n2.5-mini:free"
 
 ROLE = """You help customers with their orders.
@@ -133,7 +133,7 @@ def build_agent(remote_tools: Sequence[Callable | ToolProtocol] = ()) -> Agent:
 ```
 
 ```toml
-# support_agent/genfleet.toml
+# support_agent/agent.toml
 [agent]
 name = "support"
 kind = "code"
@@ -297,7 +297,7 @@ names a model the platform offers. If you bring your own key to a hosted agent
 instead, store it as a workspace secret and reference it when you create the
 agent (`gf agents create … --secret OPENROUTER_API_KEY`). It reaches the agent
 as an environment variable of that name. Never put a key in code or in
-`genfleet.toml`.
+`agent.toml`.
 
 The `model_config()` above handles both cases. It sends a key when the
 environment has one and leaves it out otherwise. With no key and no model
@@ -307,7 +307,7 @@ message saying it needs an `api_key`. Making the model id configurable
 
 ## Checklist
 
-- `entry` in `genfleet.toml` names a factory, and the module creates no `Agent` at import.
+- `entry` in `agent.toml` names a factory, and the module creates no `Agent` at import.
 - The factory is `build_agent(remote_tools=())` and passes `remote_tools` to `Agent`.
 - `load_tools(Path(__file__).parent)`, so it finds the manifest locally.
 - No key, URL or credential is read at import time, and none is in the code.

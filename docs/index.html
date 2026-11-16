@@ -260,7 +260,7 @@
     </div>
     <div class="sidebar-section">
       <div class="sidebar-section-title">Guides</div>
-      <a href="https://github.com/genfleet/sdk/blob/dev/docs/guides/manifest.md" class="sidebar-link" target="_blank" rel="noopener">genfleet.toml reference</a>
+      <a href="https://github.com/genfleet/sdk/blob/dev/docs/guides/manifest.md" class="sidebar-link" target="_blank" rel="noopener">agent.toml reference</a>
       <a href="https://github.com/genfleet/sdk/blob/dev/docs/guides/agent-factory.md" class="sidebar-link" target="_blank" rel="noopener">The agent factory</a>
       <a href="https://github.com/genfleet/sdk/blob/dev/docs/guides/connectors.md" class="sidebar-link" target="_blank" rel="noopener">Writing a connector</a>
       <a href="https://github.com/genfleet/sdk/blob/dev/docs/guides/approvals-and-messaging.md" class="sidebar-link" target="_blank" rel="noopener">Approvals and outbound messages</a>
@@ -873,12 +873,12 @@ gf --help
 export GENFLEET_API=https://…   # the platform URL from your invitation</code></pre>
 
       <h3>2. Write an agent with a tool</h3>
-      <p>An agent is a directory with a Python package inside it. The manifest, <code>genfleet.toml</code>, sits <em>inside the package</em>, next to <code>agent.py</code>:</p>
+      <p>An agent is a directory with a Python package inside it. The manifest, <code>agent.toml</code>, sits <em>inside the package</em>, next to <code>agent.py</code>:</p>
       <pre><div class="code-header">layout<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code>hello-agent/
   pyproject.toml
   hello_agent/
     __init__.py
-    genfleet.toml     # manifest: name, kind, entry
+    agent.toml        # manifest: name, kind, entry
     agent.py          # build_agent() factory + the tool
     __main__.py       # serve it locally
   tests/
@@ -901,7 +901,7 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["hello_agent"]</code></pre>
-      <pre><div class="code-header">hello-agent/hello_agent/genfleet.toml<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-toml">[agent]
+      <pre><div class="code-header">hello-agent/hello_agent/agent.toml<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-toml">[agent]
 name = "hello-agent"
 kind = "code"
 description = "Says hello and counts words."
@@ -999,7 +999,7 @@ gf agents push hello-agent --create --secret OPENROUTER_API_KEY --activate</code
 
       <h4>Ship a new version of an agent you already created</h4>
       <p>Don't delete and re-create the agent. Push the new code onto it:</p>
-      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">gf agents push hello-agent --update   # the agent named in genfleet.toml; --name to pick another</code></pre>
+      <pre><div class="code-header">shell<button class="copy-code" onclick="copyBlock(this)">Copy</button></div><code class="language-bash">gf agents push hello-agent --update   # the agent named in agent.toml; --name to pick another</code></pre>
       <p>The agent keeps its id, usage and activity, channels, content and secrets. The platform reads the new code's manifest, and an agent that is running restarts on the new code. <code>--update</code> needs the workspace owner or an admin, and doesn't work on an agent installed from the marketplace: those move to a new version with <strong>Upgrade</strong>. To publish the new code, submit the agent to the marketplace as the next version, as before.</p>
 
       <h3>6. Chat with it</h3>

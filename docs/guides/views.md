@@ -9,7 +9,7 @@ Views are available to agents published by Genfleet for now.
 
 ## Declare them
 
-In `genfleet.toml`:
+In `agent.toml`:
 
 ```toml
 [agent]

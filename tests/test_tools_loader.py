@@ -163,3 +163,14 @@ def test_an_explicit_manifest_needs_no_filesystem_at_all(tmp_path, monkeypatch):
 
     assert resolver.asked == ["@acme/jira"]
     assert len(tools) == 1
+
+
+def test_load_tools_reads_an_agent_toml_root(tmp_path):
+    """0.28.0: the agent manifest is agent.toml; load_tools finds it like the old name."""
+    (tmp_path / "agent.toml").write_text('[agent]\nname = "a"\n\n[tools]\n"@acme/echo" = "*"\n')
+    resolver = StubResolver()
+
+    tools = load_tools(tmp_path, resolver=resolver)
+
+    assert resolver.asked == ["@acme/echo"]
+    assert [t() for t in tools] == ["@acme/echo"]

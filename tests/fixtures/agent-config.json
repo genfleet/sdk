@@ -1,0 +1,40 @@
+{
+  "comment": "The agent configuration file the platform writes for a hosted agent and names in $GENFLEET_AGENT_CONFIG, shared byte-for-byte with the platform. version: an integer >= 1; a later version keeps these keys and may add more, which readers ignore. settings: {key: value}, only what the workspace saved, typed as the manifest declares. defaults: {key: value}, the manifest's defaults. A reader's value for a key is the saved one, else the default. connectors: {slot: {connection, provider, config}} for the filled slots only. prompts: [{title, body}], the enabled ones in order. Each case: the file (an object, or raw text) and what a reader gets, or error: true.",
+  "cases": [
+    {
+      "name": "everything set",
+      "file": {
+        "version": 1,
+        "settings": {"lead_sink": "erp", "open_lead_window_days": 30, "source_map": {"whatsapp": "WhatsApp"}, "tags": ["a", "b"], "strict": true},
+        "defaults": {"lead_sink": "views", "currency": "EGP"},
+        "connectors": {"erp": {"connection": "heatec-erp", "provider": "custom_api", "config": {"timeout_s": 10}}},
+        "prompts": [{"title": "Tone", "body": "Be brief."}, {"title": "", "body": "Never promise delivery dates."}]
+      },
+      "settings": {"lead_sink": "erp", "currency": "EGP", "open_lead_window_days": 30, "source_map": {"whatsapp": "WhatsApp"}, "tags": ["a", "b"], "strict": true},
+      "saved": ["lead_sink", "open_lead_window_days", "source_map", "strict", "tags"],
+      "connectors": {"erp": {"connection": "heatec-erp", "provider": "custom_api", "config": {"timeout_s": 10}}},
+      "prompts": [["Tone", "Be brief."], ["", "Never promise delivery dates."]],
+      "with_prompts": "ROLE\n\n## Tone\n\nBe brief.\n\nNever promise delivery dates."
+    },
+    {
+      "name": "empty",
+      "file": {"version": 1},
+      "settings": {}, "connectors": {}, "prompts": [], "with_prompts": "ROLE"
+    },
+    {
+      "name": "a later version with a key this reader does not know",
+      "file": {"version": 2, "settings": {"a": "b"}, "guardrails": {"x": 1}, "connectors": {"erp": {"connection": "c", "provider": "custom_api", "extra": 1}}},
+      "settings": {"a": "b"}, "connectors": {"erp": {"connection": "c", "provider": "custom_api", "config": {}}}, "prompts": [], "with_prompts": "ROLE"
+    },
+    {"name": "no version", "file": {"settings": {}}, "error": true},
+    {"name": "version zero", "file": {"version": 0}, "error": true},
+    {"name": "boolean version", "file": {"version": true}, "error": true},
+    {"name": "not an object", "file": [1], "error": true},
+    {"name": "not JSON", "file": "{nope", "error": true},
+    {"name": "settings not an object", "file": {"version": 1, "settings": []}, "error": true},
+    {"name": "defaults not an object", "file": {"version": 1, "defaults": "x"}, "error": true},
+    {"name": "connector without a connection", "file": {"version": 1, "connectors": {"erp": {"provider": "custom_api"}}}, "error": true},
+    {"name": "prompt without a body", "file": {"version": 1, "prompts": [{"title": "t"}]}, "error": true},
+    {"name": "prompts not a list", "file": {"version": 1, "prompts": {}}, "error": true}
+  ]
+}

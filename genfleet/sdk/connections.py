@@ -53,6 +53,8 @@ class ConnectionCallError(ChannelSendError):
 
     - ``unknown_connection``: no connection of that name in this workspace;
     - ``agent_not_allowed``: this agent may not use the workspace's connections;
+    - ``connection_not_allowed``: the workspace has not let this agent use that
+      connection (it is set on the agent's page, under Connectors);
     - ``host_refused``: the connection's host is not a public address;
     - ``invalid_request``: the method, path, body or key was refused;
     - ``timeout``, ``transport``: the API did not answer in time, or could
