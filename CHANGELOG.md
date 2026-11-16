@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Docs: shipping a new version of an existing agent with `gf agents push --update` (keeps the agent's id, usage, activity, channels, content and secrets). Needs `gf` 0.6.0.
 - `[agent] model_choice` in `genfleet.toml`: set it to `true` when the agent reads its model id from `AGENT_MODEL`, so workspace owners and admins can choose the agent's model. Defaults to `false`.
 
 ## 0.27.0 — 2026-11-06
