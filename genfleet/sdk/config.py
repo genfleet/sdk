@@ -21,6 +21,8 @@ unset (a local run) everything is empty: ``setting`` returns your default,
 locally, write the file yourself and point the variable at it; its contract
 (``version`` 1) is in ``tests/fixtures/agent-config.json``.
 
+What you get back is yours to change: a list or table is a copy.
+
 ``setting`` returns the value the workspace saved, else the default declared
 in the manifest, else the default you pass. ``is_set`` tells the first case
 from the others. The platform checks saved values against the manifest's
@@ -29,12 +31,14 @@ types, so a value that is present has the declared type.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 __all__ = [
@@ -121,7 +125,7 @@ def parse_agent_config(raw: Any) -> AgentConfig:
         connectors[slot] = ConnectorBinding(
             connection=_text(entry.get("connection"), f"connectors.{slot}.connection"),
             provider=_text(entry.get("provider"), f"connectors.{slot}.provider"),
-            config=_object(entry.get("config"), f"connectors.{slot}.config"),
+            config=MappingProxyType(_object(entry.get("config"), f"connectors.{slot}.config")),
         )
 
     prompts = document.get("prompts")
@@ -135,23 +139,26 @@ def parse_agent_config(raw: Any) -> AgentConfig:
         parsed.append(TenantPrompt(title=_text(entry.get("title", ""), f"prompts[{i}].title"), body=_text(entry.get("body"), f"prompts[{i}].body")))
 
     return AgentConfig(
-        settings=_object(document.get("settings"), "settings"),
-        defaults=_object(document.get("defaults"), "defaults"),
-        connectors=connectors,
+        settings=MappingProxyType(_object(document.get("settings"), "settings")),
+        defaults=MappingProxyType(_object(document.get("defaults"), "defaults")),
+        connectors=MappingProxyType(connectors),
         prompts=tuple(parsed),
     )
 
 
 @lru_cache(maxsize=4)
 def _load(path: str) -> AgentConfig:
-    file = Path(path)
     try:
-        if file.stat().st_size > _MAX_BYTES:
-            raise AgentConfigError(f"{path} is larger than {_MAX_BYTES} bytes")
-        raw = json.loads(file.read_text(encoding="utf-8"))
+        with Path(path).open("rb") as handle:
+            # One bounded read: the size cannot change between a check and the read.
+            data = handle.read(_MAX_BYTES + 1)
     except OSError as exc:
         raise AgentConfigError(f"cannot read {path}: {exc.strerror or exc}") from exc
-    except ValueError as exc:
+    if len(data) > _MAX_BYTES:
+        raise AgentConfigError(f"{path} is larger than {_MAX_BYTES} bytes")
+    try:
+        raw = json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError) as exc:
         raise AgentConfigError(f"{path} is not valid JSON") from exc
     return parse_agent_config(raw)
 
@@ -165,15 +172,17 @@ def agent_config() -> AgentConfig:
 def settings() -> Mapping[str, Any]:
     """Every setting that has a value: saved by the workspace, or the manifest's default."""
     config = agent_config()
-    return {**config.defaults, **config.settings}
+    return copy.deepcopy({**config.defaults, **config.settings})
 
 
 def setting(key: str, default: Any = None) -> Any:
     """One setting: the saved value, else the manifest's default, else ``default``."""
     config = agent_config()
     if key in config.settings:
-        return config.settings[key]
-    return config.defaults.get(key, default)
+        return copy.deepcopy(config.settings[key])
+    if key in config.defaults:
+        return copy.deepcopy(config.defaults[key])
+    return default
 
 
 def is_set(key: str) -> bool:
@@ -199,8 +208,10 @@ def with_tenant_prompts(system: str) -> str:
     added = []
     for prompt in tenant_prompts():
         body = prompt.body.strip()
+        # A title is one line: a line break in it would start a heading of its own.
+        title = " ".join(prompt.title.split())
         if body:
-            added.append(f"## {prompt.title.strip()}\n\n{body}" if prompt.title.strip() else body)
+            added.append(f"## {title}\n\n{body}" if title else body)
     if not added:
         return system
     return "\n\n".join(([system.rstrip()] if system.strip() else []) + added)

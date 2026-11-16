@@ -19,12 +19,13 @@ its lockfile.
 
 from __future__ import annotations
 
+import math
 import re
 import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, ValidationError, field_validator, model_validator
 
 from .content import content_glob_problem
 
@@ -158,10 +159,16 @@ SettingType = Literal["string", "text", "integer", "number", "boolean", "enum", 
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A finite int or float. Not a bool, and not NaN or an infinity (neither is JSON)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def setting_value_problem(spec: "SettingSpec", value: Any) -> str | None:
+def _plain(number: float) -> str:
+    """A bound as its author wrote it: ``3`` not ``3.0``, ``1000000`` not ``1e+06``."""
+    return str(int(number)) if float(number).is_integer() else repr(float(number))
+
+
+def setting_value_problem(spec: SettingSpec, value: Any) -> str | None:
     """Why ``value`` doesn't fit the setting, or ``None`` when it does.
 
     The platform applies the same rules when a workspace saves a value.
@@ -180,9 +187,9 @@ def setting_value_problem(spec: "SettingSpec", value: Any) -> str | None:
         if not _is_number(value) or (kind == "integer" and not isinstance(value, int)):
             return "must be a whole number" if kind == "integer" else "must be a number"
         if spec.min is not None and value < spec.min:
-            return f"must be at least {spec.min:g}"
+            return f"must be at least {_plain(spec.min)}"
         if spec.max is not None and value > spec.max:
-            return f"must be at most {spec.max:g}"
+            return f"must be at most {_plain(spec.max)}"
     elif kind == "enum":
         if value not in (spec.options or []):
             return "must be one of " + ", ".join(repr(o) for o in spec.options or [])
@@ -218,18 +225,27 @@ class SettingSpec(BaseModel):
     required: StrictBool = False
     default: Any = None
     options: list[StrictStr] | None = None
-    min: float | None = None
-    max: float | None = None
+    min: StrictInt | StrictFloat | None = None
+    max: StrictInt | StrictFloat | None = None
 
     @model_validator(mode="after")
-    def _fields_fit_the_type(self) -> "SettingSpec":
+    def _fields_fit_the_type(self) -> SettingSpec:
         if self.type == "enum":
             if not self.options or len(self.options) > MAX_SETTING_OPTIONS or len(set(self.options)) != len(self.options):
                 raise ValueError(f"an enum needs 'options': 1 to {MAX_SETTING_OPTIONS} distinct strings")
+            if any(not option or len(option) > MAX_SETTING_STRING for option in self.options):
+                raise ValueError(f"each of 'options' is 1 to {MAX_SETTING_STRING} characters")
         elif self.options is not None:
             raise ValueError("'options' is only for type = \"enum\"")
         if self.type not in ("integer", "number") and (self.min is not None or self.max is not None):
             raise ValueError("'min' and 'max' are only for integer and number settings")
+        for name, bound in (("min", self.min), ("max", self.max)):
+            if bound is None:
+                continue
+            if not math.isfinite(bound):
+                raise ValueError(f"'{name}' must be a finite number")
+            if self.type == "integer" and not isinstance(bound, int):
+                raise ValueError(f"'{name}' of an integer setting must be a whole number")
         if self.min is not None and self.max is not None and self.min > self.max:
             raise ValueError("'min' is above 'max'")
         if self.default is not None:
@@ -256,7 +272,7 @@ class ConnectorSlot(BaseModel):
     @field_validator("provider")
     @classmethod
     def _provider_is_a_key(cls, value: str) -> str:
-        if not _KEY.match(value):
+        if not _KEY.fullmatch(value):
             raise ValueError("provider must be a connector id such as 'custom_api'")
         return value
 
@@ -438,6 +454,10 @@ class ToolManifest(BaseModel):
         return value
 
 
+#: Top-level tables of an agent manifest: never keys of ``[agent]``.
+_OWN_TABLES = frozenset({"tools", "mcps", "content", "connectors", "settings", "views"})
+
+
 def agent_manifest_path(directory: Path | str) -> Path:
     """The agent manifest in ``directory``: `agent.toml`, else the older `genfleet.toml`.
 
@@ -503,6 +523,9 @@ def load_agent_manifest(directory: Path | str) -> AgentManifest:
     agent = raw.get("agent")
     if not isinstance(agent, dict):
         raise ManifestError(path, "missing an [agent] section")
+    misplaced = sorted(_OWN_TABLES & agent.keys())
+    if misplaced:
+        raise ManifestError(path, f"[agent] has {misplaced[0]!r}, which is its own table: write [{misplaced[0]}] at the top level")
 
     try:
         return AgentManifest(
@@ -573,7 +596,7 @@ def _parse_keyed(table: Any, section: str, model: type[BaseModel], limit: int, p
         raise ManifestError(path, f"[{section}] has more than {limit} entries")
     out: dict[str, Any] = {}
     for key, entry in table.items():
-        if not _KEY.match(key):
+        if not _KEY.fullmatch(key):
             raise ManifestError(path, f"[{section}.{key}]: the name must be 1-32 lowercase letters, digits or '_', starting with a letter")
         if not isinstance(entry, dict):
             raise ManifestError(path, f"[{section}.{key}] must be a table")

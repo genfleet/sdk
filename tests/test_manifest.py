@@ -423,3 +423,44 @@ def test_setting_value_problem_limits():
     assert setting_value_problem(SettingSpec(type="number"), True) == "must be a number"
     assert setting_value_problem(SettingSpec(type="list"), ["a"] * 201) is not None
     assert setting_value_problem(SettingSpec(type="map"), {"k": "v"}) is None
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ('[settings."a\\n"]\n', r"the name"),
+        ('[connectors.erp]\nprovider = "custom_api\\n"\n', "connector id"),
+        ('[settings.a]\ntype = "integer"\nmin = "5"\n', r"\[settings.a\]: min"),
+        ('[settings.a]\ntype = "integer"\nmin = true\n', r"\[settings.a\]: min"),
+        ('[settings.a]\ntype = "integer"\nmax = 2.5\n', "'max' of an integer setting must be a whole number"),
+        ('[settings.a]\ntype = "number"\nmax = inf\n', "'max' must be a finite number"),
+        ('[settings.a]\ntype = "number"\ndefault = nan\n', "'default' must be a number"),
+        ('[settings.a]\ntype = "number"\ndefault = inf\n', "'default' must be a number"),
+        ('[settings.a]\ntype = "integer"\nmin = 1000000\ndefault = 1\n', "'default' must be at least 1000000"),
+        ('[settings.a]\ntype = "number"\nmin = 0.5\ndefault = 0.1\n', "'default' must be at least 0.5"),
+        ('[settings.a]\ntype = "enum"\noptions = [""]\n', "each of 'options'"),
+        ('[settings.a]\ntype = "enum"\noptions = ["' + "x" * 501 + '"]\n', "each of 'options'"),
+    ],
+)
+def test_loose_setting_values_are_refused(tmp_path, body, message):
+    with pytest.raises(ManifestError, match=message):
+        load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n' + body))
+
+
+@pytest.mark.parametrize("key", ["connectors", "settings", "tools", "views", "content", "mcps"])
+def test_a_table_written_inside_agent_is_a_manifest_error(tmp_path, key):
+    with pytest.raises(ManifestError, match=rf"\[agent\] has '{key}', which is its own table"):
+        load_agent_manifest(_agent_dir(tmp_path, f'[agent]\nname = "a"\n{key} = 1\n'))
+
+
+def test_agent_manifest_path(tmp_path):
+    from genfleet.sdk.manifest import agent_manifest_path
+
+    assert agent_manifest_path(tmp_path).name == "agent.toml"  # neither: the new name, for the error
+    (tmp_path / "genfleet.toml").write_text("")
+    assert agent_manifest_path(tmp_path).name == "genfleet.toml"
+    (tmp_path / "agent.toml").write_text("")
+    with pytest.raises(ManifestError, match="keep only agent.toml"):
+        agent_manifest_path(tmp_path)
+    (tmp_path / "genfleet.toml").unlink()
+    assert agent_manifest_path(tmp_path).name == "agent.toml"
