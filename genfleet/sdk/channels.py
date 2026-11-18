@@ -15,6 +15,7 @@ so rather than pretending to send.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import os
 import urllib.error
@@ -27,6 +28,62 @@ CHANNELS_URL_ENV = "GENFLEET_CHANNELS_URL"
 CHANNELS_TOKEN_ENV = "GENFLEET_CHANNELS_TOKEN"
 
 _TIMEOUT_S = 25.0
+#: The most of an answer read from the platform. The largest legitimate one is
+#: a connection call's or connector tool's answer, about 1 MB of API body
+#: once encoded (base64, or JSON with escapes); this leaves room for that.
+MAX_ANSWER_BYTES = 8 * 1024 * 1024
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse every redirect: the platform's endpoint never sends one, and
+    following it would send the bearer token wherever ``Location`` points."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+class _NoAnswer(Exception):
+    """No complete answer came: the request may or may not have arrived."""
+
+
+def _read_capped(stream: Any) -> bytes:
+    data = stream.read(MAX_ANSWER_BYTES + 1)
+    if len(data) > MAX_ANSWER_BYTES:
+        raise _NoAnswer("the answer is larger than the SDK reads")
+    return data
+
+
+def _send(path: str, body: dict[str, Any] | None, *, timeout: float) -> tuple[int, bytes]:
+    """One request to the platform's channels endpoint: ``(status, raw body)``.
+
+    A POST of ``body``, or a GET when it is None. Redirects are never
+    followed (a 3xx is returned as its status), and at most
+    :data:`MAX_ANSWER_BYTES` are read. Raises `_NoAnswer` when no complete
+    answer came. The caller checks that the variables are set.
+    """
+    url = os.environ[CHANNELS_URL_ENV]
+    headers = {"authorization": f"Bearer {os.environ[CHANNELS_TOKEN_ENV]}"}
+    if body is not None:
+        headers["content-type"] = "application/json"
+    req = urllib.request.Request(
+        f"{url.rstrip('/')}/{path}",
+        data=json.dumps(body).encode() if body is not None else None,
+        method="POST" if body is not None else "GET",
+        headers=headers,
+    )
+    try:
+        with _OPENER.open(req, timeout=timeout) as resp:
+            return resp.status, _read_capped(resp)
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, _read_capped(exc)
+        except (_NoAnswer, http.client.HTTPException, OSError):
+            return exc.code, b""
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as exc:
+        raise _NoAnswer(str(exc)) from None
 
 
 class ChannelSendError(RuntimeError):
@@ -136,32 +193,20 @@ def _call(
 ) -> dict[str, Any]:
     """One call to the platform's channels endpoint: a POST of ``body``, or a
     GET when ``body`` is None. Raises ``error`` the way `send_message` does."""
-    url = os.environ.get(CHANNELS_URL_ENV)
-    token = os.environ.get(CHANNELS_TOKEN_ENV)
-    if not url or not token:
+    if not os.environ.get(CHANNELS_URL_ENV) or not os.environ.get(CHANNELS_TOKEN_ENV):
         raise error(
             f"{what} needs a platform sandbox: "
             f"{CHANNELS_URL_ENV} and {CHANNELS_TOKEN_ENV} are not set",
             status=0,
             code="not_in_sandbox",
         )
-    headers = {"authorization": f"Bearer {token}"}
-    if body is not None:
-        headers["content-type"] = "application/json"
-    req = urllib.request.Request(
-        f"{url.rstrip('/')}/{path}",
-        data=json.dumps(body).encode() if body is not None else None,
-        method="POST" if body is not None else "GET",
-        headers=headers,
-    )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — URL is platform-provided
-            raw = resp.read()
-    except urllib.error.HTTPError as exc:
-        message, code = _refusal(exc.read(), what)
-        raise error(message, status=exc.code, code=code) from None
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        status, raw = _send(path, body, timeout=timeout)
+    except _NoAnswer as exc:
         raise error(f"{what} could not reach the platform: {exc}", status=0) from None
+    if not 200 <= status < 300:
+        message, code = _refusal(raw, what)
+        raise error(message, status=status, code=code)
     try:
         parsed = json.loads(raw) if raw else {}
     except ValueError:

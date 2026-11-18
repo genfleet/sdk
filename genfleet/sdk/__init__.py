@@ -25,6 +25,13 @@ from .confirmations import (
     sign_approved_call,
 )
 from .connections import ConnectionCallError, ConnectionResponse, call_connection
+from .connector_calls import (
+    ConnectorToolError,
+    ReplyResult,
+    connector_tools,
+    reply,
+    reply_tool,
+)
 from .escalation import (
     EscalationError,
     EscalationRecipient,
@@ -211,5 +218,10 @@ __all__ = [
     # Workspace connections
     "call_connection",
     "ConnectionCallError",
+    "connector_tools",
+    "reply",
+    "reply_tool",
+    "ConnectorToolError",
+    "ReplyResult",
     "ConnectionResponse",
 ]

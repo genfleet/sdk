@@ -209,6 +209,20 @@ r.status, r.ok, r.json(), r.headers.get("content-type")  # headers holds only wh
 
 The workspace sets up a Custom API connection (name, base URL, key header, key) in the dashboard; the platform adds the key and calls that host only. No headers from the agent; `User-Agent` is `genfleet-<agent>/<version>`. Any API status is a `ConnectionResponse`; redirects are not followed. `ConnectionCallError` codes: `unknown_connection`, `agent_not_allowed`, `host_refused`, `invalid_request`, `timeout`, `transport`, `too_large`, `not_in_sandbox`; `may_have_reached_api` for a write's resend decision.
 
+### Connector tools and `reply`
+
+```python
+from genfleet.sdk import Agent, ConnectorToolError, connector_tools, reply, reply_tool
+
+tools = [*connector_tools()]          # or connector_tools("erp"): one [connectors.<slot>] slot
+if (r := reply_tool()) is not None:   # None unless the agent is on a channel
+    tools.append(r)
+agent = Agent(..., tools=tools)
+await reply("One moment, checking.", quote=None)   # into this conversation now; ReplyResult(message_ids, quoted)
+```
+
+Connector tools are the tools a workspace defined and verified on its Custom API connections. Opt-in: nothing is added unless the code adds it. Model-facing names are `<connection>__<tool>` as listed (never renamed), which are also the keys of the workspace's audience (default operators; `reply` operators and customers) and approval settings. They need a running turn (`no_turn`, nothing sent) and the platform (`not_in_sandbox`). The model reads the API answer as JSON (`tool, status, ok, contentType, body, truncated, bytes, bodyWithheld, note`), a refusal as `"<code>: <message>"` (platform message unchanged; e.g. `tool_not_verified`, `tool_changed`, `tool_not_allowed`, `invalid_arguments`, `approval_required`, `rate_limited`, `engine_rate_limited`, `turn_not_running`, `connection_changed`, `no_conversation`, `outside_window`), and an unknown outcome (`backend_timeout`, `backend_error`, an API timeout, no answer) as "may already have completed ... Do not call it again in this turn. Tell the person what you tried". Only `backend_unreachable` is retried (twice). A refused or uncertain call is a failed tool result; the agent's own tool of the same name always wins over a listed one. `reply` raises `ConnectorToolError` (`code`, `status`, `tool`, `outcome_unknown`, `retryable`). Code lists: `genfleet.sdk.connector_calls.REFUSAL_CODES`, `UNKNOWN_OUTCOME_CODES`, `RETRYABLE_CODES`, `LOCAL_CODES`.
+
 ## Files and parts (0.20)
 
 A turn is a list of typed parts: `AgentInput.parts` and `AgentOutput.parts` hold `TextPart`, `ImagePart`, `AudioPart`, `VideoPart`, `FilePart`. `message` and `content` stay the turn's text, so a text-only agent never looks at `parts`. Build one with `part_for(mime_type, data=... | uri=...)`.
@@ -361,6 +375,7 @@ from genfleet.sdk import (
     StateStore, LocalStateStore, state_for, RunState, EffectState,
     StateError, StateTooLarge, StateQuotaExceeded,
     send_message, send_message_tool, ChannelSendError,
+    connector_tools, reply, reply_tool, ReplyResult, ConnectorToolError,
     # Config and audit
     ModelConfig, MemoryConfig, MCPConfig, AuditConfig, AuditEvent,
     # Manifests

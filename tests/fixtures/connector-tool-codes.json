@@ -1,0 +1,40 @@
+{
+  "_source": "The platform's refusal, unknown-outcome and retryable codes for connector tool calls, as of 2026-11-18. refusal: the platform's refusal codes; route_refusal: the codes the connector tool endpoint itself answers. Update when the platform's list changes: the SDK's REFUSAL_CODES must equal refusal + route_refusal, UNKNOWN_OUTCOME_CODES unknown_outcome, RETRYABLE_CODES retryable.",
+  "refusal": [
+    "invalid_request",
+    "agent_not_allowed",
+    "unknown_connection",
+    "connection_not_allowed",
+    "unknown_tool",
+    "tool_not_verified",
+    "tool_changed",
+    "tool_not_allowed",
+    "invalid_arguments",
+    "approval_required",
+    "rate_limited",
+    "host_refused",
+    "connection_changed",
+    "no_binding",
+    "outside_window",
+    "cold_send_disabled",
+    "send_rejected",
+    "tool_call_text",
+    "no_conversation",
+    "unknown_recipient",
+    "already_escalated"
+  ],
+  "route_refusal": [
+    "engine_rate_limited",
+    "invalid_request",
+    "turn_not_running",
+    "no_conversation",
+    "rejected"
+  ],
+  "unknown_outcome": [
+    "backend_timeout",
+    "backend_error"
+  ],
+  "retryable": [
+    "backend_unreachable"
+  ]
+}

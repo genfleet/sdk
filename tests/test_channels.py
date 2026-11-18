@@ -175,3 +175,65 @@ async def test_a_2xx_that_is_not_an_object_is_an_error(proxy):
     _Proxy.response = (200, ["unexpected"])
     with pytest.raises(ChannelSendError, match="expected an object"):
         await send_message("whatsapp:1", "x")
+
+
+# --- Answers that are not a usable HTTP answer ------------------------------------
+
+
+def _point_at(server, monkeypatch) -> None:
+    monkeypatch.setenv(CHANNELS_URL_ENV, f"http://127.0.0.1:{server.port}/channels")
+    monkeypatch.setenv(CHANNELS_TOKEN_ENV, "spawn-token")
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_is_not_followed_and_the_token_stays(raw_server, monkeypatch):
+    from .conftest import RawServer
+
+    elsewhere = RawServer()
+    try:
+        _point_at(raw_server, monkeypatch)
+        raw_server.answer = (
+            f"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{elsewhere.port}/steal\r\n"
+            "Content-Length: 0\r\nConnection: close\r\n\r\n"
+        ).encode()
+        with pytest.raises(ChannelSendError) as caught:
+            await send_message("whatsapp:2010", "hi")
+        assert caught.value.status == 302 and caught.value.delivery_unknown
+        assert len(raw_server.requests) == 1 and elsewhere.requests == []
+    finally:
+        elsewhere.close()
+
+
+@pytest.mark.asyncio
+async def test_a_garbage_answer_is_delivery_unknown(raw_server, monkeypatch):
+    _point_at(raw_server, monkeypatch)
+    raw_server.answer = b"garbage\r\n\r\n"
+    with pytest.raises(ChannelSendError) as caught:
+        await send_message("whatsapp:2010", "hi")
+    assert caught.value.delivery_unknown
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_answer_is_not_read_whole(raw_server, monkeypatch):
+    from genfleet.sdk import channels
+
+    _point_at(raw_server, monkeypatch)
+    monkeypatch.setattr(channels, "MAX_ANSWER_BYTES", 1024)
+    body = b'{"sent": true, "pad": "' + b"x" * 4096 + b'"}'
+    raw_server.answer = b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" % (len(body), body)
+    with pytest.raises(ChannelSendError) as caught:
+        await send_message("whatsapp:2010", "hi")
+    assert caught.value.delivery_unknown
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_refusal_body_still_raises_with_its_status(raw_server, monkeypatch):
+    from genfleet.sdk import channels
+
+    _point_at(raw_server, monkeypatch)
+    monkeypatch.setattr(channels, "MAX_ANSWER_BYTES", 16)
+    body = b'{"code": "no_binding", "error": "' + b"x" * 100 + b'"}'
+    raw_server.answer = b"HTTP/1.1 409 Conflict\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" % (len(body), body)
+    with pytest.raises(ChannelSendError) as caught:
+        await send_message("whatsapp:2010", "hi")
+    assert caught.value.status == 409 and not caught.value.delivery_unknown
