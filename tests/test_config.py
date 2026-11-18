@@ -9,6 +9,7 @@ import pytest
 
 from genfleet.sdk import config
 from genfleet.sdk.config import AGENT_CONFIG_ENV, AgentConfigError
+from genfleet.sdk.connector_calls import reply_tool
 
 CASES = json.loads((Path(__file__).parent / "fixtures" / "agent-config.json").read_text())["cases"]
 
@@ -40,6 +41,10 @@ def test_shared_contract(case, tmp_path, monkeypatch):
     assert got == case["connectors"]
     assert [[p.title, p.body] for p in config.tenant_prompts()] == case["prompts"]
     assert config.with_tenant_prompts("ROLE") == case["with_prompts"]
+    assert [t.schema().name for t in config.connector_tools()] == case["connector_tools"]
+    for slot, names in case["slot_tools"].items():
+        assert [t.schema().name for t in config.connector_tools(slot)] == names
+    assert (reply_tool() is not None) == case["reply"]
 
 
 def test_unset_variable_means_empty():

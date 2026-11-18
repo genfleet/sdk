@@ -1,6 +1,6 @@
 # Approvals and outbound messages
 
-Four features that reach beyond a single reply:
+Five features that reach beyond a single reply:
 
 - **Sensitive tools.** A tool call that waits for a workspace owner or admin to
   approve it, then runs once in a follow-up turn.
@@ -10,6 +10,9 @@ Four features that reach beyond a single reply:
   or role, without the agent ever handling an address.
 - **`call_connection`.** Calling the workspace's own API (an ERP) through a
   connection it set up, without the agent ever handling the key.
+- **Connector tools and `reply`.** The tools a workspace defined and
+  verified on its connections, handed to the model; and `reply`, a message
+  into the current conversation before the turn ends.
 
 All are handled by `Agent`, and all only do their real work on the
 platform. This guide covers what your code and your model see at each step,
@@ -418,3 +421,124 @@ connections), `host_refused`, `invalid_request`, `timeout`, `transport`,
 `too_large` (an answer over 1 MB), `not_in_sandbox` outside the platform, or
 None. `may_have_reached_api` is True for `timeout`, `transport`, `too_large`
 and None: resend a write only when the API dedupes it by `idempotency_key`.
+
+## Connector tools and `reply`
+
+A workspace owner or admin can also define **tools** on a Custom API
+connection, on the connection's page in the dashboard: a name, a
+description, the endpoint and its inputs. Each tool is tested against the
+real API and verified there before any agent can use it, and an edit makes it
+need verifying again. Where `call_connection` lets your code make any request
+to the connection, a connector tool is one fixed request the workspace
+checked, with inputs the model fills in.
+
+The agent is given the verified tools of every connection the workspace lets
+it use. Hand the ones you want to the model:
+
+```python
+from genfleet.sdk import Agent, connector_tools, reply_tool
+
+
+def build_agent(remote_tools=()):
+    tools = [*connector_tools(), *remote_tools]      # or connector_tools("erp") for one slot
+    reply = reply_tool()                             # None unless the agent is on a channel
+    if reply is not None:
+        tools.append(reply)
+    return Agent(role=ROLE, model=MODEL, tools=tools)
+```
+
+- **Opt-in.** Nothing is added to an agent's tools unless its code adds it.
+- `connector_tools()` returns every connection's tools. `connector_tools(slot)`
+  returns only those of the connection filling a
+  [`[connectors.<slot>]`](manifest.md#connectorsslot) slot (none when the slot
+  is not filled). Both are empty in a local run, and when the platform lists
+  no tools.
+- **Names.** A tool reaches the model as `<connection>__<tool>`
+  (`erp__create_lead`), exactly as the platform lists it, with the listed
+  description and inputs. The workspace's per-tool settings on the agent's
+  page use the same name: who it is offered to (operators by default) and
+  whether it waits for an owner's or admin's approval
+  ([Sensitive tools](#sensitive-tools)).
+- **What is sent.** The tool's name, the model's arguments and the running
+  turn. The platform checks that the tool is still the one that was
+  verified, that the person on this turn may use it, and that the arguments
+  fit, then calls the API with the connection's key. The agent never sees the
+  key, the endpoint or the method.
+
+### `reply`
+
+`reply` sends a message into the conversation the turn is answering, now,
+before the turn ends: a "one moment, checking" before a slow lookup, or an
+answer that quotes one of the person's messages. The turn's own answer is
+still sent at the end.
+
+```python
+from genfleet.sdk import ConnectorToolError, reply
+
+result = await reply("One moment, checking the stock.")
+result = await reply("Yes, this one.", quote=message_id)   # an inbound message of this conversation
+result.message_ids, result.quoted                          # quoted is False where the channel cannot quote
+```
+
+- `reply` takes no recipient: it always writes to the person the turn is
+  answering, on the same channel. It works only in a turn that answers a
+  channel conversation (`no_conversation` otherwise).
+- WhatsApp and Telegram quote the message; Slack replies in the thread; on
+  the other channels the message is sent without the quote.
+- `reply_tool()` is the model-facing form, offered to operators and
+  customers unless the workspace's setting says otherwise. It returns `None`
+  when the agent is not connected to a channel; `reply` then raises
+  `tool_not_listed`.
+- The 24-hour window, first-contact and rate rules of `send_message` apply.
+
+### What the model reads
+
+The tools never raise. The model reads:
+
+| Outcome | Text |
+|---|---|
+| The API answered (any status) | A JSON object: `tool`, `status`, `ok`, `contentType`, `body` (cut to the tool's size limit), `truncated`, `bytes`, `bodyWithheld` (the body could not be shown safely), `note` |
+| `reply` sent | `sent`, or `sent, without the quote: this channel cannot quote a message` |
+| Refused | `<code>: <message>`, the platform's message unchanged. Nothing was done |
+| Outcome unknown | `<tool> may already have completed: …, so the result is unknown. Do not call <tool> again in this turn. Tell the person what you tried to do, so they can check whether it happened.` |
+
+The outcome is unknown when the platform answers `backend_timeout` or
+`backend_error`, when the API did not answer in time or the connection to it
+failed, and when no readable answer came at all. A write may have happened,
+so the model must not repeat it.
+
+**Retries.** The SDK retries only `backend_unreachable` (the call never left
+the platform, so it did not run), twice, after a short wait. It retries
+nothing else. It waits up to 35 seconds for an answer.
+
+### `ConnectorToolError`
+
+`reply` raises `ConnectorToolError`, a `ChannelSendError`, with `code`,
+`status`, `tool` (the model-facing name), `outcome_unknown` (do not repeat
+the call) and `retryable` (only `backend_unreachable`). The code lists are in
+`genfleet.sdk.connector_calls`: `REFUSAL_CODES`, `UNKNOWN_OUTCOME_CODES`,
+`RETRYABLE_CODES` and `LOCAL_CODES`.
+
+| `code` | What it means |
+|---|---|
+| `tool_not_verified` | The tool was edited and is not verified yet; a workspace admin verifies it |
+| `tool_changed` | The tool changed since the agent started; the agent gets the new one when it restarts |
+| `tool_not_allowed` | The tool is not offered to the person on this turn |
+| `invalid_arguments` | The arguments do not fit the tool's inputs |
+| `approval_required` | The call needs an owner's or admin's approval first |
+| `unknown_connection`, `unknown_tool` | No such connection or tool in the workspace |
+| `connection_not_allowed` | The workspace has not let this agent use the connection |
+| `connection_changed` | The connection's settings or key are being changed; try again shortly |
+| `agent_not_allowed` | This agent may not use the workspace's connections |
+| `host_refused` | The connection's host is not a public address |
+| `rate_limited` | The connection's limit of calls a minute is reached |
+| `engine_rate_limited` | Too many tool calls from this agent at once; wait a moment |
+| `turn_not_running` | The turn the call belongs to has ended |
+| `invalid_request`, `rejected` | The call could not be accepted as sent |
+| `no_conversation` | `reply` outside a turn answering a channel conversation |
+| `outside_window`, `cold_send_disabled`, `no_binding`, `send_rejected`, `tool_call_text` | The channel refusals of [`send_message`](#channelsenderror); `tool_call_text` is a message that looks like a tool call |
+| `backend_timeout`, `backend_error` | Outcome unknown: the call may have completed. Do not repeat it |
+| `backend_unreachable` | The call did not run; already retried |
+| `not_in_sandbox` | Not running on the platform (a local run, a test) |
+| `no_turn` | Called outside a running turn; nothing was sent |
+| `tool_not_listed` | The platform does not offer the tool to this agent |

@@ -27,13 +27,21 @@ What you get back is yours to change: a list or table is a copy.
 in the manifest, else the default you pass. ``is_set`` tells the first case
 from the others. The platform checks saved values against the manifest's
 types, so a value that is present has the declared type.
+
+The file also lists the **connector tools** the agent may call: the verified
+tools of each connection the workspace let it use, and the built-in tools of
+the channels it is connected to. ``connector_tools()`` turns them into tools
+for the model (see :mod:`genfleet.sdk.connector_calls`). A file written by an
+older platform has no tools: ``connector_tools()`` is then empty.
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -45,10 +53,13 @@ __all__ = [
     "AGENT_CONFIG_ENV",
     "AgentConfig",
     "AgentConfigError",
+    "ConnectionGrant",
     "ConnectorBinding",
+    "ConnectorToolSpec",
     "TenantPrompt",
     "agent_config",
     "connector",
+    "connector_tools",
     "is_set",
     "setting",
     "settings",
@@ -61,9 +72,34 @@ _VERSION = 1
 #: Refuse a file larger than this rather than read it into memory.
 _MAX_BYTES = 2 * 1024 * 1024
 
+#: A tool name the model accepts: letters, digits, ``_`` and ``-``, at most 64.
+TOOL_NAME_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_DEFINITION_HASH = re.compile(r"[0-9a-f]{64}")
+
+log = logging.getLogger("genfleet.sdk.config")
+
 
 class AgentConfigError(RuntimeError):
     """The configuration file is named but missing, too large, or not the expected shape."""
+
+
+@dataclass(frozen=True)
+class ConnectorToolSpec:
+    """One connector tool the platform lists for the agent.
+
+    ``name`` is what the model sees, and the name the workspace's audience
+    and approval settings use: ``<connection>__<tool>`` for a tool of a
+    connection, the bare name (``reply``) for a channel's built-in tool. It
+    is used exactly as listed, never renamed or shortened. ``tool`` and
+    ``definition_hash`` identify the tool and the exact definition the
+    workspace verified when it is called.
+    """
+
+    name: str
+    tool: str
+    description: str
+    input_schema: Mapping[str, Any]
+    definition_hash: str
 
 
 @dataclass(frozen=True)
@@ -72,12 +108,23 @@ class ConnectorBinding:
 
     ``connection`` is the name to pass to ``call_connection``. ``config`` is
     the connector's configuration for this agent: the connection's own, with
-    the agent's overrides applied.
+    the agent's overrides applied. ``tools`` are the connection's verified
+    tools (empty on an older platform).
     """
 
     connection: str
     provider: str
     config: Mapping[str, Any] = field(default_factory=dict)
+    tools: tuple[ConnectorToolSpec, ...] = ()
+
+
+@dataclass(frozen=True)
+class ConnectionGrant:
+    """A connection the workspace let the agent use, in a slot or not, and its verified tools."""
+
+    provider: str
+    slot: str | None = None
+    tools: tuple[ConnectorToolSpec, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,6 +143,10 @@ class AgentConfig:
     defaults: Mapping[str, Any] = field(default_factory=dict)
     connectors: Mapping[str, ConnectorBinding] = field(default_factory=dict)
     prompts: tuple[TenantPrompt, ...] = ()
+    #: Every connection the agent may use, by connection name.
+    connections: Mapping[str, ConnectionGrant] = field(default_factory=dict)
+    #: The built-in tools of each channel the agent is connected to, by channel.
+    channels: Mapping[str, tuple[ConnectorToolSpec, ...]] = field(default_factory=dict)
 
 
 def _object(value: Any, what: str) -> dict[str, Any]:
@@ -112,6 +163,54 @@ def _text(value: Any, what: str) -> str:
     return value
 
 
+def _tool(entry: Any, where: str) -> ConnectorToolSpec | None:
+    """One listed tool, or None (logged by its place, never its text) when it is unusable.
+
+    A tool is skipped rather than failing the whole file: the agent keeps
+    serving without it. A name the model would refuse is never renamed.
+    """
+    if not isinstance(entry, dict):
+        log.warning("skipping a connector tool at %s: not an object", where)
+        return None
+    name, tool, description = entry.get("name"), entry.get("tool"), entry.get("description")
+    schema, digest = entry.get("input_schema"), entry.get("definition_hash")
+    if not (isinstance(name, str) and TOOL_NAME_PATTERN.fullmatch(name)):
+        log.warning("skipping a connector tool at %s: unusable name", where)
+        return None
+    if not (
+        isinstance(tool, str) and tool
+        and isinstance(description, str)
+        and isinstance(schema, dict)
+        and isinstance(digest, str) and _DEFINITION_HASH.fullmatch(digest)
+    ):
+        log.warning("skipping connector tool %s at %s: malformed entry", name, where)
+        return None
+    return ConnectorToolSpec(
+        name=name,
+        tool=tool,
+        description=description,
+        input_schema=MappingProxyType(copy.deepcopy(schema)),
+        definition_hash=digest,
+    )
+
+
+def _tools(value: Any, where: str) -> tuple[ConnectorToolSpec, ...]:
+    """A ``tools`` list: absent is none; each usable entry once, by name, first kept."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        log.warning("skipping the connector tools at %s: not a list", where)
+        return ()
+    seen: set[str] = set()
+    tools = []
+    for i, entry in enumerate(value):
+        spec = _tool(entry, f"{where}[{i}]")
+        if spec is not None and spec.name not in seen:
+            seen.add(spec.name)
+            tools.append(spec)
+    return tuple(tools)
+
+
 def parse_agent_config(raw: Any) -> AgentConfig:
     """Turn the decoded file into an `AgentConfig`, refusing a shape it doesn't know."""
     document = _object(raw, "the agent configuration")
@@ -126,7 +225,23 @@ def parse_agent_config(raw: Any) -> AgentConfig:
             connection=_text(entry.get("connection"), f"connectors.{slot}.connection"),
             provider=_text(entry.get("provider"), f"connectors.{slot}.provider"),
             config=MappingProxyType(_object(entry.get("config"), f"connectors.{slot}.config")),
+            tools=_tools(entry.get("tools"), f"connectors.{slot}.tools"),
         )
+
+    connections: dict[str, ConnectionGrant] = {}
+    for name, entry in _object(document.get("connections"), "connections").items():
+        entry = _object(entry, f"connections.{name}")
+        granted_slot = entry.get("slot")
+        connections[name] = ConnectionGrant(
+            provider=_text(entry.get("provider"), f"connections.{name}.provider"),
+            slot=_text(granted_slot, f"connections.{name}.slot") if granted_slot is not None else None,
+            tools=_tools(entry.get("tools"), f"connections.{name}.tools"),
+        )
+
+    channels: dict[str, tuple[ConnectorToolSpec, ...]] = {}
+    for provider, entry in _object(document.get("channels"), "channels").items():
+        entry = _object(entry, f"channels.{provider}")
+        channels[provider] = _tools(entry.get("tools"), f"channels.{provider}.tools")
 
     prompts = document.get("prompts")
     if prompts is None:
@@ -143,6 +258,8 @@ def parse_agent_config(raw: Any) -> AgentConfig:
         defaults=MappingProxyType(_object(document.get("defaults"), "defaults")),
         connectors=MappingProxyType(connectors),
         prompts=tuple(parsed),
+        connections=MappingProxyType(connections),
+        channels=MappingProxyType(channels),
     )
 
 
@@ -193,6 +310,16 @@ def is_set(key: str) -> bool:
 def connector(slot: str) -> ConnectorBinding | None:
     """The connection filling ``slot``, or ``None`` when the workspace has not picked one."""
     return agent_config().connectors.get(slot)
+
+
+def connector_tools(slot: str | None = None) -> list[Any]:
+    """The connector tools for the model: every connection's, or one slot's.
+
+    See :func:`genfleet.sdk.connector_calls.connector_tools`.
+    """
+    from .connector_calls import connector_tools as _connector_tools
+
+    return _connector_tools(slot)
 
 
 def tenant_prompts() -> tuple[TenantPrompt, ...]:

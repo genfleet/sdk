@@ -258,9 +258,13 @@ if erp is not None:
 ```
 
 `connector()` returns a `ConnectorBinding` with `connection` (the name to
-call), `provider` and `config`. An agent can only call a connection the
-workspace has let it use; any other call raises `ConnectionCallError` with
-code `connection_not_allowed`.
+call), `provider`, `config` and `tools` (the connection's verified tools). An
+agent can only call a connection the workspace has let it use; any other call
+raises `ConnectionCallError` with code `connection_not_allowed`.
+
+`connector_tools("erp")` (in `genfleet.sdk` and `genfleet.sdk.config`) turns
+the slot's verified tools into tools for the model; see
+[Connector tools and `reply`](approvals-and-messaging.md#connector-tools-and-reply).
 
 ### Prompts the workspace adds
 

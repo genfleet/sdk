@@ -409,6 +409,21 @@ class ChannelSendError(RuntimeError): status: int; code: str | None; delivery_un
 
 Pass exactly one of `text` or `template` (else `ValueError`). `to` is `"<channel>:<address>"`, e.g. `"whatsapp:201001234567"`; replying to the current contact is `send_message(input.metadata["session_id"], ...)`. Free text reaches only a contact who wrote in the last 24 hours; a template reaches anyone the binding may contact. Returns `{"sent": True, "messageIds": [...]}`. `ChannelSendError.code` values: `outside_window` (send a template instead), `cold_send_disabled`, `no_binding`, `invalid_request`, `send_rejected`, `not_in_sandbox` (the agent is not hosted); `None` for anything else. A coded refusal means nothing was sent; with no code, `delivery_unknown` is true unless the status was a 4xx. `send_message_tool` is operator-only by default (like any unmarked tool).
 
+### Connector tools and reply
+
+```python
+def connector_tools(slot: str | None = None) -> list[ToolWrapper]   # also genfleet.sdk.config.connector_tools
+def reply_tool() -> ToolWrapper | None
+async def reply(text: str, quote: str | None = None) -> ReplyResult
+class ReplyResult: message_ids: tuple[str, ...]; quoted: bool | None
+class ConnectorToolError(ChannelSendError): tool: str | None; outcome_unknown: bool; retryable: bool
+# genfleet.sdk.connector_calls: REFUSAL_CODES, UNKNOWN_OUTCOME_CODES, RETRYABLE_CODES, LOCAL_CODES
+# genfleet.sdk.config: ConnectorToolSpec(name, tool, description, input_schema, definition_hash),
+#   ConnectorBinding.tools, ConnectionGrant(provider, slot, tools), AgentConfig.connections, AgentConfig.channels
+```
+
+`connector_tools()` gives the verified tools of every connection the workspace lets the agent use (or one slot's), named `<connection>__<tool>` exactly as listed; empty locally or on an older platform. `reply_tool()` is `None` unless the agent is connected to a channel. The tools answer the model in text and never raise: an API answer as JSON, a refusal as `"<code>: <message>"`, an unknown outcome (`backend_timeout`, `backend_error`, no answer) as "may already have completed; do not call it again in this turn; tell the person what you tried". Only `backend_unreachable` is retried. Local codes: `not_in_sandbox`, `no_turn` (outside a running turn; nothing sent), `tool_not_listed`.
+
 ---
 
 ## Manifests
