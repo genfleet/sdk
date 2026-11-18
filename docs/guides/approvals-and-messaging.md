@@ -459,6 +459,11 @@ def build_agent(remote_tools=()):
   page use the same name: who it is offered to (operators by default) and
   whether it waits for an owner's or admin's approval
   ([Sensitive tools](#sensitive-tools)).
+- **Names never shadow.** If the agent already has a tool of the same name
+  (its own function, a tool object or an MCP tool), the agent's own tool is
+  kept, in any order, and the listed one is skipped with a logged warning
+  naming both. Two connections listing the same name keep the first, also
+  with a warning.
 - **What is sent.** The tool's name, the model's arguments and the running
   turn. The platform checks that the tool is still the one that was
   verified, that the person on this turn may use it, and that the arguments
@@ -488,24 +493,27 @@ result.message_ids, result.quoted                          # quoted is False whe
 - `reply_tool()` is the model-facing form, offered to operators and
   customers unless the workspace's setting says otherwise. It returns `None`
   when the agent is not connected to a channel; `reply` then raises
-  `tool_not_listed`.
+  `tool_not_listed`. An agent's own tool named `reply` is kept over it.
 - The 24-hour window, first-contact and rate rules of `send_message` apply.
 
 ### What the model reads
 
-The tools never raise. The model reads:
+The tools never raise. A refusal, an unknown outcome and an API answer that
+is not `ok` are still reported as a failed tool call (`ok: false` in the
+turn's tool events), with the same text. The model reads:
 
 | Outcome | Text |
 |---|---|
 | The API answered (any status) | A JSON object: `tool`, `status`, `ok`, `contentType`, `body` (cut to the tool's size limit), `truncated`, `bytes`, `bodyWithheld` (the body could not be shown safely), `note` |
-| `reply` sent | `sent`, or `sent, without the quote: this channel cannot quote a message` |
-| Refused | `<code>: <message>`, the platform's message unchanged. Nothing was done |
+| `reply` sent | `sent`; when a quote was asked for and the channel cannot quote, `sent, without the quote: this channel cannot quote a message` |
+| Refused | `<code>: <message>`, the platform's message unchanged. Nothing was done. Without a code: `<tool> was refused (<status>): <reason>` (a 413 reads "the arguments are too large") |
 | Outcome unknown | `<tool> may already have completed: …, so the result is unknown. Do not call <tool> again in this turn. Tell the person what you tried to do, so they can check whether it happened.` |
 
 The outcome is unknown when the platform answers `backend_timeout` or
 `backend_error`, when the API did not answer in time or the connection to it
-failed, and when no readable answer came at all. A write may have happened,
-so the model must not repeat it.
+failed, when the answer is a redirect (never followed) or larger than the
+SDK reads (8 MiB), and when no readable answer came at all. A write may have
+happened, so the model must not repeat it.
 
 **Retries.** The SDK retries only `backend_unreachable` (the call never left
 the platform, so it did not run), twice, after a short wait. It retries
@@ -542,3 +550,4 @@ the call) and `retryable` (only `backend_unreachable`). The code lists are in
 | `not_in_sandbox` | Not running on the platform (a local run, a test) |
 | `no_turn` | Called outside a running turn; nothing was sent |
 | `tool_not_listed` | The platform does not offer the tool to this agent |
+| `not_configured` | The platform has no connector service for this agent (HTTP 503); the tool did not run |

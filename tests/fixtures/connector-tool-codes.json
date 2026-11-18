@@ -1,5 +1,5 @@
 {
-  "_source": "Copied from the engine at a704ac8 (genfleet/engine, dev): REFUSAL_CODES, BACKEND_TIMEOUT, BACKEND_ERROR and BACKEND_UNREACHABLE in genfleet/engine/runtime/connector_tools.py, and the codes the route POST /channels/connector-tool-call answers itself in genfleet/engine/management/channels_proxy.py (connector_tool_call, _live_turn_stamp) and connector_tools.classify ('rejected'). Re-copy when either changes; the SDK's REFUSAL_CODES must equal refusal + route_refusal, UNKNOWN_OUTCOME_CODES unknown_outcome, RETRYABLE_CODES retryable.",
+  "_source": "The platform's refusal, unknown-outcome and retryable codes for connector tool calls, as of 2026-11-18. refusal: the platform's refusal codes; route_refusal: the codes the connector tool endpoint itself answers. Update when the platform's list changes: the SDK's REFUSAL_CODES must equal refusal + route_refusal, UNKNOWN_OUTCOME_CODES unknown_outcome, RETRYABLE_CODES retryable.",
   "refusal": [
     "invalid_request",
     "agent_not_allowed",
@@ -23,7 +23,18 @@
     "unknown_recipient",
     "already_escalated"
   ],
-  "route_refusal": ["engine_rate_limited", "invalid_request", "turn_not_running", "no_conversation", "rejected"],
-  "unknown_outcome": ["backend_timeout", "backend_error"],
-  "retryable": ["backend_unreachable"]
+  "route_refusal": [
+    "engine_rate_limited",
+    "invalid_request",
+    "turn_not_running",
+    "no_conversation",
+    "rejected"
+  ],
+  "unknown_outcome": [
+    "backend_timeout",
+    "backend_error"
+  ],
+  "retryable": [
+    "backend_unreachable"
+  ]
 }

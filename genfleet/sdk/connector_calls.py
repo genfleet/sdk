@@ -28,7 +28,9 @@ the person on this turn may use it, and that the arguments fit; then it
 makes the call with the connection's key. The agent never sees the key, the
 endpoint or the method.
 
-**What the model reads.** Every answer is text; the tool never raises.
+**What the model reads.** Every answer is text; the tool never raises. A
+refusal, an unknown outcome and an API answer that is not ``ok`` are reported
+to the runtime as a failed tool call, with the same text.
 
 - An API answer: a JSON object with ``tool``, ``status``, ``ok``,
   ``contentType``, ``body`` (cut to the tool's size limit), ``truncated``,
@@ -56,18 +58,23 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import logging
 import os
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from .caller import EVERYONE, OPERATOR_ONLY, Audience
-from .channels import CHANNELS_TOKEN_ENV, CHANNELS_URL_ENV, ChannelSendError
+from .channels import (
+    CHANNELS_TOKEN_ENV,
+    CHANNELS_URL_ENV,
+    ChannelSendError,
+    _NoAnswer,
+    _send,
+)
 from .config import ConnectorToolSpec, agent_config
-from .schemas import ToolSchema
+from .schemas import ToolCall, ToolSchema
 from .tool import ToolWrapper
 from .turn import current_turn
 
@@ -76,6 +83,7 @@ __all__ = [
     "REFUSAL_CODES",
     "RETRYABLE_CODES",
     "UNKNOWN_OUTCOME_CODES",
+    "ConnectorTool",
     "ConnectorToolError",
     "ReplyResult",
     "connector_tools",
@@ -127,11 +135,14 @@ LOCAL_CODES: frozenset[str] = frozenset({
     "not_in_sandbox",   # not running on the platform
     "no_turn",          # called outside a running turn
     "tool_not_listed",  # the platform does not offer this tool to the agent
+    "not_configured",   # the platform has no connector service for this agent (HTTP 503)
 })
+
+log = logging.getLogger("genfleet.sdk.connector_tools")
 
 #: Longer than the platform's own 30-second limit for one call.
 _TIMEOUT_S = 35.0
-#: Waits before each retry of ``backend_unreachable``.
+#: Waits before each retry of ``backend_unreachable``: three attempts in all.
 _RETRY_DELAYS_S = (0.5, 1.0)
 #: The turn reference the platform accepts: 1 to 256 characters each.
 _MAX_TURN_REF = 256
@@ -164,6 +175,7 @@ class ConnectorToolError(ChannelSendError):
 
     @property
     def delivery_unknown(self) -> bool:
+        """The same as :attr:`outcome_unknown`, under `ChannelSendError`'s name."""
         return self.outcome_unknown
 
     @property
@@ -181,10 +193,42 @@ class ReplyResult:
     quoted: bool | None = None
 
 
+class ConnectorTool(ToolWrapper):
+    """A tool the platform listed for the agent (:func:`connector_tools`, :func:`reply_tool`).
+
+    ``source`` says where it came from (``connection erp``, ``channel``), for
+    the warning when its name collides with another tool. ``Agent`` keeps the
+    agent's own tool of that name and skips this one, in any order. A call
+    reports a refusal or an unknown outcome as a failed tool call.
+    """
+
+    def __init__(self, spec: ConnectorToolSpec, connection: str | None, audiences: frozenset[Audience]) -> None:
+        async def handler(**arguments: Any) -> str:
+            return (await self.call_reporting_arguments(arguments))[0]
+
+        handler.__name__ = spec.name
+        schema = ToolSchema(name=spec.name, description=spec.description, parameters=copy.deepcopy(dict(spec.input_schema)))
+        super().__init__(fn=handler, schema=schema, audiences=audiences)
+        self.spec = spec
+        self.connection = connection
+        self.source = f"connection {connection}" if connection is not None else "channel"
+
+    async def call_reporting(self, tool_call: ToolCall) -> tuple[str, bool]:
+        """The model's text and whether the call succeeded."""
+        return await self.call_reporting_arguments(tool_call.arguments)
+
+    async def call_reporting_arguments(self, arguments: dict[str, Any]) -> tuple[str, bool]:
+        try:
+            answer = await _invoke(self.spec, self.connection, arguments)
+        except ConnectorToolError as exc:
+            return _error_text(self.spec.name, exc), False
+        return _answer_text(self.spec.name, answer, asked_quote=bool(arguments.get("quote")))
+
+
 # --- The tools ---------------------------------------------------------------
 
 
-def connector_tools(slot: str | None = None) -> list[ToolWrapper]:
+def connector_tools(slot: str | None = None) -> list[ConnectorTool]:
     """The verified tools of the agent's connections, ready for ``Agent(tools=...)``.
 
     With no ``slot``, every connection the workspace lets the agent use; with
@@ -192,7 +236,8 @@ def connector_tools(slot: str | None = None) -> list[ToolWrapper]:
     unfilled slot has none). Empty when the platform lists no tools (a local
     run, or an older platform). Each tool has the listed name, description
     and inputs, is offered to operators unless the workspace's setting says
-    otherwise, and answers the model in text (see the module docs).
+    otherwise, and answers the model in text (see the module docs). Two
+    connections listing the same name keep the first, with a warning.
     """
     config = agent_config()
     found: list[tuple[str, ConnectorToolSpec]] = []
@@ -205,14 +250,20 @@ def connector_tools(slot: str | None = None) -> list[ToolWrapper]:
         filled = config.connectors.get(slot)
         if filled is not None:
             found.extend((filled.connection, spec) for spec in filled.tools)
-    tools: dict[str, ToolWrapper] = {}
+    tools: dict[str, ConnectorTool] = {}
     for connection, spec in found:
-        if spec.name not in tools:
-            tools[spec.name] = _as_tool(spec, connection, OPERATOR_ONLY)
+        kept = tools.get(spec.name)
+        if kept is None:
+            tools[spec.name] = ConnectorTool(spec, connection, OPERATOR_ONLY)
+        elif kept.connection != connection:
+            log.warning(
+                "connector tool %r of connection %r skipped: connection %r already lists a tool of that name",
+                spec.name, connection, kept.connection,
+            )
     return list(tools.values())
 
 
-def reply_tool() -> ToolWrapper | None:
+def reply_tool() -> ConnectorTool | None:
     """The model-facing ``reply``, or None when the platform does not offer it.
 
     ``reply`` is offered when the agent is connected to a channel. It sends a
@@ -220,9 +271,10 @@ def reply_tool() -> ToolWrapper | None:
     turn ends (a "one moment, checking" or a quote of one of the person's
     messages). The turn's answer is still sent at the end. It is offered to
     operators and customers unless the workspace's setting says otherwise.
+    When the agent has its own tool named ``reply``, ``Agent`` keeps that one.
     """
     spec = _reply_spec()
-    return _as_tool(spec, None, EVERYONE) if spec is not None else None
+    return ConnectorTool(spec, None, EVERYONE) if spec is not None else None
 
 
 async def reply(text: str, quote: str | None = None) -> ReplyResult:
@@ -265,31 +317,13 @@ def _reply_spec() -> ConnectorToolSpec | None:
     return None
 
 
-def _as_tool(spec: ConnectorToolSpec, connection: str | None, audiences: frozenset[Audience]) -> ToolWrapper:
-    async def handler(**arguments: Any) -> str:
-        return await _model_text(spec, connection, arguments)
-
-    handler.__name__ = spec.name
-    schema = ToolSchema(name=spec.name, description=spec.description, parameters=copy.deepcopy(dict(spec.input_schema)))
-    return ToolWrapper(fn=handler, schema=schema, audiences=audiences)
-
-
-async def _model_text(spec: ConnectorToolSpec, connection: str | None, arguments: dict[str, Any]) -> str:
-    """The call, as the text the model reads. Never raises for a platform answer."""
-    try:
-        answer = await _invoke(spec, connection, arguments)
-    except ConnectorToolError as exc:
-        return _error_text(spec.name, exc)
-    return _answer_text(spec.name, answer)
-
-
 async def _invoke(spec: ConnectorToolSpec, connection: str | None, arguments: dict[str, Any]) -> dict[str, Any]:
     _require_sandbox(spec.name)
     turn = current_turn()
     session_id, turn_id = turn.get("session_id"), turn.get("turn_id")
     if not all(isinstance(v, str) and 0 < len(v) <= _MAX_TURN_REF for v in (session_id, turn_id)):
         raise ConnectorToolError(
-            f"{spec.name} can only be called while a turn is running",
+            "this tool can only be called while a turn is running",
             status=0, code="no_turn", tool=spec.name,
         )
     body: dict[str, Any] = {
@@ -307,59 +341,51 @@ async def _invoke(spec: ConnectorToolSpec, connection: str | None, arguments: di
 def _require_sandbox(name: str) -> None:
     if not os.environ.get(CHANNELS_URL_ENV) or not os.environ.get(CHANNELS_TOKEN_ENV):
         raise ConnectorToolError(
-            f"{name} needs a platform sandbox: {CHANNELS_URL_ENV} and {CHANNELS_TOKEN_ENV} are not set",
+            f"this tool needs a platform sandbox: {CHANNELS_URL_ENV} and {CHANNELS_TOKEN_ENV} are not set",
             status=0, code="not_in_sandbox", tool=name,
         )
 
 
 def _post(body: dict[str, Any], name: str) -> dict[str, Any]:
     """POST the call; retry only ``backend_unreachable``. Raises :class:`ConnectorToolError`."""
-    for delay in (*_RETRY_DELAYS_S, None):
+    for delay in _RETRY_DELAYS_S:
         try:
             return _post_once(body, name)
         except ConnectorToolError as exc:
-            if not exc.retryable or delay is None:
+            if not exc.retryable:
                 raise
         time.sleep(delay)
-    raise AssertionError("unreachable")  # pragma: no cover
+    return _post_once(body, name)
 
 
 def _post_once(body: dict[str, Any], name: str) -> dict[str, Any]:
-    url = os.environ.get(CHANNELS_URL_ENV, "")
-    token = os.environ.get(CHANNELS_TOKEN_ENV, "")
-    req = urllib.request.Request(
-        f"{url.rstrip('/')}/{_ROUTE}",
-        data=json.dumps(body).encode(),
-        method="POST",
-        headers={"authorization": f"Bearer {token}", "content-type": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:  # the URL is platform-provided
-            raw = resp.read()
-    except urllib.error.HTTPError as exc:
-        raise _refusal(exc.code, exc.read(), name) from None
-    except (urllib.error.URLError, TimeoutError, OSError):
-        # Sent or not, no answer came: the call may have run.
-        raise ConnectorToolError(f"{name} got no answer from the platform", status=0, tool=name) from None
+        status, raw = _send(_ROUTE, body, timeout=_TIMEOUT_S)
+    except _NoAnswer:
+        # Sent or not, no complete answer came: the call may have run.
+        raise ConnectorToolError("no answer came from the platform", status=0, tool=name) from None
     try:
         parsed = json.loads(raw) if raw else None
     except ValueError:
         parsed = None
+    if not 200 <= status < 300:
+        raise _refusal(status, parsed, name)
     if not isinstance(parsed, dict):
-        raise ConnectorToolError(f"{name} got an answer it could not read", status=200, tool=name)
+        raise ConnectorToolError("the platform's answer could not be read", status=status, tool=name)
     return parsed
 
 
-def _refusal(status: int, raw: bytes, name: str) -> ConnectorToolError:
-    try:
-        parsed = json.loads(raw)
-    except ValueError:
-        parsed = None
+def _refusal(status: int, parsed: Any, name: str) -> ConnectorToolError:
     payload = parsed if isinstance(parsed, dict) else {}
     code = payload.get("code") if isinstance(payload.get("code"), str) else None
-    message = payload.get("message")
-    if not isinstance(message, str):
-        message = f"{name} was refused" if 400 <= status < 500 else f"{name} failed"
+    message = next((payload[k] for k in ("message", "detail", "error") if isinstance(payload.get(k), str)), None)
+    if code is None and status == 413:
+        message = "the arguments are too large"
+    elif code is None and status == 503:
+        code = "not_configured"
+        message = "the platform has no connector service for this agent; the tool did not run"
+    if message is None:
+        message = "the call was refused" if 400 <= status < 500 else "the call failed"
     return ConnectorToolError(message, status=status, code=code, tool=name)
 
 
@@ -389,29 +415,29 @@ def _error_text(name: str, exc: ConnectorToolError) -> str:
     return f"{exc.code}: {exc}"
 
 
-def _answer_text(name: str, answer: Mapping[str, Any]) -> str:
+def _answer_text(name: str, answer: Mapping[str, Any], *, asked_quote: bool) -> tuple[str, bool]:
+    """The model's text for a 2xx answer, and whether the call succeeded."""
     failure = answer.get("failure")
     if isinstance(failure, str):
-        return _unknown_outcome_text(name, _FAILURES.get(failure, f"the call failed ({failure})"))
+        return _unknown_outcome_text(name, _FAILURES.get(failure, f"the call failed ({failure})")), False
     if "sent" in answer:
         if answer.get("sent") is not True:
-            return _unknown_outcome_text(name, "the platform did not confirm the send")
-        quoted = answer.get("quoted")
-        if quoted is False:
-            return "sent, without the quote: this channel cannot quote a message"
-        return "sent"
+            return _unknown_outcome_text(name, "the platform did not confirm the send"), False
+        if asked_quote and answer.get("quoted") is False:
+            return "sent, without the quote: this channel cannot quote a message", True
+        return "sent", True
     if isinstance(answer.get("status"), int):
-        return json.dumps({k: answer[k] for k in _RESULT_FIELDS if k in answer}, ensure_ascii=False)
-    return _unknown_outcome_text(name, "the platform's answer could not be read")
+        text = json.dumps({k: answer[k] for k in _RESULT_FIELDS if k in answer}, ensure_ascii=False)
+        return text, answer.get("ok") is True
+    return _unknown_outcome_text(name, "the platform's answer could not be read"), False
 
 
 def _reply_result(answer: Mapping[str, Any], asked_quote: bool) -> ReplyResult:
     if answer.get("sent") is not True:
-        raise ConnectorToolError("reply got an answer it could not read; delivery unknown", status=200, tool=_REPLY)
+        raise ConnectorToolError("the answer could not be read; delivery unknown", status=200, tool=_REPLY)
     ids = answer.get("messageIds")
     quoted = answer.get("quoted")
     return ReplyResult(
         message_ids=tuple(i for i in ids if isinstance(i, str)) if isinstance(ids, list) else (),
         quoted=(quoted if isinstance(quoted, bool) else None) if asked_quote else None,
     )
-

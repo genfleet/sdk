@@ -65,6 +65,7 @@ from .confirmations import (
 from .files import FileAccessError, FileResolver, read_part
 from .parts import ImagePart, UnsupportedInput, looks_like, media_of, mime_patterns
 from .parts import accepts as _accepts
+from .connector_calls import ConnectorTool
 from .protocol import ToolProtocol
 from .tool import ToolWrapper, wrap_tool
 from .skills import Skill, load_skills, pinned_revision
@@ -131,7 +132,9 @@ def _local_tools_of(
     """The agent's tools by name.
 
     Among functions a later one replaces an earlier one with the same name,
-    and a reserved name is a `ValueError`. Unwrapped ToolProtocol objects are
+    and a reserved name is a `ValueError`. A connector tool (one the platform
+    listed) never takes a name another tool has, in either order: it is
+    skipped with a warning naming both, and so is one with a reserved name. Unwrapped ToolProtocol objects are
     placed after every function: one never takes a name a function has (in
     either order) or an earlier object took, since dispatch goes by name and
     it would otherwise drop that tool's sensitive marking and audience. Like
@@ -146,11 +149,27 @@ def _local_tools_of(
             unwrapped.append((name, tool))
             continue
         reason = _reserved_name(name, skills_configured)
+        if isinstance(tool, ConnectorTool):
+            if reason:
+                log.warning("connector tool %r (%s) skipped: %s", name, tool.source, reason)
+            elif name in tools:
+                log.warning(
+                    "connector tool %r (%s) skipped: the agent already has a tool of that name (%s)",
+                    name, tool.source, _source_of(tools[name]),
+                )
+            else:
+                tools[name] = tool
+            continue
         if reason:
             raise ValueError(reason)
+        if isinstance(tools.get(name), ConnectorTool):
+            _warn_connector_shadowed(name, tools[name], "the agent's own tool")
         tools[name] = tool
     for name, tool in unwrapped:
-        if name in tools:
+        if isinstance(tools.get(name), ConnectorTool):
+            _warn_connector_shadowed(name, tools[name], "a tool object")
+            tools[name] = tool
+        elif name in tools:
             log.warning("tool %r skipped: the name is already taken by another tool", name)
         elif name.startswith("@"):
             log.warning("tool %r skipped: a tool name can't start with '@'", name)
@@ -159,6 +178,14 @@ def _local_tools_of(
         else:
             tools[name] = tool
     return tools
+
+
+def _source_of(tool: ToolProtocol) -> str:
+    return tool.source if isinstance(tool, ConnectorTool) else "the agent's own tool"
+
+
+def _warn_connector_shadowed(name: str, listed: ConnectorTool, own: str) -> None:
+    log.warning("connector tool %r (%s) skipped: %s has that name", name, listed.source, own)
 
 
 class _Marking(NamedTuple):
@@ -890,7 +917,10 @@ class Agent:
         if tc.name == SKILL_TOOL_NAME and self._skills:
             return self._read_skill(tc, allowed_skills)
         if tc.name in self._local_tools:
-            return await self._local_tools[tc.name].call(tc), True
+            local = self._local_tools[tc.name]
+            if isinstance(local, ConnectorTool):
+                return await local.call_reporting(tc)
+            return await local.call(tc), True
         if tc.name in self._mcp_tools:
             return await self._call_mcp_tool(tc)
         return f"Error: tool '{tc.name}' not found", False
@@ -903,7 +933,11 @@ class Agent:
                 # so it gives way to an MCP tool of the same name, which keeps
                 # its config's `sensitive_tools` and `customer_safe_tools`.
                 for name in [n for n in tools if n in self._local_tools]:
-                    if not isinstance(self._local_tools[name], ToolWrapper):
+                    local = self._local_tools[name]
+                    if isinstance(local, ConnectorTool):
+                        _warn_connector_shadowed(name, local, "an MCP tool")
+                        del self._local_tools[name]
+                    elif not isinstance(local, ToolWrapper):
                         log.warning("tool %r skipped: the name is taken by an MCP tool", name)
                         del self._local_tools[name]
                 # An MCP server names its own tools. One that reuses a local

@@ -61,7 +61,7 @@ def test_setting_and_connector_lookups(tmp_path, monkeypatch):
     assert config.setting("currency", "USD") == "EGP"
     assert config.is_set("lead_sink") and not config.is_set("currency")
     assert config.setting("strict", False) is True
-    assert config.connector("erp").connection == "heatec-erp"
+    assert config.connector("erp").connection == "acme-erp"
     assert config.connector("crm") is None
 
 

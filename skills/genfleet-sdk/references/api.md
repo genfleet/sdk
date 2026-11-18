@@ -422,7 +422,7 @@ class ConnectorToolError(ChannelSendError): tool: str | None; outcome_unknown: b
 #   ConnectorBinding.tools, ConnectionGrant(provider, slot, tools), AgentConfig.connections, AgentConfig.channels
 ```
 
-`connector_tools()` gives the verified tools of every connection the workspace lets the agent use (or one slot's), named `<connection>__<tool>` exactly as listed; empty locally or on an older platform. `reply_tool()` is `None` unless the agent is connected to a channel. The tools answer the model in text and never raise: an API answer as JSON, a refusal as `"<code>: <message>"`, an unknown outcome (`backend_timeout`, `backend_error`, no answer) as "may already have completed; do not call it again in this turn; tell the person what you tried". Only `backend_unreachable` is retried. Local codes: `not_in_sandbox`, `no_turn` (outside a running turn; nothing sent), `tool_not_listed`.
+`connector_tools()` gives the verified tools of every connection the workspace lets the agent use (or one slot's), named `<connection>__<tool>` exactly as listed; empty locally or on an older platform. `reply_tool()` is `None` unless the agent is connected to a channel. The tools answer the model in text and never raise: an API answer as JSON, a refusal as `"<code>: <message>"`, an unknown outcome (`backend_timeout`, `backend_error`, no answer) as "may already have completed; do not call it again in this turn; tell the person what you tried". Only `backend_unreachable` is retried. Local codes: `not_in_sandbox`, `no_turn` (outside a running turn; nothing sent), `tool_not_listed`, `not_configured` (HTTP 503). A refused or uncertain call is a failed tool result (`ok: false`). The agent's own tool of the same name always wins over a listed one (warning logged).
 
 ---
 

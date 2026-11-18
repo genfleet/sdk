@@ -1,6 +1,6 @@
-"""Connector tools and reply talk to the sandbox's channels proxy.
+"""Connector tools and reply talk to the platform's connector tool endpoint.
 
-A stdlib server stands in for the proxy: the wire shape (path, bearer token,
+A stdlib server stands in for the endpoint: the wire shape (path, bearer token,
 the turn reference and the listing's tool and hash), what the model reads for
 each answer, the refusal codes, and the retry rule (only
 ``backend_unreachable`` is retried).
@@ -38,7 +38,12 @@ from genfleet.sdk.caller import (
 )
 from genfleet.sdk.channels import CHANNELS_TOKEN_ENV, CHANNELS_URL_ENV
 from genfleet.sdk.confirmations import SENSITIVE_TOOLS_KEY
+from genfleet.sdk.connector_calls import ConnectorTool
+from genfleet.sdk.schemas import TOOL_EVENT_KEY, ToolSchema
+from genfleet.sdk.tool import tool
 from genfleet.sdk.turn import call_within
+
+from .conftest import RawServer
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CODES = json.loads((FIXTURES / "connector-tool-codes.json").read_text())
@@ -149,7 +154,7 @@ async def test_posts_the_turn_and_the_listings_tool_and_hash(proxy):
     ((path, body, auth),) = proxy.calls
     assert (path, auth) == ("/channels/connector-tool-call", "Bearer spawn-token")
     assert body == {
-        "session_id": "whatsapp:201001234567", "turn_id": "turn-1", "connection": "heatec-erp",
+        "session_id": "whatsapp:201001234567", "turn_id": "turn-1", "connection": "acme-erp",
         "tool": "create_lead", "arguments": {"phone": "2010"}, "definitionHash": "1" * 64,
     }
     assert json.loads(text) == API_ANSWER
@@ -158,13 +163,13 @@ async def test_posts_the_turn_and_the_listings_tool_and_hash(proxy):
 async def test_a_slot_tool_names_the_slots_connection(proxy):
     tool = connector_tools("erp")[0]
     await call_within(TURN, tool(phone="1"))
-    assert proxy.calls[0][1]["connection"] == "heatec-erp"
+    assert proxy.calls[0][1]["connection"] == "acme-erp"
 
 
 @pytest.mark.parametrize("turn", [{}, {"session_id": "s"}, {"turn_id": "t"}, {"session_id": "", "turn_id": "t"}, {"session_id": "s", "turn_id": "x" * 257}])
 async def test_no_running_turn_sends_nothing(proxy, turn):
     text = await _call("erp__create_lead", {"phone": "1"}, turn)
-    assert text.startswith("no_turn: erp__create_lead can only be called while a turn is running")
+    assert text.startswith("no_turn: this tool can only be called while a turn is running")
     assert proxy.calls == []
 
 
@@ -212,16 +217,29 @@ async def test_an_unknown_outcome_is_never_retried(proxy, status, code):
     assert len(proxy.calls) == 1
 
 
-@pytest.mark.parametrize("status, payload", [(503, {"detail": "not configured"}), (500, b"Internal Server Error"), (200, b"not json"), (200, [1])])
+@pytest.mark.parametrize("status, payload", [(500, b"Internal Server Error"), (502, {"detail": "bad gateway"}), (200, b"not json"), (200, [1]), (302, b"")])
 async def test_an_unreadable_answer_is_an_unknown_outcome(proxy, status, payload):
     proxy.responses = [(status, payload)]
     assert "may already have completed" in await _call("erp__create_lead", {"phone": "1"})
     assert len(proxy.calls) == 1
 
 
-async def test_a_4xx_without_a_code_is_a_refusal(proxy):
-    proxy.responses = [(413, {"detail": "too large"})]
-    assert await _call("erp__create_lead", {"phone": "1"}) == "erp__create_lead was refused (413): erp__create_lead was refused"
+@pytest.mark.parametrize("status, payload, text", [
+    (413, {"detail": "body exceeds 30 KB"}, "erp__create_lead was refused (413): the arguments are too large"),
+    (401, {"detail": "invalid token"}, "erp__create_lead was refused (401): invalid token"),
+    (400, {"error": "bad body"}, "erp__create_lead was refused (400): bad body"),
+    (404, b"", "erp__create_lead was refused (404): the call was refused"),
+])
+async def test_a_4xx_without_a_code_is_a_refusal_with_its_reason(proxy, status, payload, text):
+    proxy.responses = [(status, payload)]
+    assert await _call("erp__create_lead", {"phone": "1"}) == text
+
+
+async def test_503_without_a_code_is_a_configuration_error(proxy):
+    proxy.responses = [(503, {"detail": "not configured"})]
+    text = await _call("erp__create_lead", {"phone": "1"})
+    assert text == "not_configured: the platform has no connector service for this agent; the tool did not run"
+    assert len(proxy.calls) == 1
 
 
 async def test_backend_unreachable_is_retried_then_answered(proxy):
@@ -317,14 +335,16 @@ async def test_reply_checks_its_arguments():
         await reply("hi", quote="")
 
 
-@pytest.mark.parametrize("answer, text", [
-    ({"sent": True, "messageIds": ["m"]}, "sent"),
-    ({"sent": True, "messageIds": ["m"], "quoted": True}, "sent"),
-    ({"sent": True, "messageIds": ["m"], "quoted": False}, "sent, without the quote: this channel cannot quote a message"),
+@pytest.mark.parametrize("arguments, answer, text", [
+    ({"text": "hi", "quote": "q"}, {"sent": True, "messageIds": ["m"]}, "sent"),
+    ({"text": "hi", "quote": "q"}, {"sent": True, "messageIds": ["m"], "quoted": True}, "sent"),
+    ({"text": "hi", "quote": "q"}, {"sent": True, "messageIds": ["m"], "quoted": False}, "sent, without the quote: this channel cannot quote a message"),
+    # No quote asked for: the platform's quoted: false says nothing about the channel.
+    ({"text": "hi"}, {"sent": True, "messageIds": ["m"], "quoted": False}, "sent"),
 ])
-async def test_reply_tool_answers(proxy, answer, text):
+async def test_reply_tool_answers(proxy, arguments, answer, text):
     proxy.responses = [(200, answer)]
-    assert await call_within(TURN, reply_tool()(text="hi", quote="q")) == text
+    assert await call_within(TURN, reply_tool()(**arguments)) == text
 
 
 async def test_reply_tool_outside_a_conversation(proxy):
@@ -381,3 +401,119 @@ async def test_a_tool_the_platform_flags_waits_for_approval(proxy):
     meta = _meta(**{TOOL_AUDIENCES_METADATA_KEY: {"erp__create_lead": ["customer"]}, SENSITIVE_TOOLS_KEY: {"erp__create_lead": True}})
     [o async for o in _agent(model).run(AgentInput(message="hi", metadata=meta))]
     assert proxy.calls == []
+
+
+# --- Answers that are not a usable HTTP answer ------------------------------------
+
+
+def _point_at(raw_server, monkeypatch) -> None:
+    monkeypatch.setenv(CHANNELS_URL_ENV, f"http://127.0.0.1:{raw_server.port}/channels")
+    monkeypatch.setenv(CHANNELS_TOKEN_ENV, "spawn-token")
+
+
+async def test_a_garbage_answer_is_an_unknown_outcome(raw_server, monkeypatch):
+    _point_at(raw_server, monkeypatch)
+    raw_server.answer = b"garbage\r\n\r\n"
+    assert "may already have completed" in await _call("erp__create_lead", {"phone": "1"})
+
+
+async def test_a_redirect_is_not_followed(raw_server, monkeypatch):
+    elsewhere = RawServer()
+    try:
+        _point_at(raw_server, monkeypatch)
+        raw_server.answer = (
+            f"HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{elsewhere.port}/x\r\n"
+            "Content-Length: 0\r\nConnection: close\r\n\r\n"
+        ).encode()
+        assert "may already have completed" in await _call("erp__create_lead", {"phone": "1"})
+        assert len(raw_server.requests) == 1
+        assert elsewhere.requests == []
+    finally:
+        elsewhere.close()
+
+
+async def test_an_oversized_answer_is_not_read_whole(raw_server, monkeypatch):
+    from genfleet.sdk import channels
+
+    _point_at(raw_server, monkeypatch)
+    monkeypatch.setattr(channels, "MAX_ANSWER_BYTES", 1024)
+    body = b'{"status": 200, "body": "' + b"x" * 4096 + b'"}'
+    raw_server.answer = b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" % (len(body), body)
+    assert "may already have completed" in await _call("erp__create_lead", {"phone": "1"})
+
+
+# --- What the runtime is told ------------------------------------------------------
+
+
+@pytest.mark.parametrize("response, ok", [
+    ((200, API_ANSWER), True),
+    ((200, {**API_ANSWER, "status": 404, "ok": False}), False),
+    ((200, {"tool": "erp__create_lead", "failure": "timeout"}), False),
+    ((403, {"code": "approval_required", "message": "needs approval", "tool": "erp__create_lead"}), False),
+    ((504, {"code": "backend_timeout", "message": "m"}), False),
+])
+async def test_refusals_and_unknown_outcomes_are_failed_tool_calls(proxy, response, ok):
+    proxy.responses = [response]
+    model = _Model([AgentOutput(tool_calls=[ToolCall(id="1", name="erp__create_lead", arguments={"phone": "1"})])], _DONE)
+    meta = _meta(**{TOOL_AUDIENCES_METADATA_KEY: {"erp__create_lead": ["customer"]}})
+    events = [o async for o in _agent(model).run(AgentInput(message="hi", metadata=meta))]
+    results = [e.metadata[TOOL_EVENT_KEY] for e in events if (e.metadata or {}).get(TOOL_EVENT_KEY, {}).get("type") == "tool_result"]
+    assert [r["ok"] for r in results] == [ok]
+    assert results[0]["output"] == model.results[0]
+
+
+# --- Names never shadow ---------------------------------------------------------------
+
+
+def _own_reply() -> str:
+    """The agent's own reply."""
+    return "mine"
+
+
+def _own_lead(phone: str) -> str:
+    return "own"
+
+
+_own_lead.__name__ = "erp__create_lead"
+
+
+@pytest.mark.parametrize("order", ["listed first", "own first"])
+def test_the_agents_own_tool_keeps_its_name(order, caplog):
+    own = [tool(name="reply")(_own_reply), tool(name="erp__create_lead")(_own_lead)]
+    listed = [*connector_tools(), reply_tool()]
+    tools = [*listed, *own] if order == "listed first" else [*own, *listed]
+    with caplog.at_level("WARNING"):
+        agent = Agent(role="r", model={"model": "openai/gpt-4o-mini", "api_key": "k"}, tools=tools)
+    assert agent._local_tools["reply"] is own[0]
+    assert agent._local_tools["erp__create_lead"] is own[1]
+    assert isinstance(agent._local_tools["crm__find_contact"], ConnectorTool)
+    warned = " ".join(r.getMessage() for r in caplog.records)
+    assert "'reply' (channel) skipped" in warned and "'erp__create_lead' (connection acme-erp) skipped" in warned
+
+
+def test_a_tool_object_keeps_its_name_over_a_listed_one(caplog):
+    class _Peer:
+        def schema(self):
+            return ToolSchema(name="reply", description="a peer", parameters={"type": "object", "properties": {}})
+
+        async def call(self, tool_call):
+            return "peer"
+
+    peer = _Peer()
+    with caplog.at_level("WARNING"):
+        agent = Agent(role="r", model={"model": "openai/gpt-4o-mini", "api_key": "k"}, tools=[reply_tool(), peer])
+    assert agent._local_tools["reply"] is peer
+    assert "'reply' (channel) skipped" in caplog.text
+
+
+def test_two_connections_with_one_name_keep_the_first(tmp_path, monkeypatch, caplog):
+    config._load.cache_clear()
+    lead = EVERYTHING["connectors"]["erp"]["tools"][0]
+    path = tmp_path / "dup.json"
+    path.write_text(json.dumps({"version": 1, "connections": {
+        "a": {"provider": "custom_api", "tools": [lead]}, "b": {"provider": "custom_api", "tools": [lead]}}}))
+    monkeypatch.setenv(config.AGENT_CONFIG_ENV, str(path))
+    with caplog.at_level("WARNING"):
+        tools = connector_tools()
+    assert [(t.schema().name, t.connection) for t in tools] == [("erp__create_lead", "a")]
+    assert "connection 'b' skipped: connection 'a' already lists" in caplog.text

@@ -47,7 +47,10 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .connector_calls import ConnectorTool
 
 __all__ = [
     "AGENT_CONFIG_ENV",
@@ -73,7 +76,7 @@ _VERSION = 1
 _MAX_BYTES = 2 * 1024 * 1024
 
 #: A tool name the model accepts: letters, digits, ``_`` and ``-``, at most 64.
-TOOL_NAME_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_TOOL_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _DEFINITION_HASH = re.compile(r"[0-9a-f]{64}")
 
 log = logging.getLogger("genfleet.sdk.config")
@@ -174,13 +177,13 @@ def _tool(entry: Any, where: str) -> ConnectorToolSpec | None:
         return None
     name, tool, description = entry.get("name"), entry.get("tool"), entry.get("description")
     schema, digest = entry.get("input_schema"), entry.get("definition_hash")
-    if not (isinstance(name, str) and TOOL_NAME_PATTERN.fullmatch(name)):
+    if not (isinstance(name, str) and _TOOL_NAME.fullmatch(name)):
         log.warning("skipping a connector tool at %s: unusable name", where)
         return None
     if not (
         isinstance(tool, str) and tool
         and isinstance(description, str)
-        and isinstance(schema, dict)
+        and isinstance(schema, dict) and schema.get("type") == "object"
         and isinstance(digest, str) and _DEFINITION_HASH.fullmatch(digest)
     ):
         log.warning("skipping connector tool %s at %s: malformed entry", name, where)
@@ -211,6 +214,17 @@ def _tools(value: Any, where: str) -> tuple[ConnectorToolSpec, ...]:
     return tuple(tools)
 
 
+def _listing(value: Any, what: str) -> dict[str, Any]:
+    """``connections`` or ``channels``: only tools hang off them, so a broken
+    one is skipped (logged) rather than failing settings, connectors and prompts."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        log.warning("skipping %s: not an object", what)
+        return {}
+    return value
+
+
 def parse_agent_config(raw: Any) -> AgentConfig:
     """Turn the decoded file into an `AgentConfig`, refusing a shape it doesn't know."""
     document = _object(raw, "the agent configuration")
@@ -229,18 +243,23 @@ def parse_agent_config(raw: Any) -> AgentConfig:
         )
 
     connections: dict[str, ConnectionGrant] = {}
-    for name, entry in _object(document.get("connections"), "connections").items():
-        entry = _object(entry, f"connections.{name}")
-        granted_slot = entry.get("slot")
+    for name, entry in _listing(document.get("connections"), "connections").items():
+        granted_slot = entry.get("slot") if isinstance(entry, dict) else None
+        if not (isinstance(entry, dict) and isinstance(entry.get("provider"), str)
+                and (granted_slot is None or isinstance(granted_slot, str))):
+            log.warning("skipping connections.%s: malformed entry", name)
+            continue
         connections[name] = ConnectionGrant(
-            provider=_text(entry.get("provider"), f"connections.{name}.provider"),
-            slot=_text(granted_slot, f"connections.{name}.slot") if granted_slot is not None else None,
+            provider=entry["provider"],
+            slot=granted_slot,
             tools=_tools(entry.get("tools"), f"connections.{name}.tools"),
         )
 
     channels: dict[str, tuple[ConnectorToolSpec, ...]] = {}
-    for provider, entry in _object(document.get("channels"), "channels").items():
-        entry = _object(entry, f"channels.{provider}")
+    for provider, entry in _listing(document.get("channels"), "channels").items():
+        if not isinstance(entry, dict):
+            log.warning("skipping channels.%s: malformed entry", provider)
+            continue
         channels[provider] = _tools(entry.get("tools"), f"channels.{provider}.tools")
 
     prompts = document.get("prompts")
@@ -312,7 +331,7 @@ def connector(slot: str) -> ConnectorBinding | None:
     return agent_config().connectors.get(slot)
 
 
-def connector_tools(slot: str | None = None) -> list[Any]:
+def connector_tools(slot: str | None = None) -> list[ConnectorTool]:
     """The connector tools for the model: every connection's, or one slot's.
 
     See :func:`genfleet.sdk.connector_calls.connector_tools`.
