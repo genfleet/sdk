@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.29.0 — 2026-11-20
+
 Connector tools: a workspace's verified API tools, and `reply` on channels.
 
 - **Added: `connector_tools(slot=None)`** (`genfleet.sdk`, also `genfleet.sdk.config`; module `genfleet.sdk.connector_calls`). The verified tools a workspace defined on its Custom API connections, as tools for `Agent(tools=[...])`: every connection the agent may use, or only the one filling a `[connectors.<slot>]` slot. Opt-in: nothing is added unless the agent's code adds it. Each tool reaches the model as `<connection>__<tool>`, exactly as the platform lists it, with the listed description and inputs. It is offered to operators unless the workspace's per-tool audience says otherwise, and the workspace can make it wait for approval, both keyed by that name. The platform makes the call with the connection's key; the agent sends only the arguments and the running turn. The model reads the API's answer as JSON (`tool`, `status`, `ok`, `contentType`, `body`, `truncated`, `bytes`, `bodyWithheld`, `note`), a refusal as `"<code>: <message>"` with the platform's message unchanged, and a call whose outcome is unknown as an instruction not to call the tool again in the turn and to tell the person what it tried. The tools never raise.
