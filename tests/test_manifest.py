@@ -464,3 +464,78 @@ def test_agent_manifest_path(tmp_path):
         agent_manifest_path(tmp_path)
     (tmp_path / "genfleet.toml").unlink()
     assert agent_manifest_path(tmp_path).name == "agent.toml"
+
+
+_HANDOFFS = '''
+[agent]
+name = "customer-service"
+
+[sends.lead]
+kind = "lead.v1"
+label = "Qualified lead"
+description = "A customer who is ready to buy."
+suggest = "genfleet/sales-manager-assistant"
+
+[sends.lead.options.full_details]
+type = "boolean"
+label = "Include every product asked about"
+default = false
+
+[sends.ticket]
+kind = "ticket.v1"
+optional = false
+
+[accepts.lead]
+kind = "lead.v1"
+label = "Leads to route"
+'''
+
+
+def test_sends_and_accepts_parse(tmp_path):
+    manifest = load_agent_manifest(_agent_dir(tmp_path, _HANDOFFS))
+    lead = manifest.sends["lead"]
+    assert (lead.kind, lead.optional, lead.suggest) == ("lead.v1", True, "genfleet/sales-manager-assistant")
+    assert lead.options["full_details"].type == "boolean" and lead.options["full_details"].default is False
+    assert manifest.sends["ticket"].optional is False and manifest.sends["ticket"].options == {}
+    assert manifest.accepts["lead"].kind == "lead.v1"
+
+
+def test_an_agent_without_handoffs_declares_none(tmp_path):
+    manifest = load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n'))
+    assert manifest.sends == {} and manifest.accepts == {}
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ('[sends.lead]\n', r"\[sends.lead\]: kind"),
+        ('[sends.lead]\nkind = "lead"\n', "a name and a version"),
+        ('[sends.lead]\nkind = "Lead.v1"\n', "a name and a version"),
+        ('[sends.lead]\nkind = "lead.v0"\n', "a name and a version"),
+        ('[sends.Lead]\nkind = "lead.v1"\n', r"\[sends.Lead\]: the name"),
+        ('[sends.lead]\nkind = "lead.v1"\nto = "sales"\n', "unknown key 'to'"),
+        ('[sends.lead]\nkind = "lead.v1"\nsuggest = "sales"\n', "publisher/agent"),
+        ('[sends.lead]\nkind = "lead.v1"\noptional = "no"\n', "optional"),
+        ('[sends.lead]\nkind = "lead.v1"\n[sends.lead.options.Full]\ntype = "boolean"\n', "option 'Full': the name"),
+        ('[sends.lead]\nkind = "lead.v1"\n[sends.lead.options.a]\ntype = "secret"\n', "options.a.type"),
+        ('[sends.lead]\nkind = "lead.v1"\n[sends.lead.options.a]\ntype = "integer"\ndefault = "x"\n', "'default' must be a whole number"),
+        ('[sends]\nlead = "lead.v1"\n', r"\[sends.lead\] must be a table"),
+        ('[accepts.lead]\n', r"\[accepts.lead\]: kind"),
+        ('[accepts.lead]\nkind = "lead.v1"\noptional = true\n', "unknown key 'optional'"),
+        ('[agent]\nsends = {}\n', "which is its own table"),
+    ],
+)
+def test_bad_sends_and_accepts_are_refused(tmp_path, body, message):
+    prefix = "" if body.startswith("[agent]") else '[agent]\nname = "a"\n'
+    with pytest.raises(ManifestError, match=message):
+        load_agent_manifest(_agent_dir(tmp_path, prefix + body))
+
+
+def test_too_many_handoffs_and_options(tmp_path):
+    for table in ("sends", "accepts"):
+        tables = "".join(f'[{table}.k{i}]\nkind = "lead.v1"\n' for i in range(9))
+        with pytest.raises(ManifestError, match="more than 8"):
+            load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n' + tables))
+    options = '[sends.lead]\nkind = "lead.v1"\n' + "".join(f"[sends.lead.options.o{i}]\n" for i in range(9))
+    with pytest.raises(ManifestError, match="'options' has more than 8"):
+        load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n' + options))
