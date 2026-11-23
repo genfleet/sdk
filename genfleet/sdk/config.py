@@ -285,9 +285,11 @@ def parse_agent_config(raw: Any) -> AgentConfig:
 
     wirings: dict[str, HandoffWiring] = {}
     for key, entry in _listing(document.get("handoffs"), "handoffs").items():
-        options = entry.get("options") if isinstance(entry, dict) else None
-        if not (isinstance(entry, dict) and isinstance(entry.get("kind"), str)
-                and isinstance(entry.get("wired", False), bool)
+        if not isinstance(entry, dict):
+            log.warning("skipping handoffs.%s: malformed entry", key)
+            continue
+        options = entry.get("options")
+        if not (isinstance(entry.get("kind"), str) and isinstance(entry.get("wired", False), bool)
                 and (options is None or isinstance(options, dict))):
             log.warning("skipping handoffs.%s: malformed entry", key)
             continue

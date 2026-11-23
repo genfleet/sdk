@@ -165,7 +165,10 @@ async def handoff(key: str, payload: str | Mapping[str, Any]) -> HandoffResult:
     if not isinstance(key, str) or not _KEY.fullmatch(key):
         raise ValueError("key must be the name of a [sends.<key>] table")
     if isinstance(payload, Mapping):
-        payload = json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":"))
+        try:
+            payload = json.dumps(dict(payload), ensure_ascii=False, separators=(",", ":"))
+        except (TypeError, RecursionError) as exc:
+            raise ValueError(f"payload must hold JSON values only: {exc}") from None
     if not isinstance(payload, str) or not payload.strip() or len(payload) > MAX_PAYLOAD_CHARS:
         raise ValueError(f"payload must be non-empty JSON text of at most {MAX_PAYLOAD_CHARS} characters, or a mapping")
 
@@ -202,7 +205,7 @@ def _send(body: dict[str, Any]) -> dict[str, Any] | str:
         return "unreachable"
     try:
         parsed = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
         return "unreachable"
     return parsed if isinstance(parsed, dict) else "unreachable"
 
@@ -213,9 +216,12 @@ def _result(answer: dict[str, Any] | str, kind: str) -> HandoffResult:
     outcome = answer.get("outcome")
     if outcome == "nowhere":
         return HandoffResult("nowhere")
-    if outcome != "sent":
+    if outcome == "not_delivered":
         reason = answer.get("reason")
         return HandoffResult("not_delivered", reason if isinstance(reason, str) and _SLUG.fullmatch(reason) else "refused")
+    if outcome != "sent":
+        # An answer this SDK does not know: it may have been delivered.
+        return HandoffResult("not_delivered", "unreachable")
     reader = _REPLY_READERS.get(kind)
     if reader is None:
         return HandoffResult("delivered")

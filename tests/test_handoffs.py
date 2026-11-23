@@ -126,7 +126,8 @@ async def test_outside_a_turn_no_turn_is_named(tmp_path, monkeypatch, platform):
         (200, {"outcome": "nowhere"}, ("nowhere", None)),
         (200, {"outcome": "not_delivered", "reason": "unavailable"}, ("not_delivered", "unavailable")),
         (200, {"outcome": "not_delivered", "reason": "Not A Slug"}, ("not_delivered", "refused")),
-        (200, {"outcome": "something new"}, ("not_delivered", "refused")),
+        (200, {"outcome": "something new"}, ("not_delivered", "unreachable")),
+        (200, {}, ("not_delivered", "unreachable")),
         (200, ["sent"], ("not_delivered", "unreachable")),
         (409, {"error": "the named turn is not running"}, ("not_delivered", "refused")),
         (429, {}, ("not_delivered", "refused")),
@@ -155,6 +156,19 @@ async def test_an_unreachable_platform_is_not_delivered(tmp_path, monkeypatch):
     assert await handoff("lead", "{}") == HandoffResult("not_delivered", "unreachable")
 
 
+async def test_an_answer_too_deep_to_read_is_unreachable_not_an_exception(tmp_path, monkeypatch, platform):
+    _, answer = platform
+    answer.update(body="[" * 100_000)
+    _configure(tmp_path, monkeypatch, WIRED)
+    assert await handoff("lead", "{}") == HandoffResult("not_delivered", "unreachable")
+
+
+def test_the_key_rule_is_the_manifest_s():
+    from genfleet.sdk import handoffs, manifest
+
+    assert handoffs._KEY.pattern == manifest._KEY.pattern.strip("^$")
+
+
 async def test_a_kind_without_a_reply_shape_is_delivered_when_sent(tmp_path, monkeypatch, platform):
     _, answer = platform
     answer.update(body=json.dumps({"outcome": "sent", "content": "ok"}))
@@ -162,7 +176,7 @@ async def test_a_kind_without_a_reply_shape_is_delivered_when_sent(tmp_path, mon
     assert await handoff("ticket", "{}") == HandoffResult("delivered")
 
 
-@pytest.mark.parametrize("key, payload", [("Lead", "{}"), ("", "{}"), (3, "{}"), ("lead", ""), ("lead", "  "), ("lead", 3), ("lead", "x" * (MAX_PAYLOAD_CHARS + 1))])
+@pytest.mark.parametrize("key, payload", [("Lead", "{}"), ("", "{}"), (3, "{}"), ("lead", ""), ("lead", "  "), ("lead", 3), ("lead", "x" * (MAX_PAYLOAD_CHARS + 1)), ("lead", {"when": object()})])
 async def test_bad_arguments_raise(key, payload):
     with pytest.raises(ValueError):
         await handoff(key, payload)
