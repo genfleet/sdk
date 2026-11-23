@@ -266,6 +266,92 @@ raises `ConnectionCallError` with code `connection_not_allowed`.
 the slot's verified tools into tools for the model; see
 [Connector tools and `reply`](approvals-and-messaging.md#connector-tools-and-reply).
 
+### `[sends.<key>]` and `[accepts.<key>]`
+
+A hand-off is a piece of work one agent passes to another: a qualified lead, a
+support ticket. An agent declares the hand-offs it can make and the ones it
+can receive. It never names the other agent. The workspace decides where each
+hand-off goes, on its "Agent hand-offs" page, or sends it nowhere.
+
+```toml
+# The sender
+[sends.lead]
+kind = "lead.v1"
+label = "Qualified lead"
+description = "A customer who is ready to buy."
+suggest = "acme/sales-assistant"
+
+[sends.lead.options.full_details]
+type = "boolean"
+label = "Include every product the customer asked about"
+
+# The receiver
+[accepts.lead]
+kind = "lead.v1"
+label = "Leads to route to the sales team"
+```
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `kind` | required | What the hand-off is, as a name and a version: `"lead.v1"`. A sender and a receiver match on `kind` alone. |
+| `label` | `""` | Shown on the page, at most 60 characters. |
+| `description` | `""` | Shown under the label, at most 300 characters. |
+| `optional` | `true` | `[sends]` only. `false` marks the agent as needing setup until the workspace picks a destination. |
+| `suggest` | none | `[sends]` only. A published agent, as `"publisher/agent"`, offered first if the workspace has it installed. A hint, never a rule. |
+| `options.<name>` | none | `[sends]` only. Values the workspace sets for this hand-off, declared exactly like a `[settings.<key>]` table. At most 8. |
+
+The key follows the same rule as a setting key. At most 8 `[sends]` tables and
+8 `[accepts]` tables.
+
+Send one with `handoff`:
+
+```python
+from genfleet.sdk import handoff
+from genfleet.sdk.handoffs import is_wired, option
+
+if is_wired("lead"):
+    payload = build_lead(full=option("lead", "full_details", False))
+    result = await handoff("lead", payload)      # JSON text, or a mapping
+    if not result.delivered:
+        ...                                       # tell staff; result.reason says why
+```
+
+`handoff` returns a `HandoffResult` whose `outcome` is one of:
+
+| Outcome | Meaning |
+|---------|---------|
+| `delivered` | The destination took it. For a lead, `reason` is its status: `created`, `appended` or `duplicate`. |
+| `not_delivered` | It did not, or may not have. `reason` is a short slug: the destination's own reason, `no_receipt`, `refused`, `unavailable` or `unreachable`. |
+| `nowhere` | The workspace chose no destination. Nothing was sent. |
+
+A failed delivery is an outcome, never an exception. `handoff` raises
+`ValueError` only for a bad key or payload (at most 64,000 characters).
+
+**When a hand-off goes nowhere, do not prepare for it.** Check `is_wired`
+before you collect details for a hand-off or promise the person a follow-up:
+with no destination, nobody receives it.
+
+What counts as delivered depends on the kind. For `lead.v1` the destination
+answers a `receipt.v1` (`{"schema": "receipt.v1", "ok": true, "status":
+"created"}`), and the lead is delivered when the receipt says it was filed.
+`genfleet.sdk.handoffs.read_receipt` reads one. A kind with no reply shape is
+delivered once the destination finished its turn.
+
+A receiver gets the payload as the message of a turn. On that turn
+`current_turn()["genfleet.handoff"]` is `{"kind": ..., "key": ...}`, set by
+the platform: accept a hand-off only when it is there and names a kind you
+declared.
+
+Outside the platform every hand-off goes nowhere. To try one locally, add a
+`handoffs` key to the configuration file:
+
+```json
+{"version": 1, "handoffs": {"lead": {"kind": "lead.v1", "wired": true, "options": {"full_details": true}}}}
+```
+
+`is_wired` and `option` then answer from it; `handoff` still returns `nowhere`
+without a platform to deliver.
+
 ### Prompts the workspace adds
 
 The workspace can add prompts of its own to an agent, on the agent's page.

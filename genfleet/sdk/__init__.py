@@ -51,13 +51,16 @@ from .files import (
     UnsupportedReference,
     read_part,
 )
+from .handoffs import HandoffResult, handoff
 from .manifest import (
+    AcceptSpec,
     AgentManifest,
     ConfigField,
     ConnectorSlot,
     ContentSpec,
     ManifestError,
     SecretField,
+    SendSpec,
     SettingSpec,
     ToolManifest,
     ToolRef,
@@ -186,6 +189,8 @@ __all__ = [
     "ContentSpec",
     "ConnectorSlot",
     "SettingSpec",
+    "SendSpec",
+    "AcceptSpec",
     "ToolManifest",
     "ToolRef",
     "ConfigField",
@@ -209,6 +214,8 @@ __all__ = [
     "ChannelSendError",
     # Escalation
     "escalate",
+    "handoff",
+    "HandoffResult",
     "escalate_tool",
     "staff_directory",
     "EscalationError",

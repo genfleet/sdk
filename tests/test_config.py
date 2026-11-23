@@ -45,6 +45,8 @@ def test_shared_contract(case, tmp_path, monkeypatch):
     for slot, names in case["slot_tools"].items():
         assert [t.schema().name for t in config.connector_tools(slot)] == names
     assert (reply_tool() is not None) == case["reply"]
+    wirings = {key: {"kind": w.kind, "wired": w.wired, "options": dict(w.options)} for key, w in config.handoffs().items()}
+    assert wirings == case.get("handoffs", {})
 
 
 def test_unset_variable_means_empty():

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+Hand-offs: an agent declares what it sends and accepts, and the workspace chooses where each goes.
+
+- **Added: `[sends.<key>]` and `[accepts.<key>]`** (`SendSpec`, `AcceptSpec`, `AgentManifest.sends` / `.accepts`). A hand-off is declared by `kind`, a name and a version such as `lead.v1`; neither side names the other. `[sends]` also takes `optional`, `suggest` (a published agent, `publisher/agent`, offered first) and up to 8 `options`, declared like `[settings.<key>]`. At most 8 of each table.
+- **Added: `handoff(key, payload)` and `HandoffResult`** (`genfleet.sdk`; module `genfleet.sdk.handoffs`). Sends the hand-off to the destination the workspace chose and answers `delivered`, `not_delivered` or `nowhere`, with a `reason` slug. A failed delivery is an outcome, never an exception. For `lead.v1` the destination's `receipt.v1` decides (`read_receipt`).
+- **Added: `is_wired(key)` and `option(key, name, default=None)`** (`genfleet.sdk.handoffs`), and `handoffs()` / `HandoffWiring` (`genfleet.sdk.config`), read from the new `handoffs` key of the agent configuration file. A file without it (an older platform) has no hand-offs, so every one goes nowhere.
+- Guide: "`[sends.<key>]` and `[accepts.<key>]`" in `docs/guides/manifest.md`.
+
 ## 0.29.0 — 2026-11-20
 
 Connector tools: a workspace's verified API tools, and `reply` on channels.

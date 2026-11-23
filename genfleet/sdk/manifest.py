@@ -45,6 +45,10 @@ MAX_SETTING_STRING = 500
 MAX_SETTING_TEXT = 20_000
 MAX_SETTING_ITEMS = 200
 MAX_SETTING_OPTIONS = 50
+#: At most this many ``[sends.<key>]`` tables, and as many ``[accepts.<key>]``.
+MAX_HANDOFFS = 8
+#: At most this many ``options`` on one ``[sends.<key>]``.
+MAX_HANDOFF_OPTIONS = 8
 
 # A connector slot, a setting key, and a connector provider share one shape.
 _KEY = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
@@ -277,6 +281,76 @@ class ConnectorSlot(BaseModel):
         return value
 
 
+#: A hand-off kind: a name and a version, e.g. ``lead.v1``.
+_HANDOFF_KIND = re.compile(r"^[a-z][a-z0-9_]{0,31}\.v[1-9][0-9]{0,2}$")
+#: A published agent, as ``publisher/agent``.
+_AGENT_REF = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}/[a-z0-9][a-z0-9._-]{0,62}$")
+
+
+def _kind_is_versioned(value: str) -> str:
+    if not _HANDOFF_KIND.fullmatch(value):
+        raise ValueError("kind must be a name and a version such as 'lead.v1'")
+    return value
+
+
+class AcceptSpec(BaseModel):
+    """One `[accepts.<key>]` table: a hand-off this agent can receive.
+
+    ``kind`` says what it is (``lead.v1``): a workspace may send this agent
+    any hand-off of that kind. ``label`` and ``description`` are shown to the
+    workspace when it chooses where a hand-off goes.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: StrictStr
+    label: StrictStr = Field(default="", max_length=60)
+    description: StrictStr = Field(default="", max_length=300)
+
+    _kind_ok = field_validator("kind")(_kind_is_versioned)
+
+
+class SendSpec(BaseModel):
+    """One `[sends.<key>]` table: a hand-off this agent can make.
+
+    The agent never names who receives it: the workspace picks the
+    destination, and the agent calls ``genfleet.sdk.handoff("<key>", ...)``.
+    ``optional = false`` means the agent needs a destination to work, and the
+    workspace is told to choose one. ``suggest`` names a published agent
+    (``publisher/agent``) to offer first; it is a hint. ``options`` are values
+    the workspace sets for this hand-off, declared like ``[settings.<key>]``
+    and read with ``genfleet.sdk.handoffs.option``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: StrictStr
+    label: StrictStr = Field(default="", max_length=60)
+    description: StrictStr = Field(default="", max_length=300)
+    optional: StrictBool = True
+    suggest: StrictStr | None = None
+    options: dict[str, SettingSpec] = Field(default_factory=dict)
+
+    _kind_ok = field_validator("kind")(_kind_is_versioned)
+
+    @field_validator("suggest")
+    @classmethod
+    def _suggest_is_an_agent(cls, value: str | None) -> str | None:
+        if value is not None and not _AGENT_REF.fullmatch(value):
+            raise ValueError("suggest must name a published agent as 'publisher/agent'")
+        return value
+
+    @field_validator("options")
+    @classmethod
+    def _options_are_keyed(cls, value: dict[str, SettingSpec]) -> dict[str, SettingSpec]:
+        if len(value) > MAX_HANDOFF_OPTIONS:
+            raise ValueError(f"'options' has more than {MAX_HANDOFF_OPTIONS} entries")
+        for key in value:
+            if not _KEY.fullmatch(key):
+                raise ValueError(f"option {key!r}: the name must be 1-32 lowercase letters, digits or '_', starting with a letter")
+        return value
+
+
 _VIEW_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 _VIEW_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9._~-]+$")
 _ENTRY = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*:[A-Za-z_][A-Za-z0-9_]*$")
@@ -362,6 +436,10 @@ class AgentManifest(BaseModel):
     connectors: dict[str, ConnectorSlot] = Field(default_factory=dict)
     #: The ``[settings.<key>]`` tables, by key.
     settings: dict[str, SettingSpec] = Field(default_factory=dict)
+    #: The ``[sends.<key>]`` tables, by key: hand-offs the agent can make.
+    sends: dict[str, SendSpec] = Field(default_factory=dict)
+    #: The ``[accepts.<key>]`` tables, by key: hand-offs the agent can receive.
+    accepts: dict[str, AcceptSpec] = Field(default_factory=dict)
     #: ``module:symbol`` of the ASGI app serving the agent's views
     #: (``genfleet.sdk.views.Views``), next to the manifest.
     views_app: str | None = None
@@ -455,7 +533,7 @@ class ToolManifest(BaseModel):
 
 
 #: Top-level tables of an agent manifest: never keys of ``[agent]``.
-_OWN_TABLES = frozenset({"tools", "mcps", "content", "connectors", "settings", "views"})
+_OWN_TABLES = frozenset({"tools", "mcps", "content", "connectors", "settings", "views", "sends", "accepts"})
 
 
 def agent_manifest_path(directory: Path | str) -> Path:
@@ -535,6 +613,8 @@ def load_agent_manifest(directory: Path | str) -> AgentManifest:
             content=_parse_data(raw, path),
             connectors=_parse_keyed(raw.get("connectors"), "connectors", ConnectorSlot, MAX_CONNECTOR_SLOTS, path),
             settings=_parse_keyed(raw.get("settings"), "settings", SettingSpec, MAX_SETTINGS, path),
+            sends=_parse_keyed(raw.get("sends"), "sends", SendSpec, MAX_HANDOFFS, path),
+            accepts=_parse_keyed(raw.get("accepts"), "accepts", AcceptSpec, MAX_HANDOFFS, path),
             views=_parse_views(raw.get("views"), path),
         )
     except ManifestError:
@@ -587,7 +667,7 @@ def _problems(exc: ValidationError) -> str:
 
 
 def _parse_keyed(table: Any, section: str, model: type[BaseModel], limit: int, path: Path) -> dict[str, Any]:
-    """Turn `[connectors.<slot>]` / `[settings.<key>]` into models, by key."""
+    """Turn `[connectors.<slot>]`, `[settings.<key>]`, `[sends.<key>]` or `[accepts.<key>]` into models, by key."""
     if table is None:
         return {}
     if not isinstance(table, dict):

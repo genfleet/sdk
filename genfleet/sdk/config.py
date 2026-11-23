@@ -33,6 +33,9 @@ tools of each connection the workspace let it use, and the built-in tools of
 the channels it is connected to. ``connector_tools()`` turns them into tools
 for the model (see :mod:`genfleet.sdk.connector_calls`). A file written by an
 older platform has no tools: ``connector_tools()`` is then empty.
+
+It also says how the workspace set up each hand-off the agent declared
+(``[sends.<key>]``): ``handoffs()``. See :mod:`genfleet.sdk.handoffs`.
 """
 
 from __future__ import annotations
@@ -59,10 +62,12 @@ __all__ = [
     "ConnectionGrant",
     "ConnectorBinding",
     "ConnectorToolSpec",
+    "HandoffWiring",
     "TenantPrompt",
     "agent_config",
     "connector",
     "connector_tools",
+    "handoffs",
     "is_set",
     "setting",
     "settings",
@@ -131,6 +136,20 @@ class ConnectionGrant:
 
 
 @dataclass(frozen=True)
+class HandoffWiring:
+    """One of the agent's ``[sends.<key>]`` hand-offs, as the workspace set it up.
+
+    ``wired`` is whether the workspace chose a destination. ``options`` holds
+    every option that has a value: what the workspace saved, else the
+    manifest's default.
+    """
+
+    kind: str
+    wired: bool = False
+    options: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class TenantPrompt:
     """A prompt the workspace added to the agent."""
 
@@ -150,6 +169,8 @@ class AgentConfig:
     connections: Mapping[str, ConnectionGrant] = field(default_factory=dict)
     #: The built-in tools of each channel the agent is connected to, by channel.
     channels: Mapping[str, tuple[ConnectorToolSpec, ...]] = field(default_factory=dict)
+    #: The agent's hand-offs, by key. Empty on an older platform.
+    handoffs: Mapping[str, HandoffWiring] = field(default_factory=dict)
 
 
 def _object(value: Any, what: str) -> dict[str, Any]:
@@ -262,6 +283,22 @@ def parse_agent_config(raw: Any) -> AgentConfig:
             continue
         channels[provider] = _tools(entry.get("tools"), f"channels.{provider}.tools")
 
+    wirings: dict[str, HandoffWiring] = {}
+    for key, entry in _listing(document.get("handoffs"), "handoffs").items():
+        if not isinstance(entry, dict):
+            log.warning("skipping handoffs.%s: malformed entry", key)
+            continue
+        options = entry.get("options")
+        if not (isinstance(entry.get("kind"), str) and isinstance(entry.get("wired", False), bool)
+                and (options is None or isinstance(options, dict))):
+            log.warning("skipping handoffs.%s: malformed entry", key)
+            continue
+        wirings[key] = HandoffWiring(
+            kind=entry["kind"],
+            wired=entry.get("wired", False),
+            options=MappingProxyType(copy.deepcopy(options or {})),
+        )
+
     prompts = document.get("prompts")
     if prompts is None:
         prompts = []
@@ -279,6 +316,7 @@ def parse_agent_config(raw: Any) -> AgentConfig:
         prompts=tuple(parsed),
         connections=MappingProxyType(connections),
         channels=MappingProxyType(channels),
+        handoffs=MappingProxyType(wirings),
     )
 
 
@@ -329,6 +367,14 @@ def is_set(key: str) -> bool:
 def connector(slot: str) -> ConnectorBinding | None:
     """The connection filling ``slot``, or ``None`` when the workspace has not picked one."""
     return agent_config().connectors.get(slot)
+
+
+def handoffs() -> Mapping[str, HandoffWiring]:
+    """The agent's hand-offs as the workspace set them up, by key.
+
+    See :mod:`genfleet.sdk.handoffs` for sending one.
+    """
+    return agent_config().handoffs
 
 
 def connector_tools(slot: str | None = None) -> list[ConnectorTool]:
