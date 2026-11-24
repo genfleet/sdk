@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- `handoff()`: a workspace can send one hand-off to several agents. The result is `delivered` when at least one of them took it.
+
 ## 0.30.0 — 2026-11-24
 
 Hand-offs: an agent declares what it sends and accepts, and the workspace chooses where each goes.
