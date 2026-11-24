@@ -122,6 +122,11 @@ async def test_outside_a_turn_no_turn_is_named(tmp_path, monkeypatch, platform):
         (200, {"outcome": "sent", "content": '{"schema":"receipt.v1","ok":false,"status":"not_filed","reason":"sink_down"}'}, ("not_delivered", "sink_down")),
         (200, {"outcome": "sent", "content": '{"schema":"receipt.v1","ok":false,"status":"not_filed"}'}, ("not_delivered", "not_filed")),
         (200, {"outcome": "sent", "content": "The peer agent couldn't take this request."}, ("not_delivered", "no_receipt")),
+        # Several destinations: delivered when at least one took it.
+        (200, {"outcome": "sent", "content": '{"schema":"receipt.v1","ok":false,"status":"not_filed","reason":"sink_down"}', "contents": ['{"schema":"receipt.v1","ok":false,"status":"not_filed","reason":"sink_down"}', '{"schema":"receipt.v1","ok":true,"status":"created"}']}, ("delivered", "created")),
+        (200, {"outcome": "sent", "content": '{"schema":"receipt.v1","ok":false,"status":"not_filed","reason":"sink_down"}', "contents": ['{"schema":"receipt.v1","ok":false,"status":"not_filed","reason":"sink_down"}', "not a receipt"]}, ("not_delivered", "sink_down")),
+        (200, {"outcome": "sent", "content": '{"schema":"receipt.v1","ok":true,"status":"created"}', "contents": []}, ("delivered", "created")),
+        (200, {"outcome": "sent", "content": '{"schema":"receipt.v1","ok":true,"status":"created"}', "contents": "x"}, ("delivered", "created")),
         (200, {"outcome": "sent"}, ("not_delivered", "no_receipt")),
         (200, {"outcome": "nowhere"}, ("nowhere", None)),
         (200, {"outcome": "not_delivered", "reason": "unavailable"}, ("not_delivered", "unavailable")),

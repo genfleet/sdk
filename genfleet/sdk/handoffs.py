@@ -23,7 +23,8 @@ and sends::
 
 ``handoff`` answers one of three outcomes:
 
-- ``delivered``: the destination took it.
+- ``delivered``: the destination took it. A workspace can send one hand-off
+  to several agents; it is delivered when at least one of them took it.
 - ``not_delivered``: it did not, or may not have. ``reason`` is a short slug.
 - ``nowhere``: the workspace chose no destination. Nothing was sent.
 
@@ -83,6 +84,8 @@ MAX_RECEIPT_CHARS = 4_096
 
 #: A hand-off waits for the destination's whole turn, which may have to wake first.
 _TIMEOUT_S = 120.0
+#: The most replies read from one answer: more than any workspace can wire.
+_MAX_REPLIES = 16
 
 _KEY = re.compile(r"[a-z][a-z0-9_]{0,31}")
 _SLUG = re.compile(r"[a-z][a-z0-9_]{0,63}")
@@ -225,5 +228,13 @@ def _result(answer: dict[str, Any] | str, kind: str) -> HandoffResult:
     reader = _REPLY_READERS.get(kind)
     if reader is None:
         return HandoffResult("delivered")
-    filed, detail = reader(answer.get("content"))
-    return HandoffResult("delivered" if filed else "not_delivered", detail)
+    # A hand-off wired to several agents answers each one's reply in
+    # `contents`. It is delivered when at least one of them took it.
+    replies = answer.get("contents")
+    if not isinstance(replies, list) or not replies:
+        replies = [answer.get("content")]
+    read = [reader(reply) for reply in replies[:_MAX_REPLIES]]
+    taken = next((detail for filed, detail in read if filed), None)
+    if taken is not None:
+        return HandoffResult("delivered", taken)
+    return HandoffResult("not_delivered", read[0][1])
