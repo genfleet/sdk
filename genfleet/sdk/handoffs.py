@@ -84,7 +84,7 @@ MAX_RECEIPT_CHARS = 4_096
 
 #: A hand-off waits for the destination's whole turn, which may have to wake first.
 _TIMEOUT_S = 120.0
-#: The most replies read from one answer: more than any workspace can wire.
+#: The most replies read from one answer.
 _MAX_REPLIES = 16
 
 _KEY = re.compile(r"[a-z][a-z0-9_]{0,31}")
@@ -158,7 +158,7 @@ def option(key: str, name: str, default: Any = None) -> Any:
 
 
 async def handoff(key: str, payload: str | Mapping[str, Any]) -> HandoffResult:
-    """Send the hand-off ``key`` to the destination the workspace chose.
+    """Send the hand-off ``key`` to the agents the workspace chose.
 
     ``payload`` is what the hand-off's kind carries: JSON text, or a mapping
     that is sent as JSON. Returns a :class:`HandoffResult`; a failed delivery
@@ -237,4 +237,6 @@ def _result(answer: dict[str, Any] | str, kind: str) -> HandoffResult:
     taken = next((detail for filed, detail in read if filed), None)
     if taken is not None:
         return HandoffResult("delivered", taken)
-    return HandoffResult("not_delivered", read[0][1])
+    # Why none took it: the first reason a receipt gave, else the first reply's.
+    details = [detail for _filed, detail in read]
+    return HandoffResult("not_delivered", next((d for d in details if d != "no_receipt"), details[0]))
