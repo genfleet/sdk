@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.30.0 — 2026-11-24
+
 Hand-offs: an agent declares what it sends and accepts, and the workspace chooses where each goes.
 
 - **Added: `[sends.<key>]` and `[accepts.<key>]`** (`SendSpec`, `AcceptSpec`, `AgentManifest.sends` / `.accepts`). A hand-off is declared by `kind`, a name and a version such as `lead.v1`; neither side names the other. `[sends]` also takes `optional`, `suggest` (a published agent, `publisher/agent`, offered first) and up to 8 `options`, declared like `[settings.<key>]`. At most 8 of each table.
