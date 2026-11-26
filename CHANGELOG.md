@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.32.0 — 2026-11-26
+
 - **Added: `type = "contacts"` for a `[settings.<key>]` or a hand-off option** — people of the workspace to alert. The value is a list of up to 5 distinct strings: `default`, `role:<role>` or a contact's name. The agent's page shows a picker of the workspace's escalation contacts, and the agent reads it with `setting()` and can pass it to `escalate(to=...)`. No `options`, `min` or `max`. New limits `MAX_SETTING_CONTACTS` and `MAX_SETTING_CONTACT_NAME`.
 
 ## 0.31.0 — 2026-11-26
