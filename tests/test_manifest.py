@@ -397,6 +397,8 @@ def test_connectors_and_settings_parse(tmp_path):
         ('[settings.a]\ntype = "boolean"\ndefault = "yes"\n', "'default' must be true or false"),
         ('[settings.a]\ndefault = 3\n', "'default' must be a string"),
         ('[settings.a]\nvalue = "x"\n', "unknown key 'value'"),
+        ('[settings.a]\nhidden = true\nrequired = true\n', "a hidden setting cannot be 'required'"),
+        ('[settings.a]\nhidden = "yes"\n', "hidden"),
     ],
 )
 def test_bad_connectors_and_settings_are_refused(tmp_path, body, message):
@@ -539,3 +541,12 @@ def test_too_many_handoffs_and_options(tmp_path):
     options = '[sends.lead]\nkind = "lead.v1"\n' + "".join(f"[sends.lead.options.o{i}]\n" for i in range(9))
     with pytest.raises(ManifestError, match="'options' has more than 8"):
         load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n' + options))
+
+
+def test_a_setting_can_be_hidden_but_a_hand_off_option_cannot(tmp_path):
+    manifest = load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n[settings.old]\ntype = "boolean"\nhidden = true\n[settings.shown]\n'))
+    assert manifest.settings["old"].hidden is True
+    assert manifest.settings["shown"].hidden is False
+    body = '[agent]\nname = "a"\n[sends.lead]\nkind = "lead.v1"\n[sends.lead.options.full]\ntype = "boolean"\nhidden = true\n'
+    with pytest.raises(ManifestError, match="'hidden' is only for a \\[settings\\] entry"):
+        load_agent_manifest(_agent_dir(tmp_path, body))

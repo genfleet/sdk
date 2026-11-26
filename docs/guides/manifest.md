@@ -198,6 +198,7 @@ description = "Channel name to the lead source in your system."
 | `description` | `""` | Help text under the field, at most 300 characters. |
 | `group` | `""` | A heading that settings with the same group share. |
 | `required` | `false` | The agent's page marks the agent as needing setup until it has a value. |
+| `hidden` | `false` | `true` keeps the setting readable by the agent but leaves it off the agent's page. Use it for a setting you have moved elsewhere, so a value a workspace saved earlier still applies. Not with `required`. |
 | `default` | none | The value in effect until the workspace saves one. It must fit the type. |
 | `options` | | The choices of an `enum`: 1 to 50 distinct strings. Only for `enum`. |
 | `min`, `max` | none | Bounds of an `integer` or `number`. |
