@@ -6,53 +6,67 @@ import json
 import logging
 from unittest.mock import MagicMock
 
+import pytest
+
 from genfleet.sdk import Agent, AgentInput
-from genfleet.sdk.agent import MEMORY_TOOL_RESULT_BUDGET, fit_tool_results
+from genfleet.sdk.agent import MEMORY_TEXT_BUDGET, MEMORY_TOOL_RESULT_BUDGET, fit_texts
 from genfleet.sdk.schemas import AgentOutput, ToolCall
+from genfleet.sdk.storage_limit import StorageLimitExceeded
 
 PLATFORM_CAP = 32 * 1024
+BUDGET = MEMORY_TOOL_RESULT_BUDGET
 
 
-def _json_size(text: str) -> int:
-    return len(json.dumps(text))
+def _size(texts: list[str]) -> int:
+    """The bytes the texts take inside a JSON request, quotes not counted."""
+    return sum(len(json.dumps(text)) - 2 for text in texts)
 
 
-def test_results_that_fit_are_unchanged():
-    results = ["a" * 100, "", '{"ok": true}']
-    assert fit_tool_results(results) == results
+def test_texts_that_fit_are_unchanged():
+    texts = ["a" * 100, "", '{"ok": true}']
+    assert fit_texts(texts, BUDGET) == texts
 
 
-def test_a_large_result_is_cut_and_says_so():
+def test_a_large_text_is_cut_and_says_how_much_was_kept():
     big = "x" * 100_000
-    (fitted,) = fit_tool_results([big])
-    assert _json_size(fitted) <= MEMORY_TOOL_RESULT_BUDGET
-    assert fitted.startswith("x" * 1000)
-    assert "of 100000 characters kept]" in fitted
+    (fitted,) = fit_texts([big], BUDGET)
+    assert _size([fitted]) <= BUDGET
+    kept, _, marker = fitted.partition("\n")
+    assert kept == "x" * len(kept) and len(kept) > 19_000
+    assert marker == f"[cut for memory: first {len(kept)} of 100000 characters kept]"
 
 
-def test_a_small_result_is_not_cut_to_make_room_for_a_large_one():
+def test_a_small_text_is_not_cut_to_make_room_for_a_large_one():
     small, big = '{"status": "ok"}', "y" * 100_000
-    fitted = fit_tool_results([big, small])
+    fitted = fit_texts([big, small], BUDGET)
     assert fitted[1] == small
     assert fitted[0] != big
-    assert sum(_json_size(f) for f in fitted) <= MEMORY_TOOL_RESULT_BUDGET
+    assert _size(fitted) <= BUDGET
 
 
-def test_several_large_results_share_the_budget():
-    fitted = fit_tool_results(["a" * 50_000, "b" * 60_000, "c" * 70_000])
-    assert sum(_json_size(f) for f in fitted) <= MEMORY_TOOL_RESULT_BUDGET
+def test_several_large_texts_share_the_budget():
+    fitted = fit_texts(["a" * 50_000, "b" * 60_000, "c" * 70_000], BUDGET)
+    assert _size(fitted) <= BUDGET
     assert all(len(f) > 5_000 for f in fitted)
 
 
 def test_text_that_grows_when_encoded_still_fits():
     # A non-ASCII character takes six bytes in the request; a quote takes two.
-    fitted = fit_tool_results(["م" * 30_000, '"' * 30_000])
-    assert sum(_json_size(f) for f in fitted) <= MEMORY_TOOL_RESULT_BUDGET
+    assert _size(fit_texts(["\u0645" * 30_000, '"' * 30_000], BUDGET)) <= BUDGET
 
 
-def test_a_budget_smaller_than_the_marker_keeps_only_the_marker():
-    (fitted,) = fit_tool_results(["z" * 500], budget=10)
-    assert fitted.startswith("\n[tool result cut for memory: first 0 of 500")
+def test_many_small_texts_still_fit_and_none_grows():
+    for count, length in ((1000, 100), (400, 60), (5000, 30)):
+        texts = ["r" * length] * count
+        fitted = fit_texts(texts, BUDGET)
+        assert _size(fitted) <= BUDGET
+        assert all(len(f) <= length for f in fitted)
+
+
+def test_with_no_room_for_the_full_marker_the_short_one_is_used():
+    (fitted,) = fit_texts(["z" * 500], 10)
+    assert fitted == "zzzzz[cut]"
+    assert fit_texts(["z" * 500], 3) == [""]
 
 
 class _Appendable:
@@ -108,6 +122,35 @@ async def test_a_turn_with_a_large_tool_result_is_saved_within_the_cap():
     assert [m.role for m in messages] == ["user", "assistant", "tool", "assistant"]
     assert "characters kept]" in messages[2].content
     assert messages[2].tool_call_id == "tc1"
+
+
+async def test_a_turn_with_a_large_message_is_saved_within_the_cap():
+    def ping() -> str:
+        return "pong"
+
+    memory = _Appendable()
+    agent = _agent_calling(ping, memory)
+
+    async for _ in agent.run(AgentInput(message="\u0645" * 20_000, metadata={"session_id": "s1"})):
+        pass
+
+    (messages,) = memory.appended
+    body = json.dumps({"session_id": "s1", "messages": [m.model_dump(exclude_none=True) for m in messages]})
+    assert len(body.encode()) < PLATFORM_CAP
+    assert _size([m.content or "" for m in messages if m.role != "tool"]) <= MEMORY_TEXT_BUDGET
+    assert messages[2].content == "pong"
+    assert messages[3].content == "Here you go."
+
+
+async def test_a_workspace_at_its_storage_limit_still_fails_the_turn():
+    def ping() -> str:
+        return "pong"
+
+    agent = _agent_calling(ping, _Appendable(fail=StorageLimitExceeded("episodic/append")))
+
+    with pytest.raises(StorageLimitExceeded):
+        async for _ in agent.run(AgentInput(message="ping", metadata={"session_id": "s1"})):
+            pass
 
 
 async def test_a_memory_that_fails_does_not_fail_the_turn(caplog):
