@@ -550,3 +550,86 @@ def test_a_setting_can_be_hidden_but_a_hand_off_option_cannot(tmp_path):
     body = '[agent]\nname = "a"\n[sends.lead]\nkind = "lead.v1"\n[sends.lead.options.full]\ntype = "boolean"\nhidden = true\n'
     with pytest.raises(ManifestError, match="'hidden' is only for a \\[settings\\] entry"):
         load_agent_manifest(_agent_dir(tmp_path, body))
+
+
+_CONTACTS_BAD = "must be a list of at most 5 contacts: a name, 'role:<role>' or 'default'"
+
+
+def test_contacts_type_parses_in_settings_and_hand_off_options(tmp_path):
+    manifest = load_agent_manifest(
+        _agent_dir(
+            tmp_path,
+            '[agent]\nname = "a"\n'
+            '[settings.alert]\ntype = "contacts"\ndefault = ["default", "role:sales", "Mona Ali"]\nrequired = true\n'
+            '[sends.lead]\nkind = "lead.v1"\n[sends.lead.options.notify]\ntype = "contacts"\n',
+        )
+    )
+    assert manifest.settings["alert"].type == "contacts"
+    assert manifest.settings["alert"].default == ["default", "role:sales", "Mona Ali"]
+    assert manifest.sends["lead"].options["notify"].type == "contacts"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[], ["default"], ["role:sales"], ["role:a_b-c"], ["role:" + "a" * 40], ["Mona Ali"], ["x"], ["x" * 80], ["a", "b", "c", "d", "e"], ["Zoë 李"]],
+)
+def test_contacts_value_accepted(value):
+    from genfleet.sdk.manifest import SettingSpec, setting_value_problem
+
+    assert setting_value_problem(SettingSpec(type="contacts"), value) is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "default",
+        None,
+        {"a": "b"},
+        [1],
+        [["a"]],
+        ["a", "a"],
+        ["default", "default"],
+        ["a", "b", "c", "d", "e", "f"],
+        [""],
+        ["x" * 81],
+        [" Mona"],
+        ["Mona "],
+        ["Mona, Ali"],
+        ["Mo\nna"],
+        ["Mo\x00na"],
+        ["Mo\tna"],
+        ["role:"],
+        ["role:Sales"],
+        ["role:-a"],
+        ["role:" + "a" * 41],
+        ["role:a b"],
+        ["role:Sales Team"],
+    ],
+)
+def test_contacts_value_refused(value):
+    from genfleet.sdk.manifest import SettingSpec, setting_value_problem
+
+    assert setting_value_problem(SettingSpec(type="contacts"), value) == _CONTACTS_BAD
+
+
+def test_contacts_limits_are_exported():
+    from genfleet.sdk.manifest import MAX_SETTING_CONTACT_NAME, MAX_SETTING_CONTACTS
+
+    assert (MAX_SETTING_CONTACTS, MAX_SETTING_CONTACT_NAME) == (5, 80)
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ('[settings.a]\ntype = "contacts"\ndefault = "default"\n', "'default' " + re.escape(_CONTACTS_BAD)),
+        ('[settings.a]\ntype = "contacts"\ndefault = ["a", "a"]\n', "'default' must be a list of at most 5"),
+        ('[settings.a]\ntype = "contacts"\ndefault = ["role:Bad"]\n', "'default' must be a list of at most 5"),
+        ('[settings.a]\ntype = "contacts"\noptions = ["x"]\n', "'options' is only for"),
+        ('[settings.a]\ntype = "contacts"\nmin = 1\n', "'min' and 'max' are only for"),
+        ('[settings.a]\ntype = "contacts"\nmax = 1\n', "'min' and 'max' are only for"),
+        ('[sends.l]\nkind = "lead.v1"\n[sends.l.options.a]\ntype = "contacts"\ndefault = [1]\n', "'default' must be a list of at most 5"),
+    ],
+)
+def test_bad_contacts_settings_are_refused(tmp_path, body, message):
+    with pytest.raises(ManifestError, match=message):
+        load_agent_manifest(_agent_dir(tmp_path, '[agent]\nname = "a"\n' + body))
