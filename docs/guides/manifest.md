@@ -193,7 +193,7 @@ description = "Channel name to the lead source in your system."
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `type` | `"string"` | `"string"` (one line, 500 characters), `"text"` (20,000), `"integer"`, `"number"`, `"boolean"`, `"enum"`, `"list"` (of strings) or `"map"` (string to string). A list or map holds at most 200 entries. |
+| `type` | `"string"` | `"string"` (one line, 500 characters), `"text"` (20,000), `"integer"`, `"number"`, `"boolean"`, `"enum"`, `"list"` (of strings), `"map"` (string to string) or `"contacts"`. A list or map holds at most 200 entries. |
 | `label` | `""` | The field's label, at most 60 characters. The key is shown when left out. |
 | `description` | `""` | Help text under the field, at most 300 characters. |
 | `group` | `""` | A heading that settings with the same group share. |
@@ -202,6 +202,14 @@ description = "Channel name to the lead source in your system."
 | `default` | none | The value in effect until the workspace saves one. It must fit the type. |
 | `options` | | The choices of an `enum`: 1 to 50 distinct strings. Only for `enum`. |
 | `min`, `max` | none | Bounds of an `integer` or `number`. |
+
+A `contacts` setting is for people to alert. Its value is a list of up to 5
+distinct strings, each `default`, `role:<role>` (a lowercase role name) or a
+contact's name (1 to 80 characters, no leading or trailing space, no comma). The
+agent's page shows a picker of the workspace's escalation contacts, and the
+agent reads the value with `setting()` as a list of strings it can pass to
+`escalate(to=...)`. It takes no `options`, `min` or `max`; a `default` must be
+a valid value.
 
 The key is 1 to 32 lowercase letters, digits or `_`, starting with a letter;
 at most 40 settings. Any other key in the table is an error.

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- **Added: `type = "contacts"` for a `[settings.<key>]` or a hand-off option** — people of the workspace to alert. The value is a list of up to 5 distinct strings: `default`, `role:<role>` or a contact's name. The agent's page shows a picker of the workspace's escalation contacts, and the agent reads it with `setting()` and can pass it to `escalate(to=...)`. No `options`, `min` or `max`. New limits `MAX_SETTING_CONTACTS` and `MAX_SETTING_CONTACT_NAME`.
+
 ## 0.31.0 — 2026-11-26
 
 - **Added: `hidden` on a `[settings.<key>]`** — the setting is still read with `setting()`, but the agent's page does not show it. For a setting that moved elsewhere, so a value saved earlier still applies. Not allowed with `required`, and not on a hand-off's options.

@@ -22,6 +22,7 @@ from __future__ import annotations
 import math
 import re
 import tomllib
+import unicodedata
 from pathlib import Path
 from typing import Any, Literal
 
@@ -45,6 +46,9 @@ MAX_SETTING_STRING = 500
 MAX_SETTING_TEXT = 20_000
 MAX_SETTING_ITEMS = 200
 MAX_SETTING_OPTIONS = 50
+#: A ``contacts`` setting: at most this many entries, each a name of 1 to this many characters.
+MAX_SETTING_CONTACTS = 5
+MAX_SETTING_CONTACT_NAME = 80
 #: At most this many ``[sends.<key>]`` tables, and as many ``[accepts.<key>]``.
 MAX_HANDOFFS = 8
 #: At most this many ``options`` on one ``[sends.<key>]``.
@@ -159,12 +163,31 @@ class ContentSpec(BaseModel):
         return value
 
 
-SettingType = Literal["string", "text", "integer", "number", "boolean", "enum", "list", "map"]
+SettingType = Literal["string", "text", "integer", "number", "boolean", "enum", "list", "map", "contacts"]
 
 
 def _is_number(value: Any) -> bool:
     """A finite int or float. Not a bool, and not NaN or an infinity (neither is JSON)."""
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+#: A role entry of a ``contacts`` value: ``role:<slug>``.
+_CONTACT_ROLE = re.compile(r"^role:[a-z0-9][a-z0-9_-]{0,39}$")
+
+
+def _contact_entry_ok(entry: Any) -> bool:
+    """``default``, ``role:<slug>``, or a contact's name (trimmed, no control characters or comma)."""
+    if not isinstance(entry, str):
+        return False
+    if entry == "default" or _CONTACT_ROLE.fullmatch(entry):
+        return True
+    return (
+        0 < len(entry) <= MAX_SETTING_CONTACT_NAME
+        and entry == entry.strip()
+        and "," not in entry
+        and not entry.startswith("role:")
+        and not any(unicodedata.category(ch) == "Cc" for ch in entry)
+    )
 
 
 def _plain(number: float) -> str:
@@ -207,6 +230,13 @@ def setting_value_problem(spec: SettingSpec, value: Any) -> str | None:
             return "must be a table of strings"
         if len(value) > MAX_SETTING_ITEMS or any(len(k) > MAX_SETTING_STRING or len(v) > MAX_SETTING_STRING for k, v in value.items()):
             return f"must hold at most {MAX_SETTING_ITEMS} entries of at most {MAX_SETTING_STRING} characters"
+    elif kind == "contacts" and (
+        not isinstance(value, list)
+        or len(value) > MAX_SETTING_CONTACTS
+        or len(set(map(str, value))) != len(value)
+        or not all(_contact_entry_ok(entry) for entry in value)
+    ):
+        return f"must be a list of at most {MAX_SETTING_CONTACTS} contacts: a name, 'role:<role>' or 'default'"
     return None
 
 
@@ -216,7 +246,8 @@ class SettingSpec(BaseModel):
     The agent reads it with ``genfleet.sdk.config.setting("<key>")``. ``type``
     is ``string`` (one line), ``text`` (long), ``integer``, ``number``,
     ``boolean``, ``enum`` (one of ``options``), ``list`` (of strings) or
-    ``map`` (string to string). A setting never holds a credential: declare
+    ``map`` (string to string) or ``contacts`` (up to 5 people of the
+    workspace to alert: a name, ``role:<role>`` or ``default``). A setting never holds a credential: declare
     those as secrets.
     """
 
