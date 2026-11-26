@@ -69,10 +69,59 @@ from .connector_calls import ConnectorTool
 from .protocol import ToolProtocol
 from .tool import ToolWrapper, wrap_tool
 from .skills import Skill, load_skills, pinned_revision
+from .storage_limit import StorageLimitExceeded
 
 log = logging.getLogger("genfleet.sdk.agent")
 SKILL_TOOL_NAME = "read_skill"
 SKILL_MEMORY_MARKER = "[skill body omitted; call read_skill again to use it]"
+
+#: What one turn may take in memory, in the bytes its text takes in the request:
+#: its tool results together, and its other messages together. A turn is saved
+#: in one request and the platform refuses one over 32 KB; what is left over is
+#: for tool-call arguments and the request's own fields, which are not cut.
+MEMORY_TOOL_RESULT_BUDGET = 20 * 1024
+MEMORY_TEXT_BUDGET = 8 * 1024
+#: Ends a text that was cut to fit, so a later turn's model knows it is partial.
+MEMORY_CUT_MARKER = "\n[cut for memory: first {kept} of {total} characters kept]"
+#: The marker when there is no room for the full one.
+MEMORY_SHORT_CUT_MARKER = "[cut]"
+
+
+def _encoded_size(text: str) -> int:
+    """The bytes ``text`` takes inside a JSON request (quotes not counted)."""
+    return len(json.dumps(text)) - 2
+
+
+def _cut_to(text: str, allowance: int) -> str:
+    """``text`` cut to at most ``allowance`` encoded bytes, marker included."""
+    for marker in (MEMORY_CUT_MARKER, MEMORY_SHORT_CUT_MARKER):
+        room = allowance - _encoded_size(marker.format(kept=len(text), total=len(text)))
+        if room < 0:
+            continue
+        kept = text
+        while kept and _encoded_size(kept) > room:
+            kept = kept[: min(len(kept) - 1, len(kept) * room // _encoded_size(kept))]
+        return kept + marker.format(kept=len(kept), total=len(text))
+    return ""
+
+
+def fit_texts(texts: list[str], budget: int) -> list[str]:
+    """``texts`` as they are saved to memory: unchanged when together they fit
+    ``budget`` encoded bytes, else the largest are cut (ending with
+    `MEMORY_CUT_MARKER`) so that together they do. A small text is never cut
+    to make room for a large one, and a cut text is never longer than it was."""
+    sizes = [_encoded_size(text) for text in texts]
+    if sum(sizes) <= budget:
+        return list(texts)
+    fitted = list(texts)
+    remaining, left = budget, len(texts)
+    for index in sorted(range(len(texts)), key=sizes.__getitem__):
+        share = remaining // left
+        if sizes[index] > share:
+            fitted[index] = _cut_to(texts[index], share)
+        remaining -= min(sizes[index], share)
+        left -= 1
+    return fitted
 
 #: Image types sent to a vision model as images; every provider takes these.
 MODEL_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
@@ -571,7 +620,7 @@ class Agent:
                     # stops reading at ``done`` — ``serve`` breaks out of the
                     # ``async for`` — which closes this generator at the yield
                     # below, so anything after it never runs.
-                    await _turn.call_within(input.metadata, self._persist_turn(
+                    await _turn.call_within(input.metadata, self._persist_turn_or_log(
                         session_id, input, turn_text, history, new_messages, invocation_id
                     ))
                     # Same reason as the persist: after the ``done`` yield this
@@ -673,6 +722,20 @@ class Agent:
             return await load_recent(self._memory, session_id, turns)
         return await self._memory.load(session_id)
 
+    async def _persist_turn_or_log(self, *turn: Any) -> None:
+        """`_persist_turn`, but a memory that fails does not fail the turn: the
+        reply is already written, so the person gets it and the turn is missing
+        from the thread's history. Logged by error type only (a memory's
+        message may quote the turn). A workspace at its storage limit still
+        fails the turn: nothing can be saved until space is freed, and that
+        must not go unnoticed."""
+        try:
+            await self._persist_turn(*turn)
+        except StorageLimitExceeded:
+            raise
+        except Exception as exc:  # noqa: BLE001 - any memory backend, any failure
+            log.error("this turn was not saved to memory (%s); its reply is still sent", type(exc).__name__)
+
     async def _persist_turn(
         self,
         session_id: str,
@@ -696,6 +759,10 @@ class Agent:
             for tool_call in message.get("tool_calls", [])
             if tool_call["function"]["name"] == SKILL_TOOL_NAME
         }
+        tool_results = iter(fit_texts([
+            SKILL_MEMORY_MARKER if m.get("tool_call_id") in skill_call_ids else m.get("content", "") or ""
+            for m in new_messages if m["role"] == "tool"
+        ], MEMORY_TOOL_RESULT_BUDGET))
         for m in new_messages:
             if m["role"] == "assistant":
                 turn.append(Message(
@@ -714,9 +781,12 @@ class Agent:
             elif m["role"] == "tool":
                 turn.append(Message(
                     role="tool",
-                    content=SKILL_MEMORY_MARKER if m.get("tool_call_id") in skill_call_ids else m.get("content", "") or "",
+                    content=next(tool_results),
                     tool_call_id=m.get("tool_call_id"),
                 ))
+        spoken = [m for m in turn if m.role != "tool"]
+        for message, content in zip(spoken, fit_texts([m.content or "" for m in spoken], MEMORY_TEXT_BUDGET)):
+            message.content = content
         if isinstance(self._memory, AppendableMemory):
             # One turn, not the whole thread: the store already holds
             # what ``load`` returned. ``subject`` and the session's

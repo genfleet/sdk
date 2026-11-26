@@ -122,9 +122,10 @@ class PlatformMemory:
         retried invocation does not store the turn twice. Dedupe is only as
         good as the id — a caller that mints a fresh one per attempt gets none.
 
-        The turn travels in one request, so a turn whose tool results are large
-        can exceed the proxy's body-size cap and surface as a
-        :class:`PlatformMemoryError`; the SDK does not split it.
+        The turn travels in one request and the platform caps its size; a turn
+        over the cap surfaces as a :class:`PlatformMemoryError`. ``Agent`` cuts
+        a turn's large tool results and messages before it appends (tool-call
+        arguments are not cut), and a failed append does not fail its turn.
         """
         if not messages:
             return
