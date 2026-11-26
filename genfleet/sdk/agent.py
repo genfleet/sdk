@@ -74,6 +74,44 @@ log = logging.getLogger("genfleet.sdk.agent")
 SKILL_TOOL_NAME = "read_skill"
 SKILL_MEMORY_MARKER = "[skill body omitted; call read_skill again to use it]"
 
+#: What one turn's tool results may take in memory, as JSON bytes. A turn is
+#: saved in one request and the platform refuses one over 32 KB; the rest is
+#: left for the messages themselves.
+MEMORY_TOOL_RESULT_BUDGET = 20 * 1024
+#: Ends a tool result that was cut to fit; the model reads it on a later turn.
+MEMORY_CUT_MARKER = "\n[tool result cut for memory: first {kept} of {total} characters kept]"
+
+
+def _json_size(text: str) -> int:
+    return len(json.dumps(text))
+
+
+def _cut_to(text: str, allowance: int) -> str:
+    """``text`` cut so that it and the cut marker take at most ``allowance`` JSON bytes."""
+    room = max(0, allowance - _json_size(MEMORY_CUT_MARKER.format(kept=len(text), total=len(text))))
+    kept = text
+    while kept and _json_size(kept) > room:
+        kept = kept[: min(len(kept) - 1, len(kept) * room // _json_size(kept))]
+    return kept + MEMORY_CUT_MARKER.format(kept=len(kept), total=len(text))
+
+
+def fit_tool_results(results: list[str], budget: int = MEMORY_TOOL_RESULT_BUDGET) -> list[str]:
+    """``results`` as they are saved to memory: unchanged when together they fit
+    ``budget``, else the largest are cut (with `MEMORY_CUT_MARKER`) so that they
+    do. A small result is never cut to make room for a large one."""
+    sizes = [_json_size(result) for result in results]
+    if sum(sizes) <= budget:
+        return list(results)
+    fitted = list(results)
+    remaining, left = budget, len(results)
+    for index in sorted(range(len(results)), key=sizes.__getitem__):
+        share = remaining // left
+        if sizes[index] > share:
+            fitted[index] = _cut_to(results[index], share)
+        remaining -= min(sizes[index], share)
+        left -= 1
+    return fitted
+
 #: Image types sent to a vision model as images; every provider takes these.
 MODEL_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 #: The largest image sent to a model (Anthropic's per-image limit). A larger
@@ -571,7 +609,7 @@ class Agent:
                     # stops reading at ``done`` — ``serve`` breaks out of the
                     # ``async for`` — which closes this generator at the yield
                     # below, so anything after it never runs.
-                    await _turn.call_within(input.metadata, self._persist_turn(
+                    await _turn.call_within(input.metadata, self._persist_turn_or_log(
                         session_id, input, turn_text, history, new_messages, invocation_id
                     ))
                     # Same reason as the persist: after the ``done`` yield this
@@ -673,6 +711,16 @@ class Agent:
             return await load_recent(self._memory, session_id, turns)
         return await self._memory.load(session_id)
 
+    async def _persist_turn_or_log(self, *turn: Any) -> None:
+        """`_persist_turn`, but a memory that fails does not fail the turn: the
+        reply is already written, so the person gets it and the turn is missing
+        from the thread's history. Logged by error type only (a memory's
+        message may quote the turn)."""
+        try:
+            await self._persist_turn(*turn)
+        except Exception as exc:  # noqa: BLE001 - any memory backend, any failure
+            log.error("this turn was not saved to memory (%s); its reply is still sent", type(exc).__name__)
+
     async def _persist_turn(
         self,
         session_id: str,
@@ -696,6 +744,10 @@ class Agent:
             for tool_call in message.get("tool_calls", [])
             if tool_call["function"]["name"] == SKILL_TOOL_NAME
         }
+        tool_results = iter(fit_tool_results([
+            SKILL_MEMORY_MARKER if m.get("tool_call_id") in skill_call_ids else m.get("content", "") or ""
+            for m in new_messages if m["role"] == "tool"
+        ]))
         for m in new_messages:
             if m["role"] == "assistant":
                 turn.append(Message(
@@ -714,7 +766,7 @@ class Agent:
             elif m["role"] == "tool":
                 turn.append(Message(
                     role="tool",
-                    content=SKILL_MEMORY_MARKER if m.get("tool_call_id") in skill_call_ids else m.get("content", "") or "",
+                    content=next(tool_results),
                     tool_call_id=m.get("tool_call_id"),
                 ))
         if isinstance(self._memory, AppendableMemory):

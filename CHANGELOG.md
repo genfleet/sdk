@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.32.1 — 2026-11-26
+
+- **Fixed: a turn with a large tool result failed after the reply was written.** A turn is saved to memory in one request, and the platform refuses a request over 32 KB, so a tool that returned more (a long list from an API) made the save fail and the reply was lost. `Agent` now cuts a turn's tool results to fit before saving them (`fit_tool_results`, 20 KB for a turn's results together; small results are kept whole, and a cut one ends with a line saying how much was kept). The model still reads the full result on the turn that called the tool.
+- **Fixed: a memory that fails no longer fails the turn.** The reply is sent, the failure is logged by error type, and the turn is missing from the thread's history.
+
 ## 0.32.0 — 2026-11-26
 
 - **Added: `type = "contacts"` for a `[settings.<key>]` or a hand-off option** — people of the workspace to alert. The value is a list of up to 5 distinct strings: `default`, `role:<role>` or a contact's name. The agent's page shows a picker of the workspace's escalation contacts, and the agent reads it with `setting()` and can pass it to `escalate(to=...)`. No `options`, `min` or `max`. New limits `MAX_SETTING_CONTACTS` and `MAX_SETTING_CONTACT_NAME`.
