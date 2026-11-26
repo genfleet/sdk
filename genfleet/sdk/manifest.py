@@ -227,6 +227,9 @@ class SettingSpec(BaseModel):
     description: StrictStr = Field(default="", max_length=300)
     group: StrictStr = Field(default="", max_length=40)
     required: StrictBool = False
+    #: Kept and read like any setting, but not shown on the agent's page.
+    #: For a setting that moved elsewhere, so a value saved earlier still applies.
+    hidden: StrictBool = False
     default: Any = None
     options: list[StrictStr] | None = None
     min: StrictInt | StrictFloat | None = None
@@ -234,6 +237,8 @@ class SettingSpec(BaseModel):
 
     @model_validator(mode="after")
     def _fields_fit_the_type(self) -> SettingSpec:
+        if self.hidden and self.required:
+            raise ValueError("a hidden setting cannot be 'required': nobody could fill it in")
         if self.type == "enum":
             if not self.options or len(self.options) > MAX_SETTING_OPTIONS or len(set(self.options)) != len(self.options):
                 raise ValueError(f"an enum needs 'options': 1 to {MAX_SETTING_OPTIONS} distinct strings")
@@ -345,7 +350,9 @@ class SendSpec(BaseModel):
     def _options_are_keyed(cls, value: dict[str, SettingSpec]) -> dict[str, SettingSpec]:
         if len(value) > MAX_HANDOFF_OPTIONS:
             raise ValueError(f"'options' has more than {MAX_HANDOFF_OPTIONS} entries")
-        for key in value:
+        for key, spec in value.items():
+            if spec.hidden:
+                raise ValueError(f"option {key!r}: 'hidden' is only for a [settings] entry")
             if not _KEY.fullmatch(key):
                 raise ValueError(f"option {key!r}: the name must be 1-32 lowercase letters, digits or '_', starting with a letter")
         return value
