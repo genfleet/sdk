@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.31.0 — 2026-11-26
+
 - **Added: `hidden` on a `[settings.<key>]`** — the setting is still read with `setting()`, but the agent's page does not show it. For a setting that moved elsewhere, so a value saved earlier still applies. Not allowed with `required`, and not on a hand-off's options.
 
 ## 0.30.1 — 2026-11-24
