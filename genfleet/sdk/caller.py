@@ -116,7 +116,7 @@ def is_hosted() -> bool:
     return bool(os.environ.get(HOSTED_ENV) or os.environ.get(_LEGACY_HOSTED_ENV))
 
 
-_hosted = is_hosted  # pre-0.19 private name
+_hosted = is_hosted  # pre-0.20 private name
 
 
 def caller_of(metadata: dict[str, Any] | None) -> Caller | None:

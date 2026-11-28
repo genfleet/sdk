@@ -27,6 +27,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from ._http import OPENER, REDIRECT_REFUSED, is_redirect
 from .state import EffectState, RunState, StateError, StateQuotaExceeded, StateTooLarge
 from .turn import current_turn, turn_headers
 
@@ -172,9 +173,11 @@ class PlatformStateStore:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310 — platform URL
+            with OPENER.open(req, timeout=10) as response:
                 payload = response.read()
         except urllib.error.HTTPError as exc:
+            if is_redirect(exc.code):
+                raise PlatformStateError(op, exc.code, REDIRECT_REFUSED) from None
             if exc.code == 402:
                 from .storage_limit import storage_limit_from_body  # circular at import time
 

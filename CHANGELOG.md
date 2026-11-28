@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- **Fixed: a redirect never carries the agent's platform token.** Hosted state (`PlatformStateStore`) and hosted memory (`PlatformMemory`) used Python's default URL opener, which follows 301/302/303/307/308 redirects to any host and re-sends the `Authorization` header. Every SDK call to the platform now goes through one opener that refuses redirects: hosted state raises `PlatformStateError` and hosted memory `PlatformMemoryError`, each with the 3xx status and a message saying a redirect was refused. `send_message` (already not following redirects) now says so in its error, and a hand-off that gets a redirect stays `not_delivered` / `unreachable`.
+- **Changed: skill repositories are fetched with `GIT_LFS_SKIP_SMUDGE=1`,** so a repository's `.lfsconfig` cannot make the fetch download from another server. Skills are plain text and never need LFS content.
+- **Fixed: an MCP tool skipped for a `skill:` name logs that the prefix is reserved,** instead of saying a tool name can't start with `@`.
+- **Docs:** the README says that a `@<commit>` pin fixes a skill's content but not who published it, and that loading a skill repository (in `Agent(...)`, `discover_skills`, `load_skills`) runs `git` synchronously. The examples use a placeholder skills repository (`your-org/skills`).
+
 ## 0.32.1 — 2026-11-26
 
 - **Fixed: a turn with a large tool result failed after the reply was written.** A turn is saved to memory in one request, and the platform refuses a request over 32 KB, so a tool that returned more (a long list from an API) made the save fail and the reply was lost. `Agent` now cuts what it saves (`fit_texts`): a turn's tool results to 20 KB together and its other messages to 8 KB together. Small texts are kept whole, and a cut one ends with a line saying how much was kept. The model still reads the full result on the turn that called the tool. Tool-call arguments are not cut, so a turn with very large ones can still be refused.
