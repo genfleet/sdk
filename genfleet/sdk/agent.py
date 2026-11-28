@@ -66,6 +66,7 @@ from .files import FileAccessError, FileResolver, read_part
 from .parts import ImagePart, UnsupportedInput, looks_like, media_of, mime_patterns
 from .parts import accepts as _accepts
 from .connector_calls import ConnectorTool
+from ._text_calls import could_be_tool_call_text, tool_calls_in_text
 from .protocol import ToolProtocol
 from .tool import ToolWrapper, wrap_tool
 from .skills import Skill, load_skills, pinned_revision
@@ -568,6 +569,12 @@ class Agent:
                 llm_start = time.monotonic()
                 last_token_usage: TokenUsage | None = None
                 response_content_parts: list[str] = []
+                # A reply that opens like JSON or a code fence may be a tool
+                # call written as text: its chunks are held until the reply is
+                # complete, so the call never reaches the person as a reply.
+                # Any other reply streams as it comes.
+                holding: bool | None = None
+                held: list[AgentOutput] = []
 
                 # The model client reads this turn's metadata through
                 # `current_turn()`, set only while it runs (never across a yield).
@@ -584,9 +591,25 @@ class Agent:
                         # loop may still have a tool round to run, and a consumer
                         # stops reading at the first ``done`` it sees. Only the
                         # yield at the bottom of the loop ends the turn.
-                        yield chunk.model_copy(update={"done": False}) if chunk.done else chunk
+                        held.append(chunk.model_copy(update={"done": False}) if chunk.done else chunk)
+                        if holding is None and "".join(response_content_parts).strip():
+                            holding = could_be_tool_call_text("".join(response_content_parts))
+                        if holding is False:
+                            for out in held:
+                                yield out
+                            held.clear()
                     if chunk.done:
                         break
+
+                if not tool_calls_batch and holding:
+                    written = tool_calls_in_text("".join(response_content_parts), offered)
+                    if written:
+                        # Run exactly as structured calls: same audiences,
+                        # approvals and dispatch. The text was the call, not a reply.
+                        log.info("model wrote %d tool call(s) as text; running them as tool calls", len(written))
+                        tool_calls_batch, response_content_parts, held = written, [], []
+                for out in held:
+                    yield out
 
                 llm_latency = (time.monotonic() - llm_start) * 1000
 
