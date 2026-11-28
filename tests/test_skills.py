@@ -295,3 +295,25 @@ def test_selecting_one_skill_ignores_other_skills_large_references(skill_reposit
     assert [skill.name for skill in load_skills(skill_repository, names=["handoff"])] == ["handoff"]
     with pytest.raises(ValueError, match="reference is too large"):
         load_skills(skill_repository)
+
+
+def test_skill_fetch_skips_git_lfs_and_never_prompts(skill_repository, monkeypatch):
+    """Every git command of a fetch runs with LFS smudging off, so a repository's
+    ``.lfsconfig`` can't send the checkout to another server."""
+    from genfleet.sdk import skills
+
+    revision = subprocess.run(["git", "-C", str(skill_repository), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+    monkeypatch.setattr("genfleet.sdk.skills._repository_url", lambda _: skill_repository.as_uri())
+    real_run, envs = subprocess.run, []
+
+    def recording_run(args, **kwargs):
+        envs.append(kwargs.get("env"))
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(skills.subprocess, "run", recording_run)
+    load_skills(f"acme/skills@{revision}")
+    load_skills(skill_repository)
+    assert envs and all(
+        env is not None and env["GIT_LFS_SKIP_SMUDGE"] == "1" and env["GIT_TERMINAL_PROMPT"] == "0" for env in envs
+    )

@@ -699,6 +699,19 @@ async def test_an_mcp_tool_named_like_a_slug_key_is_skipped(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_skipped_mcp_tool_logs_what_is_wrong_with_its_name(monkeypatch, caplog):
+    config = {"type": "sse", "url": "http://mcp.test"}
+    _mcp_fetch(monkeypatch, ["@acme/x", "skill:brief", "fine"])
+    agent = _agent(_Model(_DONE), mcps=[config])
+    with caplog.at_level("WARNING", logger=agent_module.log.name):
+        await agent._init_mcp()
+    assert set(agent._mcp_tools) == {"fine"}
+    reasons = {r.args[0]: r.getMessage() for r in caplog.records if "skipped" in r.getMessage()}
+    assert "can't start with '@'" in reasons["@acme/x"]
+    assert "'skill:' are reserved" in reasons["skill:brief"] and "'@'" not in reasons["skill:brief"]
+
+
+@pytest.mark.asyncio
 async def test_an_mcp_tool_named_like_a_slug_key_cannot_borrow_a_manifest_tools_flag(monkeypatch):
     _mcp_fetch(monkeypatch, ["@scope/x"])
     scoped = wrap_tool(_fn_x, slug="@scope/x")

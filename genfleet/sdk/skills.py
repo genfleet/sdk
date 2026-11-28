@@ -194,6 +194,21 @@ class Skill(BaseModel, frozen=True):
         return cls(**fields, instructions=instructions, references=_reference_files(file.parent))
 
 
+def _git_env() -> dict[str, str]:
+    """The environment every skill-fetch ``git`` command runs with.
+
+    ``GIT_TERMINAL_PROMPT=0`` keeps a private repository from waiting on a
+    password prompt. ``GIT_LFS_SKIP_SMUDGE=1`` stops Git LFS from downloading
+    large files on checkout, so a repository's ``.lfsconfig`` cannot point the
+    fetch at another server; a skill is plain text and never needs LFS content.
+
+    There is no byte cap on the fetch itself (git has no portable one); the
+    clone is shallow, time-limited, and every skill file read from it is
+    size-checked.
+    """
+    return {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_LFS_SKIP_SMUDGE": "1"}
+
+
 @contextmanager
 def _checkout(source: str | Path) -> Iterator[tuple[Path, str]]:
     url = _repository_url(source)
@@ -201,10 +216,10 @@ def _checkout(source: str | Path) -> Iterator[tuple[Path, str]]:
     with tempfile.TemporaryDirectory(prefix="genfleet-skills-") as scratch:
         checkout = Path(scratch) / "repo"
         try:
-            git_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+            git_env = _git_env()
             if revision_pin:
-                subprocess.run(["git", "init", "--quiet", str(checkout)], capture_output=True, check=True, timeout=10)
-                subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", url], capture_output=True, check=True, timeout=10)
+                subprocess.run(["git", "init", "--quiet", str(checkout)], capture_output=True, check=True, timeout=10, env=git_env)
+                subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", url], capture_output=True, check=True, timeout=10, env=git_env)
                 subprocess.run(
                     ["git", "-C", str(checkout), "fetch", "--quiet", "--depth", "1", "origin", revision_pin],
                     capture_output=True, check=True, timeout=120, env=git_env,
@@ -220,7 +235,7 @@ def _checkout(source: str | Path) -> Iterator[tuple[Path, str]]:
                 )
             revision = subprocess.run(
                 ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-                capture_output=True, check=True, text=True, timeout=10,
+                capture_output=True, check=True, text=True, timeout=10, env=git_env,
             ).stdout.strip()
         except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             raise ValueError("could not fetch skill repository with git") from exc
@@ -256,7 +271,11 @@ def _catalog(checkout: Path, revision: str) -> dict[str, tuple[Path, Skill, Skil
 
 
 def load_skills(source: str | Path, *, names: list[str] | None = None) -> list[Skill]:
-    """Snapshot selected skills, or every skill when ``names`` is omitted."""
+    """Snapshot selected skills, or every skill when ``names`` is omitted.
+
+    A repository source runs ``git`` synchronously (a clone or fetch of up to
+    120 seconds); inside an event loop, call it through ``asyncio.to_thread``.
+    """
     if names is not None and not names:
         raise ValueError("names must contain at least one skill, or be omitted for all")
     with _checkout(source) as (checkout, revision):
@@ -272,7 +291,10 @@ def load_skills(source: str | Path, *, names: list[str] | None = None) -> list[S
 
 
 def discover_skills(source: str | Path) -> list[SkillOption]:
-    """List the skills available in a repository for selection."""
+    """List the skills available in a repository for selection.
+
+    Like :func:`load_skills`, this runs ``git`` synchronously.
+    """
     with _checkout(source) as (checkout, revision):
         return [option for _, _, option in _catalog(checkout, revision).values()]
 

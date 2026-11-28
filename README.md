@@ -332,7 +332,7 @@ To see the choices first and select a subset:
 ```python
 from genfleet.sdk import Agent, discover_skills, load_skills
 
-repo = "mmedhat1910/skills"
+repo = "your-org/skills"  # placeholder: your own skills repository
 for option in discover_skills(repo):
     print(option.name, "—", option.description)
 
@@ -346,6 +346,10 @@ agent = Agent(
 ```
 
 Pass a selected list as `skills=selected`; combine it with other sources using `skills=[*selected, other]`. Direct repository sources in `Agent(skills=...)` must end in `@<40-character-commit>` so published agents use a fixed revision. For deployment, load and package the selected `Skill` objects during the build to avoid a Git fetch at agent startup. Use `discover_skills` and `load_skills` for interactive selection; pass a `Path` for a local repository. Discovery logs and skips invalid skill files, then returns valid skills in the repository.
+
+**A pin fixes the content, not who published it.** `@<commit>` guarantees the exact files you reviewed, but GitHub can serve a commit from any fork in a repository's network under the original repository's name, so a commit someone pushed to their own fork may resolve through `owner/repo@<commit>` too. Pin a commit you have read yourself, or package the `Skill` objects at build time.
+
+**Loading a repository blocks.** `Agent(...)`, `discover_skills` and `load_skills` run `git` synchronously, once per repository source (a clone or fetch of up to 120 seconds, plus a checkout). Called inside a running event loop, they stall it for that long; construct the agent before the loop starts, or call them through `await asyncio.to_thread(...)`. The fetch runs with `GIT_LFS_SKIP_SMUDGE=1`, so Git LFS content is never downloaded.
 
 The model uses `read_skill(name)` for instructions and `read_skill(name, path="references/guide.md")` for a text reference. Skills default to the `operator` audience; set `Skill(audiences={"operator", "customer"}, ...)` to offer one to customers. The platform can override each skill through the `skill:<name>` audience key and can disable the `read_skill` tool. Git authentication uses your configured Git credentials. Repository code and scripts are not executed by the loader; a skill can only use tools already offered to the agent.
 
