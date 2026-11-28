@@ -52,7 +52,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .channels import _OPENER, _NoAnswer, _read_capped
+from ._http import OPENER
+from .channels import _NoAnswer, _read_capped
 from .config import agent_config
 from .turn import current_turn, turn_id_of
 
@@ -199,7 +200,7 @@ def _send(body: dict[str, Any]) -> dict[str, Any] | str:
         headers={"authorization": f"Bearer {os.environ[HANDOFFS_TOKEN_ENV]}", "content-type": "application/json"},
     )
     try:
-        with _OPENER.open(request, timeout=_TIMEOUT_S) as response:
+        with OPENER.open(request, timeout=_TIMEOUT_S) as response:
             raw = _read_capped(response)
     except urllib.error.HTTPError as exc:
         # A 4xx is a refusal: nothing was delivered. Anything else is unknown.

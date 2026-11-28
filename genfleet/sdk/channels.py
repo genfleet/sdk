@@ -22,6 +22,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from ._http import OPENER, REDIRECT_REFUSED, is_redirect
 from .tool import tool
 
 CHANNELS_URL_ENV = "GENFLEET_CHANNELS_URL"
@@ -32,17 +33,6 @@ _TIMEOUT_S = 25.0
 #: a connection call's or connector tool's answer, about 1 MB of API body
 #: once encoded (base64, or JSON with escapes); this leaves room for that.
 MAX_ANSWER_BYTES = 8 * 1024 * 1024
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Refuse every redirect: the platform's endpoint never sends one, and
-    following it would send the bearer token wherever ``Location`` points."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 class _NoAnswer(Exception):
@@ -75,7 +65,7 @@ def _send(path: str, body: dict[str, Any] | None, *, timeout: float) -> tuple[in
         headers=headers,
     )
     try:
-        with _OPENER.open(req, timeout=timeout) as resp:
+        with OPENER.open(req, timeout=timeout) as resp:
             return resp.status, _read_capped(resp)
     except urllib.error.HTTPError as exc:
         try:
@@ -204,6 +194,8 @@ def _call(
         status, raw = _send(path, body, timeout=timeout)
     except _NoAnswer as exc:
         raise error(f"{what} could not reach the platform: {exc}", status=0) from None
+    if is_redirect(status):
+        raise error(f"{what}: {REDIRECT_REFUSED}", status=status)
     if not 200 <= status < 300:
         message, code = _refusal(raw, what)
         raise error(message, status=status, code=code)

@@ -335,6 +335,13 @@ class Agent:
     ``memory`` may be left out: hosted on the platform the agent then gets
     the platform store anyway; on a laptop it runs without memory.
 
+    ``skills`` takes `Skill` objects and pinned repository sources
+    (``"owner/repo@<40-character commit>"`` or a local ``Path``). Each
+    repository source runs ``git`` synchronously here, in ``__init__`` (up to
+    a few minutes for a slow fetch), so construct the agent before an event
+    loop starts or through ``asyncio.to_thread``; or load the `Skill` objects
+    at build time with `load_skills` and pass those.
+
     ``max_history_turns`` caps how many past turns go to the model. A turn is
     a user message and everything up to the next one, so a tool call is never
     sent without its result. Memory still stores every turn; ``None`` (the
@@ -1016,10 +1023,12 @@ class Agent:
                 for name in [n for n in tools if n in self._local_tools or n in self._mcp_tools or (self._skills and n == SKILL_TOOL_NAME)]:
                     log.warning("MCP tool %r skipped: the name is already taken by another tool", name)
                     del tools[name]
-                # A name starting with `@` is a slug key's form:
-                # an MCP tool can't take one and borrow a manifest tool's settings.
+                # A name starting with `@` is a slug key's form: an MCP tool
+                # can't take one and borrow a manifest tool's settings. A
+                # `skill:` name is reserved for skill audiences.
                 for name in [n for n in tools if n.startswith(("@", "skill:"))]:
-                    log.warning("MCP tool %r skipped: a tool name can't start with '@'", name)
+                    reason = _reserved_name(name, False) or "a tool name can't start with '@'"
+                    log.warning("MCP tool %r skipped: %s", name, reason)
                     del tools[name]
                 self._mcp_tools.update(tools)
             except Exception:

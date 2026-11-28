@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from .._http import OPENER, REDIRECT_REFUSED, is_redirect
 from ..schemas import Message
 from ..turn import turn_headers
 
@@ -184,10 +185,12 @@ class PlatformMemory:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:  # noqa: S310 — URL is platform-provided
+            with OPENER.open(req, timeout=_TIMEOUT_S) as resp:
                 raw = resp.read()
                 status = resp.status
         except urllib.error.HTTPError as exc:
+            if is_redirect(exc.code):
+                raise PlatformMemoryError(op, exc.code, REDIRECT_REFUSED) from None
             body = exc.read()
             if exc.code == 402:
                 from ..storage_limit import storage_limit_from_body  # circular at import time
