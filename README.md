@@ -557,6 +557,20 @@ An agent the platform did not spawn (a local `serve`, a test) has no roles: a tu
 
 Who an agent serves is not declared in `agent.toml`: the workspace owner sets it in the dashboard.
 
+### Tool calls written as text
+
+Some models answer with a tool call written out as text instead of a structured call. When a reply has no structured calls, `Agent` runs it as tool calls only if the whole reply, after trimming whitespace and at most one code fence around it, is JSON in one of these shapes:
+
+```json
+{"name": "lookup", "arguments": {"order": "A1"}}
+```
+
+```json
+[{"name": "lookup", "arguments": {"order": "A1"}}, {"name": "lookup", "arguments": {"order": "B2"}}]
+```
+
+Each call object has exactly the keys `name` and `arguments`; `arguments` is an object, or a string holding the JSON of one. Every name must be a tool offered to the model on that turn. The calls then go through the same path as structured ones: audiences, approvals for sensitive tools and the refusal on a call from another agent all apply. Anything else is the reply, unchanged: prose around the JSON, any other key, a tool that wasn't offered, an empty list or malformed JSON. A reply that starts with `{`, `[` or a backtick is held until the model finishes it, so such a call never reaches the person; any other reply streams as before.
+
 ## AgentProtocol — direct implementation
 
 For framework integrations (LangChain, CrewAI) that manage their own LLM calls, implement `AgentProtocol` directly:
